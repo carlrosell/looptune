@@ -268,8 +268,8 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 |---|-------|--------|
 | 0 | Repo, package scaffold, CI, dependency wiring | ✅ |
 | 1 | Domain model + LoopAlgorithm bridging types | ✅ |
-| 2 | Nightscout client (auth, endpoints, windowed fetch) | ✅ |
-| 3 | Ingest: NS → domain (profile expansion, doses, carbs, TZ) | 🟡 |
+| 2 | Nightscout client (auth, endpoints, windowed fetch) | ⬜ |
+| 3 | Ingest: NS → domain (profile expansion, doses, carbs, TZ) | ⬜ |
 | 4 | Replay: deviation computation via LoopAlgorithm | ⬜ |
 | 5 | Tune: categorization + basal/ISF/CR tuning + chaining | ⬜ |
 | 6 | Recommendations: guardrails, tiers, confidence | ⬜ |
@@ -287,23 +287,24 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 
 ### Phase 1 — Domain model + bridging ✅
 - [x] `GlucoseSample`, `DoseRecord`, `CarbRecord`, `OverridePeriod`, `TherapyProfile`
-- [x] Time-of-day schedule types (basal/ISF/CR/target) with `value` coercion
+- [x] Time-of-day schedule types (basal/ISF/CR/target) with `value` coercion (`DailySchedule`)
 - [x] Expansion to `AbsoluteScheduleValue` timelines honoring timezone/DST
-- [x] `LoopUnit`/`LoopQuantity` bridging helpers + mmol↔mg/dL
-- [x] Conform domain doses/carbs/glucose to LoopAlgorithm protocols (or adapters)
-- [x] Unit tests for schedule expansion, unit conversion, DST edge cases
+- [x] `GlucoseUnit` mmol↔mg/dL + `NightscoutTimeZone` (ETC/GMT sign inversion)
+- [x] Adapters from domain doses/carbs/glucose to LoopAlgorithm fixture types
+- [x] `InsulinType` (Sendable mirror of `FixtureInsulinType`)
+- [x] Unit tests: schedule expansion, DST spring-forward, unit conversion, TZ parsing (25 tests green)
 
-### Phase 2 — Nightscout client ✅
-- [x] URL normalization (strip paths, follow redirects)
-- [x] Auth: `?token=`, `api-secret` (SHA-1 hex), JWT via `/api/v2/authorization`
-- [x] Auth probe `/api/v1/experiments/test`; unauthenticated-first fallback
-- [x] Endpoints: entries/sgv, treatments, profile(+history), devicestatus, status
-- [x] Per-day windowed fetch with oref0 padding (−18h/+42h) + `count`
-- [x] Codable DTOs tolerant of the `06` quirks (string numbers, frac seconds)
-- [x] Units detection (status.json + profile precedence)
-- [x] Tests against captured fixture payloads (URLProtocol stub)
+### Phase 2 — Nightscout client ⬜
+- [ ] URL normalization (strip paths, follow redirects)
+- [ ] Auth: `?token=`, `api-secret` (SHA-1 hex), JWT via `/api/v2/authorization`
+- [ ] Auth probe `/api/v1/experiments/test`; unauthenticated-first fallback
+- [ ] Endpoints: entries/sgv, treatments, profile(+history), devicestatus, status
+- [ ] Per-day windowed fetch with oref0 padding (−18h/+42h) + `count`
+- [ ] Codable DTOs tolerant of the `06` quirks (string numbers, frac seconds)
+- [ ] Units detection (status.json + profile precedence)
+- [ ] Tests against captured fixture payloads (URLProtocol stub)
 
-### Phase 3 — Ingest 🟡
+### Phase 3 — Ingest ⬜
 - [ ] Profile doc → `TherapyProfile` (store[defaultProfile], timezone parse incl. ETC/GMT sign inversion)
 - [ ] Temp Basal → dose volume (`amount` preferred; else `rate×duration`); suspend (rate 0/reason) → zero-volume basal dose
 - [ ] Overlap trimming (sort, clip to next start, drop null-duration)
@@ -391,3 +392,9 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   formats, and prior art; distilled notes saved under `references/notes/`.
   Wrote this plan. Core architectural decision (OQ-1) settled: LoopAlgorithm
   forward model + oref0-adapted tuning.
+- **2026-07-04** — Phase 1 done. Domain model (`GlucoseSample`, `DoseRecord`,
+  `CarbRecord`, `OverridePeriod`, `TherapyProfile`, `InsulinType`) plus the
+  reusable `DailySchedule` primitive with DST-correct expansion to
+  `AbsoluteScheduleValue` timelines, `GlucoseUnit` conversions, and the
+  `NightscoutTimeZone` parser (handles Loop's inverted-sign `ETC/GMT±N`). 25
+  unit tests green, including a spring-forward DST case.
