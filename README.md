@@ -41,6 +41,23 @@ Nightscout ─▶ Ingest ─▶ Replay (LoopAlgorithm) ─▶ Tune ─▶ Recomm
    profile
 ```
 
+Windows longer than one day are tuned with **day-by-day chaining** (oref0's
+model): each day's tuned profile seeds the next day's replay, while your pump
+profile stays fixed as the safety-cap baseline, so recommendations can never
+drift beyond ±20–30% of your actual settings no matter how many days are
+analyzed. Per-hour **"days missing"** counts show how much real data sits
+behind each basal hour.
+
+## Validation status
+
+The tuning math is pinned to the reference implementation by **golden parity
+fixtures**: the ISF and basal tuners reproduce the output of oref0's real
+`autotune` JavaScript (run via node against crafted inputs) to within 0.001,
+including its rounding and smoothing quirks. The forward model is the
+unmodified LoopKit `LoopAlgorithm` package. That said, **LoopTune as a whole
+has not been clinically validated** — parity with reference code is an
+engineering guarantee, not a medical one.
+
 ## Usage
 
 ### CLI
@@ -63,7 +80,11 @@ swift run LoopTuneApp
 ```
 
 Enter your Nightscout URL, choose a window and insulin type, and click Analyze.
-The results view has an mg/dL ↔ mmol/L toggle (defaults to your site's unit).
+The results view shows ISF/CR cards, a pump-vs-tuned basal chart, a per-hour
+data-coverage chart, and the full basal table with days-missing confidence,
+plus an mg/dL ↔ mmol/L toggle (defaults to your site's unit). Your access token
+is stored in the login Keychain; the URL and options are remembered between
+launches.
 
 ## Development
 
