@@ -271,7 +271,7 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 | 2 | Nightscout client (auth, endpoints, windowed fetch) | ✅ |
 | 3 | Ingest: NS → domain (profile expansion, doses, carbs, TZ) | ✅ |
 | 4 | Replay: deviation computation via LoopAlgorithm | ✅ |
-| 5 | Tune: categorization + basal/ISF/CR tuning + chaining | ⬜ |
+| 5 | Tune: categorization + basal/ISF/CR tuning + chaining | ✅ (single-run) |
 | 6 | Recommendations: guardrails, tiers, confidence | ⬜ |
 | 7 | CLI end-to-end (`fetch` / `tune` / `report`) | ⬜ |
 | 8 | SwiftUI app (wizard + results + charts) | ⬜ |
@@ -328,14 +328,25 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 - [x] Tests: no-insulin (deviation = ΔBG), bolus (10-min delay then negative effect), carb absorption, gap skipping (63 tests green)
 - [ ] `PrecomputedInsulinInput` fast path for candidate sweeps — deferred to Phase 5 (needed when sweeping ISF candidates)
 
-### Phase 5 — Tune ⬜
-- [ ] Categorizer (CSF/UAM/basal/ISF) with clamps
-- [ ] UAM reassignment policy (default UAM→basal for Loop)
-- [ ] Basal per-hour tuner + unused-hour smoothing + caps
-- [ ] ISF median-ratio tuner (≥10 pts, adjustmentFraction, caps)
-- [ ] CR per-meal tuner (≥60min periods, caps)
-- [ ] Day chaining harness (chronological, pump profile as fixed cap baseline)
+### Phase 5 — Tune ✅ (single-run) / 🟡 (chaining)
+- [x] Categorizer (CSF/UAM/basal/ISF) with post-hypo + gap clamps
+- [x] UAM reassignment policy (default UAM→basal for Loop)
+- [x] Basal per-hour tuner (h−3…h−1 distribution) + unused-hour smoothing + pump-relative caps
+- [x] ISF median-ratio tuner (≥10 pts, negative-ratio guard, adjustmentFraction, inverted caps)
+- [x] CR tuner in **carb-sensitivity space** (Loop-native residual, not oref0 raw impact — see design note below)
+- [x] `LoopTuner` orchestrator + `TuningOutput`; oref0-faithful percentile
+- [x] Tests: math primitives, categorizer, all three tuners with sign checks (78 tests green)
+- [ ] Day-chaining harness (`runDayChained`: per-day windows, evolving profile, fixed pump cap baseline)
 - [ ] oref0 parity tests on ported prep→core fixtures
+- [ ] Full CRData meal-period tuner (alternative to CSF method) — future
+
+> **Design note (CR tuning).** oref0's CR method treats the meal-interval
+> deviation as the carb impact itself. In LoopTune the replay already subtracts
+> the modeled carb effect, so a CSF deviation is the carb-model *residual*. The
+> tuner therefore works in carb-sensitivity space:
+> `CSF_true = replayISF/currentCR + Σresidual/Σcarbs`, `CR = tunedISF/CSF_true`.
+> A naive port (residual used as impact) moved CR the wrong way — caught by a
+> sign test.
 
 ### Phase 6 — Recommendations ⬜
 - [ ] Loop guardrail clamping + status (recommended/absolute/limit)
@@ -410,6 +421,14 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   fractional-second timestamps, and epoch/ISO date mixing. 39 tests green.
   Deferred: devicestatus + JWT (not needed for core tuning); per-day fetch
   orchestration folds into Phase 3.
+- **2026-07-04** — Phase 5 (single-run) done. Categorizer (CSF/UAM/basal/ISF)
+  and the three tuners — per-hour basal, median-ratio ISF, and CR — with
+  oref0-faithful percentile and pump-relative + per-run-step safety caps,
+  orchestrated by `LoopTuner`. Notably fixed a genuine adaptation bug: the CR
+  tuner must operate in carb-sensitivity space because Loop-native deviations
+  are carb-model residuals, not raw carb impact (a sign test caught the naive
+  port). 78 tests green. Remaining: multi-day chaining harness + oref0 parity
+  fixtures.
 - **2026-07-04** — Phase 4 core done, and the central thesis is now
   demonstrated: `ReplayEngine` runs history through the real LoopAlgorithm
   pipeline (annotate → insulin effects → ICE → dynamic carb absorption) and

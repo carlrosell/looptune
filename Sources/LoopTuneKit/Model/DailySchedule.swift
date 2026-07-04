@@ -155,6 +155,27 @@ public struct DailySchedule<Value: Sendable & Equatable>: Sendable, Equatable {
     }
 }
 
+public extension DailySchedule where Value == Double {
+    /// The schedule sampled at each hour boundary (index 0…23), used by the
+    /// per-hour basal tuner.
+    func hourlyValues() -> [Double] {
+        (0..<24).map { value(atSecondsSinceMidnight: $0 * 3600) }
+    }
+
+    /// The duration-weighted average value across the 24-hour day — a
+    /// representative single value when a schedule has multiple entries (the
+    /// approach nighttune uses to reduce ISF/CR schedules to one number).
+    func timeWeightedAverage() -> Double {
+        var total = 0.0
+        for index in entries.indices {
+            let start = entries[index].secondsSinceMidnight
+            let end = index + 1 < entries.count ? entries[index + 1].secondsSinceMidnight : 86_400
+            total += entries[index].value * Double(end - start)
+        }
+        return total / 86_400
+    }
+}
+
 public extension DailySchedule.Entry {
     /// Convenience initializer from an `HH:mm` or `HH:mm:ss` string.
     init?(time: String, value: Value) {
