@@ -97,11 +97,17 @@ public struct TherapyProfile: Sendable, Equatable {
         }
     }
 
+    public enum ProfileUpdateError: Error, Equatable {
+        case invalidBasalHourlyCount(Int)
+    }
+
     /// A copy of this profile with tuned therapy values substituted — used by
     /// day-chained tuning, where each day's output seeds the next day's replay.
     /// ISF and CR become flat single-value schedules (autotune tunes one value).
     public func replacing(basalHourly: [Double], isf: Double, carbRatio: Double) throws -> TherapyProfile {
-        precondition(basalHourly.count == 24, "basalHourly must have 24 entries")
+        guard basalHourly.count == 24 else {
+            throw ProfileUpdateError.invalidBasalHourlyCount(basalHourly.count)
+        }
         var copy = self
         copy.basalSchedule = try DailySchedule(entries: (0..<24).map {
             .init(secondsSinceMidnight: $0 * 3600, value: basalHourly[$0])

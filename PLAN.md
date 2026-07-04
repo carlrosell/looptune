@@ -440,6 +440,9 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   fractional-second timestamps, and epoch/ISO date mixing. 39 tests green.
   Deferred: devicestatus + JWT (not needed for core tuning); per-day fetch
   orchestration folds into Phase 3.
+- **2026-07-04** — Third CodeRabbit pass: only 2 findings (a README typo and
+  `TherapyProfile.replacing` trapping instead of throwing) — both fixed. The
+  review surface is converging: 20 findings in round 1+2, 2 in round 3.
 - **2026-07-04** — Phase 9 core complete; all four remaining features landed.
   (1) Multi-day chaining: `ChainedTuner` implements oref0's day-chaining model
   with 4am-local windows and pump-anchored caps; surfaced as per-hour "days

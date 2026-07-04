@@ -76,7 +76,7 @@ fields).
   BEFORE the 20% blend `newISF = 0.8*ISF + 0.2*adjustedISF`, and the blended
   result is clamped AGAIN to the same range, then rounded to 3 decimals.
   Example: p50ratio 0.755 -> fullNewISF 37.75 -> clamped to 41.667
-  (50/1.2, unrounded in the clamp; 41.666..) -> newISF 48.333.
+  (50/1.2, unrounded in the clamp; 41.666…) -> newISF 48.333.
 - **Basal path.** Per hour: sum that hour's deviations (round to 3 decimals),
   `basalNeeded = 0.2 * deviations / ISF` rounded to 2 decimals. If positive,
   add `basalNeeded/3` to each of the 3 prior hours (rounding each rate to 3
