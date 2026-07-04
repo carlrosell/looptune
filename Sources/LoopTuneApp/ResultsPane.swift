@@ -86,6 +86,8 @@ struct ResultsView: View {
                 BasalChartView(hours: recommendation.basalHours)
                 CoverageChartView(hours: recommendation.basalHours)
 
+                LoopScheduleCard(recommendation: recommendation)
+
                 basalTable
             }
             .padding(20)

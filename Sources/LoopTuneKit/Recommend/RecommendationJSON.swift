@@ -51,6 +51,13 @@ struct RecommendationDTO: Encodable {
     var roundedDailyBasal: Double
     var basalIncrement: Double
     var basal: [BasalHour]
+    var loopBasalSchedule: [LoopEntry]
+
+    struct LoopEntry: Encodable {
+        var time: String
+        var startMinutes: Int
+        var rate: Double
+    }
 
     init(_ recommendation: TuningRecommendation, displayUnit: GlucoseUnit, basalIncrement: Double) {
         daysAnalyzed = recommendation.daysAnalyzed
@@ -64,6 +71,9 @@ struct RecommendationDTO: Encodable {
         roundedDailyBasal = recommendation.roundedDailyBasal(increment: basalIncrement)
         self.basalIncrement = basalIncrement
         basal = recommendation.basalHours.map { BasalHour($0, increment: basalIncrement) }
+        loopBasalSchedule = recommendation.loopBasalSchedule(increment: basalIncrement).map {
+            LoopEntry(time: $0.timeString, startMinutes: $0.startMinutes, rate: $0.rate)
+        }
     }
 }
 

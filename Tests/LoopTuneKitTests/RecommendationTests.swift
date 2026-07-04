@@ -52,6 +52,44 @@ struct GuardrailTests {
         #expect(hourRec(0.21).roundedRate(toIncrement: 0.025) == 0.2)
     }
 
+    @Test("loop basal schedule collapses to change points like Loop's entry screen")
+    func loopScheduleCollapse() {
+        // Rounded rates: 0.2 (00–05), 0.25 (06–11), 0.3 (12–15), 0.5 (16–17), 0.3 (18–23)
+        // → exactly the 5 entries from Loop's Basaldoser screen.
+        var hourly = [Double]()
+        hourly += Array(repeating: 0.21, count: 6)   // rounds to 0.2
+        hourly += Array(repeating: 0.24, count: 6)   // rounds to 0.25
+        hourly += Array(repeating: 0.31, count: 4)   // rounds to 0.3
+        hourly += Array(repeating: 0.49, count: 2)   // rounds to 0.5
+        hourly += Array(repeating: 0.29, count: 6)   // rounds to 0.3
+        let output = TuningOutput(
+            tunedBasalHourly: hourly,
+            pumpBasalHourly: Array(repeating: 0.3, count: 24),
+            untunedBasalHours: Array(repeating: false, count: 24),
+            tunedISF: 50, pumpISF: 50, tunedCarbRatio: 10, pumpCarbRatio: 10,
+            categoryCounts: [:], totalSamples: 100
+        )
+        let rec = TuningRecommendation(from: output, daysAnalyzed: 1)
+        let entries = rec.loopBasalSchedule()
+        #expect(entries.count == 5)
+        #expect(entries[0] == LoopBasalEntry(startMinutes: 0, rate: 0.2))
+        #expect(entries[1] == LoopBasalEntry(startMinutes: 6 * 60, rate: 0.25))
+        #expect(entries[2] == LoopBasalEntry(startMinutes: 12 * 60, rate: 0.3))
+        #expect(entries[3] == LoopBasalEntry(startMinutes: 16 * 60, rate: 0.5))
+        #expect(entries[4] == LoopBasalEntry(startMinutes: 18 * 60, rate: 0.3))
+        #expect(entries[1].timeString == "06:00")
+        // A flat schedule collapses to a single midnight entry.
+        let flat = TuningOutput(
+            tunedBasalHourly: Array(repeating: 1.0, count: 24),
+            pumpBasalHourly: Array(repeating: 1.0, count: 24),
+            untunedBasalHours: Array(repeating: false, count: 24),
+            tunedISF: 50, pumpISF: 50, tunedCarbRatio: 10, pumpCarbRatio: 10,
+            categoryCounts: [:], totalSamples: 100
+        )
+        let flatEntries = TuningRecommendation(from: flat, daysAnalyzed: 1).loopBasalSchedule()
+        #expect(flatEntries == [LoopBasalEntry(startMinutes: 0, rate: 1.0)])
+    }
+
     @Test("report and JSON include the rounded basal column")
     func roundedInOutputs() throws {
         let output = TuningOutput(

@@ -46,6 +46,16 @@ public enum TuningReport {
             + pad(fmt2(recommendation.roundedDailyBasal(increment: basalIncrement)), 10)
         )
         lines.append("")
+
+        // The schedule exactly as entered on Loop's Basal Rates screen: only
+        // the change points, start time + rate.
+        let loopEntries = recommendation.loopBasalSchedule(increment: basalIncrement)
+        lines.append("Basal Rates — as entered in Loop (\(loopEntries.count) entries)")
+        lines.append(String(repeating: "-", count: 30))
+        for entry in loopEntries {
+            lines.append(pad(entry.timeString, 8) + fmt2(entry.rate) + " U/hr")
+        }
+        lines.append("")
         lines.append(disclaimer)
         return lines.joined(separator: "\n")
     }
