@@ -69,13 +69,16 @@ struct TableCard<Content: View, Accessory: View>: View {
 extension View {
     /// Shared styling for a results table: inset style with alternating row
     /// backgrounds, internal scrolling disabled (the results pane's outer
-    /// ScrollView owns scrolling), sized to show all `rowCount` rows.
+    /// ScrollView owns scrolling), sized to show exactly `rowCount` rows.
+    ///
+    /// macOS inset tables lay rows out on a 24 pt pitch with a ~28 pt header;
+    /// oversizing the frame paints phantom striped rows below the content.
     func resultsTable(rowCount: Int) -> some View {
         self
             .tableStyle(.inset)
             .alternatingRowBackgrounds(.enabled)
             .scrollDisabled(true)
-            .frame(height: CGFloat(rowCount) * 28 + 34)
+            .frame(height: CGFloat(rowCount) * 24 + 30)
     }
 
     /// A numeric table cell: right-aligned, monospaced digits.
