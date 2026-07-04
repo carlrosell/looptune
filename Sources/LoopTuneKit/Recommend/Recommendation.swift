@@ -91,7 +91,9 @@ public extension GlucoseUnit {
 }
 
 /// One tuned basal hour.
-public struct BasalHourRecommendation: Sendable, Equatable {
+public struct BasalHourRecommendation: Sendable, Equatable, Identifiable {
+    /// Stable identity for table presentation: the hour of day.
+    public var id: Int { hour }
     public var hour: Int
     public var pumpRate: Double
     public var recommendedRate: Double

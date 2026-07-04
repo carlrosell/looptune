@@ -14,44 +14,36 @@ struct LoopScheduleCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Basal Rates — as entered in Loop")
-                        .font(.headline)
-                    Text("\(entries.count) entr\(entries.count == 1 ? "y" : "ies"), matching Loop's schedule screen")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+        TableCard(
+            title: "Basal Rates — as entered in Loop",
+            subtitle: "\(entries.count) entr\(entries.count == 1 ? "y" : "ies"), matching Loop's schedule screen"
+        ) {
+            Table(entries) {
+                TableColumn("Time") { entry in
+                    Text(entry.timeString)
+                        .monospacedDigit()
                 }
-                Spacer()
-                Button {
-                    copyToPasteboard()
-                } label: {
-                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                }
-                .help("Copy the schedule as text")
-            }
+                .width(min: 56, ideal: 72)
 
-            VStack(spacing: 0) {
-                ForEach(Array(entries.enumerated()), id: \.offset) { index, entry in
-                    HStack {
-                        Text(entry.timeString)
-                            .font(.body.monospacedDigit())
-                        Spacer()
+                TableColumn("Rate") { entry in
+                    HStack(spacing: 4) {
                         Text(formatted(entry.rate))
-                            .font(.body.weight(.semibold).monospacedDigit())
+                            .fontWeight(.semibold)
+                            .monospacedDigit()
                         Text("U/hr")
-                            .font(.callout)
                             .foregroundStyle(.secondary)
                     }
-                    .padding(.vertical, 10)
-                    .padding(.horizontal, 14)
-                    if index < entries.count - 1 {
-                        Divider().padding(.leading, 14)
-                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
-            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+            .resultsTable(rowCount: entries.count)
+        } accessory: {
+            Button {
+                copyToPasteboard()
+            } label: {
+                Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+            }
+            .help("Copy the schedule as text")
         }
     }
 

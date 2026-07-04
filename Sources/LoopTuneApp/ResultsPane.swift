@@ -95,51 +95,55 @@ struct ResultsView: View {
     }
 
     private var basalTable: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Basal schedule (U/hr)")
-                .font(.headline)
-            Text("Enter into Loop = the raw recommendation rounded to your pump's 0.05 U/hr steps.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack {
-                Text("Hour").frame(width: 60, alignment: .leading)
-                Text("Pump").frame(width: 80, alignment: .trailing)
-                Text("LoopTune").frame(width: 90, alignment: .trailing)
-                Text("Enter into Loop").frame(width: 110, alignment: .trailing)
-                Text("").frame(maxWidth: .infinity)
-            }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
+        TableCard(
+            title: "Basal schedule — hourly detail (U/hr)",
+            subtitle: "Enter into Loop = the raw recommendation rounded to your pump's 0.05 U/hr steps.",
+            footer: String(
+                format: "Daily total: pump %.2f U · LoopTune %.2f U · rounded %.2f U",
+                recommendation.pumpDailyBasal,
+                recommendation.tunedDailyBasal,
+                recommendation.roundedDailyBasal()
+            )
+        ) {
+            Table(recommendation.basalHours) {
+                TableColumn("Hour") { hour in
+                    Text(String(format: "%02d:00", hour.hour))
+                        .monospacedDigit()
+                }
+                .width(min: 48, ideal: 56)
 
-            ForEach(recommendation.basalHours, id: \.hour) { hour in
-                HStack {
-                    Text(String(format: "%02d:00", hour.hour)).frame(width: 60, alignment: .leading)
-                    Text(String(format: "%.3f", hour.pumpRate)).frame(width: 80, alignment: .trailing).monospacedDigit()
+                TableColumn("Pump") { hour in
+                    Text(String(format: "%.3f", hour.pumpRate))
+                        .numericCell()
+                }
+                .width(min: 64, ideal: 76)
+
+                TableColumn("LoopTune") { hour in
                     Text(String(format: "%.3f", hour.recommendedRate))
-                        .frame(width: 90, alignment: .trailing).monospacedDigit()
                         .foregroundStyle(.secondary)
+                        .numericCell()
+                }
+                .width(min: 72, ideal: 84)
+
+                TableColumn("Enter into Loop") { hour in
                     Text(String(format: "%.2f", hour.roundedRate()))
-                        .frame(width: 110, alignment: .trailing).monospacedDigit()
                         .fontWeight(.semibold)
                         .foregroundStyle(color(for: hour.changeTier))
-                    if hour.untuned {
-                        Text("no data").font(.caption).foregroundStyle(.tertiary)
-                    } else if hour.daysMissing > 0 {
-                        Text("\(hour.daysMissing)d missing").font(.caption).foregroundStyle(.tertiary)
-                    }
-                    Spacer()
+                        .numericCell()
                 }
-                .font(.callout)
+                .width(min: 100, ideal: 112)
+
+                TableColumn("Data") { hour in
+                    if hour.untuned {
+                        Text("no data").foregroundStyle(.tertiary)
+                    } else if hour.daysMissing > 0 {
+                        Text("\(hour.daysMissing)d missing").foregroundStyle(.tertiary)
+                    } else {
+                        Text("\(hour.sampleCount) samples").foregroundStyle(.secondary)
+                    }
+                }
             }
-            Divider()
-            HStack {
-                Text("Daily total").frame(width: 60, alignment: .leading)
-                Text(String(format: "%.2f", recommendation.pumpDailyBasal)).frame(width: 80, alignment: .trailing).monospacedDigit()
-                Text(String(format: "%.2f", recommendation.tunedDailyBasal)).frame(width: 90, alignment: .trailing).monospacedDigit()
-                Text(String(format: "%.2f", recommendation.roundedDailyBasal())).frame(width: 110, alignment: .trailing).monospacedDigit()
-                Spacer()
-            }
-            .font(.callout.weight(.semibold))
+            .resultsTable(rowCount: recommendation.basalHours.count)
         }
     }
 
