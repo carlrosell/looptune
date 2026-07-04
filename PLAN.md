@@ -270,7 +270,7 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 | 1 | Domain model + LoopAlgorithm bridging types | ✅ |
 | 2 | Nightscout client (auth, endpoints, windowed fetch) | ✅ |
 | 3 | Ingest: NS → domain (profile expansion, doses, carbs, TZ) | ✅ |
-| 4 | Replay: deviation computation via LoopAlgorithm | ⬜ |
+| 4 | Replay: deviation computation via LoopAlgorithm | ✅ |
 | 5 | Tune: categorization + basal/ISF/CR tuning + chaining | ⬜ |
 | 6 | Recommendations: guardrails, tiers, confidence | ⬜ |
 | 7 | CLI end-to-end (`fetch` / `tune` / `report`) | ⬜ |
@@ -317,13 +317,16 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 - [ ] Profile-history alignment (pick active profile per day by `startDate`) — moves to Phase 4 windowing
 - [ ] Fill scheduled-basal gaps so LoopAlgorithm basal timeline starts ≤ first dose — Phase 4
 
-### Phase 4 — Replay ⬜
-- [ ] Window builder satisfying LoopAlgorithm coverage rules (`04` §3): glucose t−10h, doses/basal t−16h, ISF t−16h…t+6h10m, CR covering carb starts
-- [ ] Pre-validation guard (coverage gaps are `preconditionFailure` crashes)
-- [ ] Compute `deviations`, `BGI`, `avgDelta`, IOB, COB per datum
-- [ ] Constant provenance for ICE continuity; sorted arrays for binary-search assert
-- [ ] `PrecomputedInsulinInput` fast path for candidate sweeps
-- [ ] Tests: deviation timeline vs a hand-built LoopAlgorithm fixture
+### Phase 4 — Replay ✅ (core)
+- [x] Coverage-safe schedule timelines spanning all inputs + insulin tail (avoids `preconditionFailure`)
+- [x] Pipeline: `annotated(fillBasalGaps)` → `glucoseEffects` → `counteractionEffects` → carb `map(to:)` → `dynamicGlucoseEffects`
+- [x] Per-interval deviation = observed ΔBG − modeled insulin ΔBG − modeled carb ΔBG
+- [x] `DeviationSample` with deviation, insulin effect (BGI), avgDelta, IOB, COB
+- [x] Constant glucose provenance for ICE continuity; sorted fixture arrays
+- [x] `CumulativeEffectLookup` (interpolated, off-grid CGM timestamps)
+- [x] Guards: skip BG<40, long CGM gaps (>20min), post-hypo rebound zeroing
+- [x] Tests: no-insulin (deviation = ΔBG), bolus (10-min delay then negative effect), carb absorption, gap skipping (63 tests green)
+- [ ] `PrecomputedInsulinInput` fast path for candidate sweeps — deferred to Phase 5 (needed when sweeping ISF candidates)
 
 ### Phase 5 — Tune ⬜
 - [ ] Categorizer (CSF/UAM/basal/ISF) with clamps
@@ -407,6 +410,14 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   fractional-second timestamps, and epoch/ISO date mixing. 39 tests green.
   Deferred: devicestatus + JWT (not needed for core tuning); per-day fetch
   orchestration folds into Phase 3.
+- **2026-07-04** — Phase 4 core done, and the central thesis is now
+  demonstrated: `ReplayEngine` runs history through the real LoopAlgorithm
+  pipeline (annotate → insulin effects → ICE → dynamic carb absorption) and
+  produces Loop-native per-interval deviations plus BGI/IOB/COB. Tests confirm
+  correct behavior including Loop's 10-min insulin delay and dynamic carb
+  attribution. This validates the whole architecture (OQ-1). 63 tests green.
+  Also fixed a CodeRabbit pass (NaN sgv, lenient array skipping, TZ HHMM,
+  target-offset guard, epsilon compare).
 - **2026-07-04** — Phase 3 core done. Ingest layer: `ProfileIngest`
   (NS profile → `TherapyProfile` with unit conversion + TZ), `TreatmentIngest`
   (boluses, temp-basal effective rate + overlap trimming, suspends, carb dedupe,
