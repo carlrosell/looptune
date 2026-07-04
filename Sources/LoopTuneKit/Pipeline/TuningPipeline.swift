@@ -19,15 +19,28 @@ public struct TuningConfiguration: Sendable {
 /// All the raw data one run needs — separable from fetching so the pipeline can
 /// run offline against captured JSON.
 public struct TuningInputs: Sendable {
+    /// The current profile (what is in Loop now) — the recommendation baseline.
     public var profile: TherapyProfile
+    /// Full profile history, when available: lets the tuner replay each day
+    /// against the settings that were actually active then.
+    public var profileHistory: ProfileHistory?
     public var glucose: [GlucoseSample]
     public var doses: [DoseRecord]
     public var carbs: [CarbRecord]
     public var analysisStart: Date
     public var analysisEnd: Date
 
-    public init(profile: TherapyProfile, glucose: [GlucoseSample], doses: [DoseRecord], carbs: [CarbRecord], analysisStart: Date, analysisEnd: Date) {
+    public init(
+        profile: TherapyProfile,
+        profileHistory: ProfileHistory? = nil,
+        glucose: [GlucoseSample],
+        doses: [DoseRecord],
+        carbs: [CarbRecord],
+        analysisStart: Date,
+        analysisEnd: Date
+    ) {
         self.profile = profile
+        self.profileHistory = profileHistory
         self.glucose = glucose
         self.doses = doses
         self.carbs = carbs
@@ -70,7 +83,8 @@ public struct TuningPipeline: Sendable {
                 daysAnalyzed: days,
                 profileGlucoseUnit: profile.glucoseUnit,
                 daysMissingByHour: result.daysMissingByHour,
-                daysTuned: result.daysTuned
+                daysTuned: result.daysTuned,
+                settingsChanges: result.settingsChanges
             )
         }
 
@@ -124,10 +138,13 @@ public struct TuningPipeline: Sendable {
     ) async throws -> TuningInputs {
         let analysisStart = end.addingTimeInterval(-Double(configuration.days) * 86_400)
 
-        // Profile: always fetched fresh (settings may have just changed).
-        let profiles = try await client.fetchProfiles(count: 1)
-        guard let profileDoc = profiles.first else { throw PipelineError.noProfile }
-        var profile = try ProfileIngest.makeProfile(from: profileDoc)
+        // Profile history: always fetched fresh. Loop uploads a new document on
+        // every settings change, so the history lets each day replay against
+        // the settings that were actually active then.
+        let profileDocs = try await client.fetchProfiles(count: 100)
+        guard !profileDocs.isEmpty else { throw PipelineError.noProfile }
+        let history = try ProfileIngest.makeHistory(from: profileDocs)
+        var profile = history.current
         if profile.insulinType == nil { profile.insulinType = configuration.insulinType }
 
         cache?.pruneExpired()
@@ -164,6 +181,7 @@ public struct TuningPipeline: Sendable {
 
         return TuningInputs(
             profile: profile,
+            profileHistory: history,
             glucose: glucose,
             doses: ingested.doses,
             carbs: ingested.carbs,

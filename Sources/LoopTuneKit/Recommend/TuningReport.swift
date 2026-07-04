@@ -24,6 +24,10 @@ public enum TuningReport {
         lines.append("")
         lines.append("Days analyzed: \(recommendation.daysAnalyzed)   Samples: \(recommendation.totalSamples)   Units: \(unit.shortLabel)")
         lines.append(categoryLine(recommendation.categoryCounts))
+        if !recommendation.settingsChanges.isEmpty {
+            let dates = recommendation.settingsChanges.map { Self.dayFormatter.string(from: $0) }.joined(separator: ", ")
+            lines.append("Settings changed during the window (\(dates)); the analysis restarted from your applied settings at each change.")
+        }
         lines.append("")
 
         lines.append(pad("Parameter", 22) + pad("Pump", 14) + pad("LoopTune", 14) + "Change")
@@ -87,6 +91,13 @@ public enum TuningReport {
     private static func fmt2(_ value: Double) -> String {
         String(format: "%.2f", value)
     }
+
+    // ISO8601DateFormatter is documented thread-safe for formatting.
+    nonisolated(unsafe) private static let dayFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate]
+        return formatter
+    }()
 
     private static func flagSuffix(tier: ChangeTier, status: LoopGuardrails.Status) -> String {
         var flags: [String] = []

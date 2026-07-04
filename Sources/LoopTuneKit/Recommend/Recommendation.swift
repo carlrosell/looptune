@@ -150,6 +150,9 @@ public struct TuningRecommendation: Sendable, Equatable {
     public var profileGlucoseUnit: GlucoseUnit
     /// Number of day windows actually tuned (chained runs); nil for single runs.
     public var daysTuned: Int?
+    /// Therapy settings changes detected inside the window (from the profile
+    /// history). The tuner restarted from the applied settings at each.
+    public var settingsChanges: [Date]
 
     /// Sum of tuned basal over 24 hours (daily total, U).
     public var tunedDailyBasal: Double { basalHours.reduce(0) { $0 + $1.recommendedRate } }
@@ -164,7 +167,8 @@ public struct TuningRecommendation: Sendable, Equatable {
         daysAnalyzed: Int,
         profileGlucoseUnit: GlucoseUnit = .milligramsPerDeciliter,
         daysMissingByHour: [Int]? = nil,
-        daysTuned: Int? = nil
+        daysTuned: Int? = nil,
+        settingsChanges: [Date] = []
     ) {
         precondition(
             output.tunedBasalHourly.count == 24 && output.pumpBasalHourly.count == 24 && output.untunedBasalHours.count == 24,
@@ -201,5 +205,6 @@ public struct TuningRecommendation: Sendable, Equatable {
         self.daysAnalyzed = daysAnalyzed
         self.profileGlucoseUnit = profileGlucoseUnit
         self.daysTuned = daysTuned
+        self.settingsChanges = settingsChanges
     }
 }

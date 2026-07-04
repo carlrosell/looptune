@@ -100,6 +100,15 @@ struct ResultsView: View {
             Text("vs your pump settings · \(recommendation.daysAnalyzed) day\(recommendation.daysAnalyzed == 1 ? "" : "s"), \(recommendation.totalSamples) samples")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if !recommendation.settingsChanges.isEmpty {
+                Label {
+                    Text("You changed settings \(recommendation.settingsChanges.count == 1 ? "once" : "\(recommendation.settingsChanges.count) times") during this window — the analysis restarted from your applied settings at each change, so earlier days don't count against your new profile.")
+                } icon: {
+                    Image(systemName: "clock.arrow.circlepath")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
         }
     }
 

@@ -1,11 +1,69 @@
 import Foundation
 
+/// The history of a user's therapy profiles, built from Nightscout's profile
+/// documents (Loop uploads a new document on every settings change, with
+/// `startDate` marking when it became active).
+public struct ProfileHistory: Sendable {
+    /// Profiles with a known activation date, ascending by `activeFrom`.
+    public let timeline: [TherapyProfile]
+    /// The newest profile — what is in Loop right now.
+    public let current: TherapyProfile
+
+    public init(timeline: [TherapyProfile], current: TherapyProfile) {
+        self.timeline = timeline.sorted { ($0.activeFrom ?? .distantPast) < ($1.activeFrom ?? .distantPast) }
+        self.current = current
+    }
+
+    /// The profile that was active at `date`: the latest one activated at or
+    /// before it, falling back to the earliest known (best effort), then to
+    /// the current profile.
+    public func activeProfile(at date: Date) -> TherapyProfile {
+        var result: TherapyProfile?
+        for profile in timeline {
+            guard let activeFrom = profile.activeFrom else { continue }
+            if activeFrom <= date {
+                result = profile
+            } else {
+                break
+            }
+        }
+        return result ?? timeline.first ?? current
+    }
+}
+
+public extension TherapyProfile {
+    /// Whether two profiles agree on the tuning-relevant settings (basal, ISF,
+    /// carb ratio schedules). Loop uploads a new document for *any* settings
+    /// change, including ones that don't affect replay (targets, max bolus) —
+    /// those must not count as therapy changes.
+    func hasSameTherapySettings(as other: TherapyProfile) -> Bool {
+        basalSchedule == other.basalSchedule
+            && sensitivitySchedule == other.sensitivitySchedule
+            && carbRatioSchedule == other.carbRatioSchedule
+    }
+}
+
 /// Converts a Nightscout profile document into LoopTune's `TherapyProfile`.
 public enum ProfileIngest {
     public enum IngestError: Error, Equatable {
         case noStore
         case emptySchedule(String)
         case badSchedule(String)
+    }
+
+    /// Build a `ProfileHistory` from profile documents (newest first, as
+    /// `/api/v1/profile.json` returns them). Documents that fail to parse are
+    /// skipped; the newest parseable one becomes `current`.
+    public static func makeHistory(from docs: [NSProfileDocument]) throws -> ProfileHistory {
+        var parsed: [TherapyProfile] = []
+        for doc in docs {
+            if let profile = try? makeProfile(from: doc) {
+                parsed.append(profile)
+            }
+        }
+        guard let current = parsed.first else { throw IngestError.noStore }
+        let dated = parsed.filter { $0.activeFrom != nil }
+        return ProfileHistory(timeline: dated, current: current)
     }
 
     /// Build a `TherapyProfile` from a profile document. Glucose-denominated

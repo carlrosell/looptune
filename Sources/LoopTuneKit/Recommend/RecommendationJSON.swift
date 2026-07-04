@@ -43,6 +43,7 @@ struct RecommendationDTO: Encodable {
     var daysAnalyzed: Int
     var totalSamples: Int
     var displayUnit: String
+    var settingsChanges: [String]
     var categoryCounts: [String: Int]
     var sensitivity: Parameter
     var carbRatio: Parameter
@@ -63,6 +64,9 @@ struct RecommendationDTO: Encodable {
         daysAnalyzed = recommendation.daysAnalyzed
         totalSamples = recommendation.totalSamples
         self.displayUnit = displayUnit.shortLabel
+        let dayFormatter = ISO8601DateFormatter()
+        dayFormatter.formatOptions = [.withInternetDateTime]
+        settingsChanges = recommendation.settingsChanges.map { dayFormatter.string(from: $0) }
         categoryCounts = Dictionary(uniqueKeysWithValues: recommendation.categoryCounts.map { ($0.key.rawValue, $0.value) })
         sensitivity = Parameter(recommendation.sensitivity, in: displayUnit)
         carbRatio = Parameter(recommendation.carbRatio, in: displayUnit)

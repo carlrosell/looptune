@@ -15,6 +15,10 @@ public struct ChainedTuningResult: Sendable, Equatable {
     public var dailyISF: [Double]
     /// Carb ratio after each chained day.
     public var dailyCarbRatio: [Double]
+    /// Instants within the window where the user actually changed therapy
+    /// settings (from the profile history); the tuning iteration restarted from
+    /// the applied settings at each.
+    public var settingsChanges: [Date] = []
 }
 
 /// Runs tuning day-by-day over a multi-day window, feeding each day's tuned
@@ -40,14 +44,21 @@ public struct ChainedTuner: Sendable {
     }
 
     public func run(inputs: TuningInputs) throws -> ChainedTuningResult {
+        // Caps and the recommendation baseline are always the CURRENT profile —
+        // the output answers "what should I change from what's in Loop now".
         let pumpProfile = inputs.profile
-        var evolving = inputs.profile
 
         let windows = Self.dayWindows(
             from: inputs.analysisStart,
             to: inputs.analysisEnd,
             timeZone: pumpProfile.timeZone
         )
+
+        // The replay/tuning baseline starts from the settings that were
+        // actually active at the window start (when history is available).
+        var activeHistorical = inputs.profileHistory?.activeProfile(at: inputs.analysisStart) ?? inputs.profile
+        var evolving = activeHistorical
+        var settingsChanges: [Date] = []
 
         var daysMissing = [Int](repeating: 0, count: 24)
         var sampleCountByHour = [Int](repeating: 0, count: 24)
@@ -61,6 +72,18 @@ public struct ChainedTuner: Sendable {
         let replay = ReplayEngine()
 
         for window in windows {
+            // If the user actually changed therapy settings by this window,
+            // the applied settings supersede the simulated tuning trajectory:
+            // restart the iteration from what is really running in Loop.
+            if let history = inputs.profileHistory {
+                let nowActive = history.activeProfile(at: window.start)
+                if !nowActive.hasSameTherapySettings(as: activeHistorical) {
+                    evolving = nowActive
+                    activeHistorical = nowActive
+                    settingsChanges.append(nowActive.activeFrom ?? window.start)
+                }
+            }
+
             let deviations = try replay.computeDeviations(
                 glucose: inputs.glucose,
                 doses: inputs.doses,
@@ -126,7 +149,8 @@ public struct ChainedTuner: Sendable {
                 daysMissingByHour: daysMissing,
                 daysTuned: 0,
                 dailyISF: [],
-                dailyCarbRatio: []
+                dailyCarbRatio: [],
+                settingsChanges: settingsChanges
             )
         }
 
@@ -142,7 +166,8 @@ public struct ChainedTuner: Sendable {
             daysMissingByHour: daysMissing,
             daysTuned: daysTuned,
             dailyISF: dailyISF,
-            dailyCarbRatio: dailyCR
+            dailyCarbRatio: dailyCR,
+            settingsChanges: settingsChanges
         )
     }
 
