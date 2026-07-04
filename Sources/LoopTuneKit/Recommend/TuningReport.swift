@@ -28,12 +28,12 @@ public enum TuningReport {
         lines.append("")
 
         lines.append("Basal schedule [U/hr]")
-        lines.append(pad("Hour", 8) + pad("Pump", 12) + pad("LoopTune", 12) + "Flag")
-        lines.append(String(repeating: "-", count: 44))
+        lines.append(pad("Hour", 8) + pad("Pump", 12) + pad("LoopTune", 12) + pad("Days missing", 14) + "Flag")
+        lines.append(String(repeating: "-", count: 52))
         for hour in recommendation.basalHours where hour.pumpRate != hour.recommendedRate || !hour.untuned {
             lines.append(basalRow(hour))
         }
-        lines.append(String(repeating: "-", count: 44))
+        lines.append(String(repeating: "-", count: 52))
         lines.append(pad("Total", 8) + pad(fmt(recommendation.pumpDailyBasal), 12) + pad(fmt(recommendation.tunedDailyBasal), 12))
         lines.append("")
         lines.append(disclaimer)
@@ -55,7 +55,8 @@ public enum TuningReport {
     private static func basalRow(_ hour: BasalHourRecommendation) -> String {
         let label = String(format: "%02d:00", hour.hour)
         let flag = hour.untuned ? "(no data)" : tierFlag(hour.changeTier)
-        return pad(label, 8) + pad(fmt(hour.pumpRate), 12) + pad(fmt(hour.recommendedRate), 12) + flag
+        let missing = hour.daysMissing > 0 ? String(hour.daysMissing) : ""
+        return pad(label, 8) + pad(fmt(hour.pumpRate), 12) + pad(fmt(hour.recommendedRate), 12) + pad(missing, 14) + flag
     }
 
     private static func flagSuffix(tier: ChangeTier, status: LoopGuardrails.Status) -> String {

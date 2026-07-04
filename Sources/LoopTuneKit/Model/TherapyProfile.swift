@@ -96,4 +96,18 @@ public struct TherapyProfile: Sendable, Equatable {
             return AbsoluteScheduleValue(startDate: $0.startDate, endDate: $0.endDate, value: low...high)
         }
     }
+
+    /// A copy of this profile with tuned therapy values substituted — used by
+    /// day-chained tuning, where each day's output seeds the next day's replay.
+    /// ISF and CR become flat single-value schedules (autotune tunes one value).
+    public func replacing(basalHourly: [Double], isf: Double, carbRatio: Double) throws -> TherapyProfile {
+        precondition(basalHourly.count == 24, "basalHourly must have 24 entries")
+        var copy = self
+        copy.basalSchedule = try DailySchedule(entries: (0..<24).map {
+            .init(secondsSinceMidnight: $0 * 3600, value: basalHourly[$0])
+        })
+        copy.sensitivitySchedule = try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: isf)])
+        copy.carbRatioSchedule = try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: carbRatio)])
+        return copy
+    }
 }

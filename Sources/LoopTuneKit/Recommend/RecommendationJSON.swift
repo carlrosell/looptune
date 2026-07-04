@@ -31,6 +31,8 @@ struct RecommendationDTO: Encodable {
         var changeTier: String
         var guardrailStatus: String
         var untuned: Bool
+        var daysMissing: Int
+        var sampleCount: Int
     }
 
     var daysAnalyzed: Int
@@ -79,7 +81,9 @@ private extension RecommendationDTO.BasalHour {
             recommended: rec.recommendedRate,
             changeTier: rec.changeTier.rawValue,
             guardrailStatus: rec.guardrailStatus.rawValue,
-            untuned: rec.untuned
+            untuned: rec.untuned,
+            daysMissing: rec.daysMissing,
+            sampleCount: rec.sampleCount
         )
     }
 }

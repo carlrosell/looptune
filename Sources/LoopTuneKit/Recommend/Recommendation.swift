@@ -98,8 +98,13 @@ public struct BasalHourRecommendation: Sendable, Equatable {
     public var changeTier: ChangeTier
     public var guardrailStatus: LoopGuardrails.Status
     public var untuned: Bool
+    /// Day windows in which this hour received no tuning data (confidence:
+    /// higher = less real data behind the recommendation for this hour).
+    public var daysMissing: Int
+    /// Basal-categorized samples observed at this hour across the window.
+    public var sampleCount: Int
 
-    public init(hour: Int, pumpRate: Double, rawTunedRate: Double, untuned: Bool) {
+    public init(hour: Int, pumpRate: Double, rawTunedRate: Double, untuned: Bool, daysMissing: Int = 0, sampleCount: Int = 0) {
         self.hour = hour
         self.pumpRate = pumpRate
         let clamped = LoopGuardrails.clamp(rawTunedRate, to: LoopGuardrails.basalRate)
@@ -107,6 +112,8 @@ public struct BasalHourRecommendation: Sendable, Equatable {
         self.changeTier = ChangeTier.classify(pump: pumpRate, tuned: clamped.value)
         self.guardrailStatus = clamped.status
         self.untuned = untuned
+        self.daysMissing = daysMissing
+        self.sampleCount = sampleCount
     }
 }
 
@@ -122,12 +129,20 @@ public struct TuningRecommendation: Sendable, Equatable {
     public var daysAnalyzed: Int
     /// The site's own display unit — a sensible default for presentation.
     public var profileGlucoseUnit: GlucoseUnit
+    /// Number of day windows actually tuned (chained runs); nil for single runs.
+    public var daysTuned: Int?
 
     /// Sum of tuned basal over 24 hours (daily total, U).
     public var tunedDailyBasal: Double { basalHours.reduce(0) { $0 + $1.recommendedRate } }
     public var pumpDailyBasal: Double { basalHours.reduce(0) { $0 + $1.pumpRate } }
 
-    public init(from output: TuningOutput, daysAnalyzed: Int, profileGlucoseUnit: GlucoseUnit = .milligramsPerDeciliter) {
+    public init(
+        from output: TuningOutput,
+        daysAnalyzed: Int,
+        profileGlucoseUnit: GlucoseUnit = .milligramsPerDeciliter,
+        daysMissingByHour: [Int]? = nil,
+        daysTuned: Int? = nil
+    ) {
         precondition(
             output.tunedBasalHourly.count == 24 && output.pumpBasalHourly.count == 24 && output.untunedBasalHours.count == 24,
             "TuningOutput basal arrays must each contain 24 hourly entries"
@@ -153,12 +168,15 @@ public struct TuningRecommendation: Sendable, Equatable {
                 hour: hour,
                 pumpRate: output.pumpBasalHourly[hour],
                 rawTunedRate: output.tunedBasalHourly[hour],
-                untuned: output.untunedBasalHours[hour]
+                untuned: output.untunedBasalHours[hour],
+                daysMissing: daysMissingByHour?[hour] ?? (output.untunedBasalHours[hour] ? 1 : 0),
+                sampleCount: output.basalSampleCountByHour[hour]
             )
         }
         self.categoryCounts = output.categoryCounts
         self.totalSamples = output.totalSamples
         self.daysAnalyzed = daysAnalyzed
         self.profileGlucoseUnit = profileGlucoseUnit
+        self.daysTuned = daysTuned
     }
 }

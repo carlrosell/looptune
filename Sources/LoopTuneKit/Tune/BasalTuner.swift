@@ -16,6 +16,8 @@ public struct BasalTuner: Sendable {
         public var hourlyRates: [Double]
         /// Whether each hour was left untuned (no data / smoothed from neighbors).
         public var untuned: [Bool]
+        /// Basal-categorized deviation samples observed per hour (data coverage).
+        public var sampleCounts: [Int]
     }
 
     /// - Parameters:
@@ -31,7 +33,7 @@ public struct BasalTuner: Sendable {
     ) -> Result {
         precondition(currentHourly.count == 24 && pumpHourly.count == 24, "hourly arrays must have 24 entries")
         guard isf > 0 else {
-            return Result(hourlyRates: currentHourly, untuned: Array(repeating: true, count: 24))
+            return Result(hourlyRates: currentHourly, untuned: Array(repeating: true, count: 24), sampleCounts: Array(repeating: 0, count: 24))
         }
 
         // Sum basal-categorized deviations per local hour.
@@ -48,15 +50,20 @@ public struct BasalTuner: Sendable {
         var rates = currentHourly
         var touched = [Bool](repeating: false, count: 24)
 
+        // Rounding points below reproduce oref0's autotune/index.js exactly
+        // (verified against golden fixtures generated from the real JS): the
+        // hourly deviation sum rounds to 3 dp, basalNeeded to 2 dp, and every
+        // intermediate rate to 3 dp.
         for hour in 0..<24 {
             guard countByHour[hour] > 0 else { continue }
-            let basalNeeded = caps.stepFraction * deviationsByHour[hour] / isf
+            let deviationSum = round3(deviationsByHour[hour])
+            let basalNeeded = round2(caps.stepFraction * deviationSum / isf)
             let priorHours = [(hour + 21) % 24, (hour + 22) % 24, (hour + 23) % 24] // h−3, h−2, h−1
 
             if basalNeeded > 0 {
                 let perHour = basalNeeded / 3
                 for h in priorHours {
-                    rates[h] += perHour
+                    rates[h] = round3(rates[h] + perHour)
                     touched[h] = true
                 }
             } else if basalNeeded < 0 {
@@ -64,7 +71,7 @@ public struct BasalTuner: Sendable {
                 if threeHourSum > 0 {
                     let ratio = 1.0 + basalNeeded / threeHourSum
                     for h in priorHours {
-                        rates[h] *= ratio
+                        rates[h] = round3(rates[h] * ratio)
                         touched[h] = true
                     }
                 }
@@ -75,29 +82,37 @@ public struct BasalTuner: Sendable {
         for hour in 0..<24 {
             let lower = pumpHourly[hour] * caps.autotuneMin
             let upper = pumpHourly[hour] * caps.autotuneMax
-            rates[hour] = TuningMath.clamp(rates[hour], lower, upper)
+            rates[hour] = round3(TuningMath.clamp(rates[hour], lower, upper))
         }
 
         // Smooth untouched hours toward the nearest tuned neighbors.
         smoothUntouched(&rates, touched: touched, original: currentHourly)
 
-        return Result(hourlyRates: rates.map { ($0 * 1000).rounded() / 1000 }, untuned: touched.map { !$0 })
+        return Result(hourlyRates: rates.map(round3), untuned: touched.map { !$0 }, sampleCounts: countByHour)
     }
 
+    /// oref0's unused-basal smoothing: a forward pass over the hours, where the
+    /// "last adjusted" hour defaults to 0 and the "next adjusted" hour defaults
+    /// to 23 (no wrap-around), and each smoothed value is read back by later
+    /// hours from the live array — quirks preserved for fixture parity.
     private func smoothUntouched(_ rates: inout [Double], touched: [Bool], original: [Double]) {
         for hour in 0..<24 where !touched[hour] {
-            let last = nearestTouched(from: hour, step: -1, touched: touched) ?? hour
-            let next = nearestTouched(from: hour, step: +1, touched: touched) ?? hour
-            rates[hour] = 0.8 * original[hour] + 0.1 * rates[last] + 0.1 * rates[next]
+            var last = 0
+            var h = hour - 1
+            while h >= 0 {
+                if touched[h] { last = h; break }
+                h -= 1
+            }
+            var next = 23
+            h = hour + 1
+            while h < 24 {
+                if touched[h] { next = h; break }
+                h += 1
+            }
+            rates[hour] = round3(0.8 * original[hour] + 0.1 * rates[last] + 0.1 * rates[next])
         }
     }
 
-    private func nearestTouched(from hour: Int, step: Int, touched: [Bool]) -> Int? {
-        var h = hour
-        for _ in 0..<23 {
-            h = (h + step + 24) % 24
-            if touched[h] { return h }
-        }
-        return nil
-    }
+    private func round3(_ value: Double) -> Double { (value * 1000).rounded() / 1000 }
+    private func round2(_ value: Double) -> Double { (value * 100).rounded() / 100 }
 }

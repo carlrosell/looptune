@@ -46,12 +46,32 @@ public struct TuningPipeline: Sendable {
     }
 
     /// Run tuning against already-assembled inputs (offline path).
+    ///
+    /// Windows longer than one day are tuned with day-by-day chaining: each
+    /// day's tuned profile seeds the next day's replay while the pump profile
+    /// stays fixed as the safety-cap baseline (oref0's model).
     public func run(inputs: TuningInputs, configuration: TuningConfiguration) throws -> TuningRecommendation {
         guard inputs.glucose.count >= 2 else { throw PipelineError.noGlucose }
 
         var profile = inputs.profile
         if profile.insulinType == nil {
             profile.insulinType = configuration.insulinType
+        }
+        var chainInputs = inputs
+        chainInputs.profile = profile
+
+        let options = CategorizerOptions(categorizeUAMAsBasal: configuration.categorizeUAMAsBasal)
+        let days = max(1, Int((inputs.analysisEnd.timeIntervalSince(inputs.analysisStart) / 86_400).rounded()))
+
+        if days > 1 {
+            let result = try ChainedTuner(options: options).run(inputs: chainInputs)
+            return TuningRecommendation(
+                from: result.output,
+                daysAnalyzed: days,
+                profileGlucoseUnit: profile.glucoseUnit,
+                daysMissingByHour: result.daysMissingByHour,
+                daysTuned: result.daysTuned
+            )
         }
 
         let deviations = try ReplayEngine().computeDeviations(
@@ -63,7 +83,7 @@ public struct TuningPipeline: Sendable {
             analysisEnd: inputs.analysisEnd
         )
 
-        let tuner = LoopTuner(options: CategorizerOptions(categorizeUAMAsBasal: configuration.categorizeUAMAsBasal))
+        let tuner = LoopTuner(options: options)
         let output = tuner.tune(
             deviations: deviations,
             carbs: inputs.carbs,
@@ -73,7 +93,6 @@ public struct TuningPipeline: Sendable {
             analysisEnd: inputs.analysisEnd
         )
 
-        let days = max(1, Int((inputs.analysisEnd.timeIntervalSince(inputs.analysisStart) / 86_400).rounded()))
         return TuningRecommendation(from: output, daysAnalyzed: days, profileGlucoseUnit: profile.glucoseUnit)
     }
 

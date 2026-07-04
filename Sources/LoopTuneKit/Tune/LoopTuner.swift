@@ -16,6 +16,8 @@ public struct TuningOutput: Sendable, Equatable {
     public var categoryCounts: [DeviationCategory: Int]
     /// Total categorized samples analyzed.
     public var totalSamples: Int
+    /// Basal-categorized samples per local hour (data coverage, for charts).
+    public var basalSampleCountByHour: [Int]
 
     public init(
         tunedBasalHourly: [Double],
@@ -26,7 +28,8 @@ public struct TuningOutput: Sendable, Equatable {
         tunedCarbRatio: Double,
         pumpCarbRatio: Double,
         categoryCounts: [DeviationCategory: Int],
-        totalSamples: Int
+        totalSamples: Int,
+        basalSampleCountByHour: [Int] = Array(repeating: 0, count: 24)
     ) {
         self.tunedBasalHourly = tunedBasalHourly
         self.pumpBasalHourly = pumpBasalHourly
@@ -37,6 +40,7 @@ public struct TuningOutput: Sendable, Equatable {
         self.pumpCarbRatio = pumpCarbRatio
         self.categoryCounts = categoryCounts
         self.totalSamples = totalSamples
+        self.basalSampleCountByHour = basalSampleCountByHour
     }
 }
 
@@ -114,7 +118,8 @@ public struct LoopTuner: Sendable {
             tunedCarbRatio: tunedCR,
             pumpCarbRatio: pumpCR,
             categoryCounts: counts,
-            totalSamples: categorized.count
+            totalSamples: categorized.count,
+            basalSampleCountByHour: basalResult.sampleCounts
         )
     }
 }

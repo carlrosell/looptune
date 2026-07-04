@@ -30,7 +30,8 @@ public struct SensitivityTuner: Sendable {
         }
         guard !ratios.isEmpty else { return currentISF }
 
-        let medianRatio = TuningMath.median(ratios)
+        // oref0 rounds p50ratios to 3 dp before multiplying (autotune/index.js).
+        let medianRatio = (TuningMath.median(ratios) * 1000).rounded() / 1000
         let fullNewISF = currentISF * medianRatio
         guard fullNewISF > 0 else { return currentISF }
 
