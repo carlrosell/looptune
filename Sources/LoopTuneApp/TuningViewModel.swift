@@ -24,8 +24,37 @@ final class TuningViewModel {
     var phase: Phase = .idle
     var recommendation: TuningRecommendation?
 
+    private let store: CredentialStore
+
+    init(store: CredentialStore = CredentialStore()) {
+        self.store = store
+        restore()
+    }
+
     var canRun: Bool {
         !urlString.trimmingCharacters(in: .whitespaces).isEmpty && phase != .running
+    }
+
+    /// Restore the last-used connection settings (token from the Keychain).
+    private func restore() {
+        if let saved = store.urlString {
+            urlString = saved
+            if let host = CredentialStore.host(from: saved), let savedToken = store.token(forHost: host) {
+                token = savedToken
+            }
+        }
+        if let savedDays = store.days { days = savedDays }
+        if let raw = store.insulinTypeRaw, let type = InsulinType(rawValue: raw) { insulinType = type }
+    }
+
+    /// Persist settings after a successful analysis (token to the Keychain).
+    private func persist() {
+        store.urlString = urlString
+        store.days = days
+        store.insulinTypeRaw = insulinType.rawValue
+        if let host = CredentialStore.host(from: urlString) {
+            store.saveToken(token, forHost: host)
+        }
     }
 
     func run() {
@@ -48,6 +77,7 @@ final class TuningViewModel {
                 }.value
                 self.recommendation = result
                 self.phase = .done
+                self.persist()
             } catch {
                 self.phase = .failed(Self.describe(error))
             }

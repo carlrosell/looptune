@@ -83,6 +83,9 @@ struct ResultsView: View {
                     ParameterCard(rec: recommendation.carbRatio, displayUnit: displayUnit)
                 }
 
+                BasalChartView(hours: recommendation.basalHours)
+                CoverageChartView(hours: recommendation.basalHours)
+
                 basalTable
             }
             .padding(20)
@@ -111,6 +114,8 @@ struct ResultsView: View {
                         .foregroundStyle(color(for: hour.changeTier))
                     if hour.untuned {
                         Text("no data").font(.caption).foregroundStyle(.tertiary)
+                    } else if hour.daysMissing > 0 {
+                        Text("\(hour.daysMissing)d missing").font(.caption).foregroundStyle(.tertiary)
                     }
                     Spacer()
                 }
