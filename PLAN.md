@@ -1,0 +1,393 @@
+# LoopTune — Implementation Plan & Status
+
+> Living document. Every phase has a **status** and a checklist. Update the
+> status table and the phase checklists as work lands. Keep the "Status log"
+> at the bottom append-only so we can always see how we got here.
+
+---
+
+## 1. Vision
+
+A native macOS app (SwiftUI + Swift Package Manager) that fetches a Loop user's
+Nightscout history (CGM, insulin, carbs, overrides, profile) and recommends
+tuned therapy settings — **basal schedule, insulin sensitivity factor (ISF),
+and carb ratio (CR)** — by replaying that history through **Loop's own
+algorithm models**, not oref0's.
+
+It is the Loop-native analogue of [AutotuneWeb](https://github.com/MarkMpn/AutotuneWeb)
+and its successor [nighttune](https://github.com/houthacker/nighttune), which
+wrap oref0 autotune for OpenAPS/AndroidAPS users.
+
+### Why not just run oref0 autotune (like nighttune does)?
+
+The reference research (see `references/notes/`) makes the case concrete: oref0
+autotune's output is **not valid for Loop users** because the two systems use
+different physiological models. Specifically:
+
+- **Insulin model mismatch.** oref0 clamps DIA to 5 h (300 min); Loop uses a
+  6 h (360 min) exponential curve and defines ISF as the drop from 1 U over the
+  *full* 6 h. Consequence: a correct Loop ISF is typically **2–3× larger** than
+  the equivalent oref0/pre-Loop correction factor. Transplanting oref0's ISF/CR
+  into Loop under-doses corrections — a safety problem. (Source: Loop and Learn,
+  loopdocs prediction; `references/notes/07-prior-art.md` §2d.)
+- **Temp-basal / autobolus upload semantics.** Loop's Automatic Bolus delivers
+  up to 40% of needed insulin as discrete boluses, and Omnipod pulse timing
+  distorts the `amount` field oref0 doesn't fully consume — so oref0 mis-splits
+  basal vs ISF for Loop data. (oref0 issue #1362; `07-prior-art.md` §2a–2c.)
+- **No UAM in Loop.** Loop requires carb entries and uses dynamic absorption;
+  oref0's UAM handling doesn't correspond to anything Loop does.
+
+**LoopTune's key idea:** compute the per-5-minute glucose *deviations* (insulin
+counteraction effect minus modeled carb effect) using the **real LoopKit
+`LoopAlgorithm` Swift package** — Loop's exact exponential insulin model,
+dynamic piecewise-linear carb absorption, and ICE pipeline — and then apply an
+**autotune-style tuning layer** (adapted from oref0's well-understood
+categorization + adjustment math) on top of those Loop-native deviations. The
+result is a recommendation expressed in Loop's own model, so it is semantically
+valid to enter into Loop's therapy settings.
+
+> This is a novel synthesis: oref0's *tuning structure* over LoopAlgorithm's
+> *forward model*. No prior tool does exactly this (the defunct LoopKit `Learn`
+> app replayed effects but never shipped a settings tuner — `07-prior-art.md` §3).
+
+### Non-goals
+
+- Not a medical device; **never auto-applies** settings. Advisory only, with
+  loud disclaimers and mandatory human review (matches Loop's design philosophy
+  of user-controlled therapy settings).
+- No pump/loop control, no writing back to Nightscout in v1 (a later, clearly
+  gated "upload as new profile" feature is possible — nighttune has it — but
+  off by default and out of the initial scope).
+- Does not tune DIA/insulin-peak or targets (Loop doesn't let users edit the
+  insulin model in-app, and targets are a personal/clinical choice).
+
+---
+
+## 2. High-level architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ LoopTuneApp (SwiftUI macOS)      LoopTuneCLI (headless, testable) │
+└───────────────┬─────────────────────────────┬───────────────────┘
+                │                             │
+                ▼                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                          LoopTuneKit                             │
+│                                                                   │
+│  Nightscout/    HTTP client, auth (token/api-secret/JWT), DTOs,   │
+│                 per-day windowed fetch, redirect normalization    │
+│      │                                                            │
+│      ▼                                                            │
+│  Ingest/        NS DTO → domain model; profile schedule expansion │
+│                 (timezone/DST) into AbsoluteScheduleValue; temp-  │
+│                 basal→dose volume; suspend materialization; carb  │
+│                 dedupe/overlap-trim; override application          │
+│      │                                                            │
+│      ▼                                                            │
+│  Replay/        For each 5-min datum: build LoopAlgorithm windows │
+│                 and compute deviations = ICE − carbEffect using   │
+│                 the real LoopAlgorithm package (Loop's models)    │
+│      │                                                            │
+│      ▼                                                            │
+│  Tune/          Categorize each datum (basal/ISF/CSF/UAM), then   │
+│                 tune basal schedule + ISF + CR with day-chaining  │
+│                 and safety caps (autotune-adapted logic)          │
+│      │                                                            │
+│      ▼                                                            │
+│  Recommend/     Recommendation model: per-parameter pump vs tuned │
+│                 value, day-count/confidence, change tier, Loop    │
+│                 guardrail clamping                                 │
+│                                                                   │
+│  Support/       LoopUnit bridging, timezone, errors, logging      │
+└─────────────────────────────────────────────────────────────────┘
+                │
+                ▼
+        depends on  →  LoopKit/LoopAlgorithm  (pinned by revision)
+                       apple/swift-argument-parser (CLI)
+```
+
+**Dependency:** `LoopAlgorithm` is pinned by commit `2f5c630…` (the repo
+publishes no version tags, and this checkout has back-testing additions —
+`PrecomputedInsulinInput`, parallel mid-absorption ISF — that we rely on for
+fast candidate sweeps). Platform floor is **macOS 14** (LoopAlgorithm requires
+13; we take 14 for modern SwiftUI/Observation).
+
+---
+
+## 3. The LoopTune algorithm (the heart)
+
+Adapts oref0 autotune (`references/notes/03-oref0-autotune.md`) but replaces its
+internal IOB/BGI/deviation computation with LoopAlgorithm output
+(`references/notes/04-loopalgorithm.md`). Reference oref0 numbers are the
+starting point; each is a tunable constant we can validate against golden data.
+
+### 3.1 Deviation computation (Loop-native — this is the big departure)
+
+For a replay window, use LoopAlgorithm's public pipeline (all verified public in
+`04-loopalgorithm.md` §5, Option B):
+
+```
+annotated  = doses.annotated(with: basalSchedule)               // [BasalRelativeDose], nets temps vs scheduled
+insulinFx  = annotated.glucoseEffects(insulinSensitivityHistory: isf, from:…, to:…)
+ice        = glucose.counteractionEffects(to: insulinFx)        // [GlucoseEffectVelocity], mg/dL/s
+statuses   = carbEntries.map(to: ice, carbRatio: cr, insulinSensitivity: isf)   // dynamic absorption
+carbFx     = statuses.dynamicGlucoseEffects(from:…, to:…, carbRatios: cr, insulinSensitivities: isf)
+deviations = ice.subtracting(carbFx)                            // [GlucoseEffect] per ~5-min CGM interval, mg/dL
+```
+
+`deviations[i]` = observed BG change minus (insulin-modeled + carb-modeled)
+change over that interval, in mg/dL — **exactly the autotune "deviation" but
+computed with Loop's insulin curve and Loop's dynamic carb absorption**.
+`ice` velocities are mg/dL/**s** (× 300 for per-5-min mg/dL). We also derive per
+datum, from LoopAlgorithm, the equivalents of the oref0 quantities:
+
+| oref0 quantity | LoopTune source |
+|---|---|
+| `BGI` (insulin-only ΔBG/5m) | difference of consecutive `insulinFx` cumulative values |
+| `deviation` | `deviations[i]` (per-interval, already carb-adjusted) |
+| `avgDelta` | mean of last 4 five-min glucose deltas (same as oref0) |
+| `iob.activity`, `iob.iob` | `insulinOnBoardTimeline(…)` + activity via `insulinFx` slope |
+| `basalBGI` | `scheduledBasal(t) × ISF(t) / 60 × 5` (same formula) |
+| COB / CSF | LoopAlgorithm `dynamicCarbsOnBoard` / CarbStatus (Loop's model, replaces oref0's `min_5m_carbimpact` decay) |
+
+> **Design note.** oref0 decays COB with a crude `min_5m_carbimpact` floor.
+> LoopAlgorithm already produces observed carb absorption from ICE. LoopTune uses
+> LoopAlgorithm's COB directly and does **not** reintroduce `min_5m_carbimpact`;
+> the "absorbing/meal" categorization keys off LoopAlgorithm COB > 0 and
+> CarbStatus activity instead. (Open question OQ-2 below.)
+
+### 3.2 Categorization (adapted from `categorize.js`)
+
+Per 5-min datum, in priority order (oref0 §1.5, `03-oref0-autotune.md`):
+
+1. **CSF (meal)**: LoopAlgorithm COB > 0, or still absorbing (IOB > basal/2 and
+   deviation > 0), or recent carb entry active. Tag `mealAbsorption` start/end.
+2. **UAM**: `iob > 2×basal || deviation > 6`. Since **Loop has no UAM**, default
+   policy is `categorizeUAMAsBasal = true` (nighttune's default is also true) —
+   but we keep the reassignment logic (lowest-50% deviation retention) available
+   and documented, because unlogged carbs still happen. (OQ-3.)
+3. **basal vs ISF**: `if basalBGI > −4×BGI → basal`; else if
+   `avgDelta > 0 && avgDelta > −2×BGI → basal`; else **ISF**.
+
+Clamps preserved: skip datum if BG < 40 or BG[i+4] < 40; zero positive
+deviations when BG < 80 (post-hypo rebound guard).
+
+### 3.3 Parameter tuning (adapted from `autotune/index.js`)
+
+- **Basal (per hour, 24 slots):** `basalNeeded(h) = 0.2 × Σdeviations(h) / ISF`.
+  Positive → add `basalNeeded/3` to hours h−3, h−2, h−1 (wrap mod 24); negative →
+  scale those 3 hours by `1 + basalNeeded/threeHourSum`. Then clamp each hour to
+  `[pumpRate(h)×autotuneMin, pumpRate(h)×autotuneMax]`. Unused-hour smoothing:
+  `0.8×orig + 0.1×lastAdjusted + 0.1×nextAdjusted`, increment `untuned(h)`
+  counter (surfaced as "days missing"). Hours evaluated in **profile timezone**.
+- **ISF (single value, like oref0):** per ISF datum `ratio = 1 + deviation/BGI`;
+  `fullNewISF = ISF × median(ratios)` (needs ≥10 datapoints, else unchanged);
+  optional blend toward pump ISF via `adjustmentFraction` (default 1.0 = none);
+  `newISF = 0.8×ISF + 0.2×adjustedISF`; clamp `[pumpISF/autotuneMax, pumpISF/autotuneMin]`.
+  > Loop supports an ISF *schedule* (up to 48 entries). v1 tunes a single ISF
+  > (parity with autotune, simpler, well-validated). Per-slot ISF is a stretch
+  > goal (OQ-4).
+- **Carb Ratio (single value):** per meal period (COB>0 start; ends when COB=0
+  and IOB<basal/2; min 60 min): `CRInsulinTotal = CRInitialIOB + insulinDosed +
+  (CREndBG−CRInitialBG)/ISF`; `totalCR = ΣCarbs / ΣInsulin` (only periods with
+  CRInsulinTotal>0); `newCR = 0.8×CR + 0.2×clamp(totalCR, [max(4,pumpCR×0.7),
+  min(28,pumpCR×1.2)])`. **Absolute CR bounds use Loop guardrails (4–28
+  recommended, 2–150 absolute), not oref0's 3–150.**
+
+### 3.4 Day chaining & weighting
+
+Run prep+tune per local day chronologically; each day's tuned profile seeds the
+next (oref0 model). No explicit averaging — the 20% step yields implicit
+exponential recency weighting (`0.2 × 0.8^(k−1)`). All safety caps are computed
+against the **fixed pump profile** so multi-day drift is bounded regardless of
+window length. Default window 7 days (max 30), matching AutotuneWeb/nighttune.
+
+### 3.5 Safety caps & guardrails
+
+- Per-run multipliers vs pump profile: `autotuneMax = 1.2`, `autotuneMin = 0.7`
+  (basal, CR, CSF); ISF inverted (`/0.7`, `/1.2`).
+- **Loop guardrails** clamp the final recommendation (from LoopKit
+  `Guardrail+Settings.swift`, `07-prior-art.md` §5): Basal 0.05–30 U/hr; ISF
+  abs 10–500, rec 16–399 mg/dL/U; CR abs 2–150, rec 4–28 g/U; suspend threshold
+  67–110. Present a value outside *recommended* but inside *absolute* with a
+  yellow warning; at the absolute limit, red.
+- **Change tiers** (from AutotuneWeb): yellow when |Δ| ≥ 10%, red when
+  Δ ≥ +20% or ≤ −30%.
+- **Confidence:** per basal hour and per parameter, show days-of-real-data vs
+  interpolated (AutotuneWeb's green/red strip). Downweight/flag meal-dominated
+  basal hours (they get flattened — `03` pitfalls).
+
+---
+
+## 4. Data model (domain types in `Model/`)
+
+- `NightscoutProfile` / `TunableProfile` — basal/ISF/CR/target schedules +
+  timezone + units + loop settings (dosingStrategy, suspend threshold, max
+  basal/bolus). Schedules stored as time-of-day; expanded to
+  `AbsoluteScheduleValue<…>` timelines per day for LoopAlgorithm.
+- `GlucoseSample` (mg/dL, provenance constant for replay), `DoseRecord`
+  (bolus/tempBasal/suspend → LoopAlgorithm `FixtureInsulinDose` with absolute
+  volume), `CarbRecord` (grams + absorptionTime), `OverridePeriod`.
+- `DeviationSample` — timestamp, BG, avgDelta, BGI, deviation, IOB, COB,
+  category, meal/uam flags.
+- `TuningResult` — tuned basal schedule, ISF, CR, plus per-parameter
+  `Recommendation { pumpValue, tunedValue, changePercent, tier, daysMissing,
+  guardrailStatus }`.
+
+Persistence uses the LoopAlgorithm **Fixture** Codable types (the non-Fixture
+`AlgorithmOutput` is Encodable-only — `04` pitfalls), so replay inputs/outputs
+serialize cleanly for golden tests.
+
+---
+
+## 5. Reference-parity & correctness strategy
+
+The reference repos are production-grade; we mine them for exact numbers and use
+them as oracles:
+
+1. **LoopAlgorithm golden fixtures.** Reuse the package's own JSON fixture format
+   (`AlgorithmInputFixture` / `LoopAlgorithmRunner`). Our replay must reproduce
+   LoopAlgorithm's `insulinCounteraction` / effects bit-for-bit for shared
+   inputs (they're the same package — this validates our *wiring*, not the math).
+2. **oref0 tuning parity harness.** Port a handful of oref0
+   `autotune.<date>.json` → `newprofile.<date>.json` cases as fixtures and check
+   our tuning *structure* matches oref0 when fed oref0-style deviations (isolates
+   tuning-logic bugs from model differences).
+3. **Nightscout DTO fixtures.** Capture real-shaped (anonymized) NS documents
+   from the formats documented in `06` and round-trip them through Ingest.
+4. **Property tests.** Guardrail clamping, timezone/DST bucketing, temp-basal
+   overlap trimming, unit conversion (mmol×18), schedule expansion.
+
+---
+
+## 6. Phased plan & status
+
+Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
+
+| # | Phase | Status |
+|---|-------|--------|
+| 0 | Repo, package scaffold, CI, dependency wiring | ✅ |
+| 1 | Domain model + LoopAlgorithm bridging types | ✅ |
+| 2 | Nightscout client (auth, endpoints, windowed fetch) | ✅ |
+| 3 | Ingest: NS → domain (profile expansion, doses, carbs, TZ) | 🟡 |
+| 4 | Replay: deviation computation via LoopAlgorithm | ⬜ |
+| 5 | Tune: categorization + basal/ISF/CR tuning + chaining | ⬜ |
+| 6 | Recommendations: guardrails, tiers, confidence | ⬜ |
+| 7 | CLI end-to-end (`fetch` / `tune` / `report`) | ⬜ |
+| 8 | SwiftUI app (wizard + results + charts) | ⬜ |
+| 9 | Hardening: golden fixtures, edge cases, docs, coderabbit | ⬜ |
+
+### Phase 0 — Scaffold ✅
+- [x] Git repo, MIT license, README, .gitignore
+- [x] Private GitHub repo `carlrosell/looptune`, pushed
+- [x] SwiftPM package: `LoopTuneKit` lib + `looptune` CLI + `LoopTuneApp`
+- [x] Depend on pinned `LoopAlgorithm`; `swift build` + `swift test` green
+- [x] GitHub Actions CI (build + test on macOS)
+- [x] Clone reference repos + capture research notes under `references/notes/`
+
+### Phase 1 — Domain model + bridging ✅
+- [x] `GlucoseSample`, `DoseRecord`, `CarbRecord`, `OverridePeriod`, `TherapyProfile`
+- [x] Time-of-day schedule types (basal/ISF/CR/target) with `value` coercion
+- [x] Expansion to `AbsoluteScheduleValue` timelines honoring timezone/DST
+- [x] `LoopUnit`/`LoopQuantity` bridging helpers + mmol↔mg/dL
+- [x] Conform domain doses/carbs/glucose to LoopAlgorithm protocols (or adapters)
+- [x] Unit tests for schedule expansion, unit conversion, DST edge cases
+
+### Phase 2 — Nightscout client ✅
+- [x] URL normalization (strip paths, follow redirects)
+- [x] Auth: `?token=`, `api-secret` (SHA-1 hex), JWT via `/api/v2/authorization`
+- [x] Auth probe `/api/v1/experiments/test`; unauthenticated-first fallback
+- [x] Endpoints: entries/sgv, treatments, profile(+history), devicestatus, status
+- [x] Per-day windowed fetch with oref0 padding (−18h/+42h) + `count`
+- [x] Codable DTOs tolerant of the `06` quirks (string numbers, frac seconds)
+- [x] Units detection (status.json + profile precedence)
+- [x] Tests against captured fixture payloads (URLProtocol stub)
+
+### Phase 3 — Ingest 🟡
+- [ ] Profile doc → `TherapyProfile` (store[defaultProfile], timezone parse incl. ETC/GMT sign inversion)
+- [ ] Temp Basal → dose volume (`amount` preferred; else `rate×duration`); suspend (rate 0/reason) → zero-volume basal dose
+- [ ] Overlap trimming (sort, clip to next start, drop null-duration)
+- [ ] Bolus → dose (`insulin` delivered; automatic flag retained)
+- [ ] Carb Correction → `CarbRecord` (absorptionTime default 180; ±2s dedupe)
+- [ ] Override periods → scale factors over intervals
+- [ ] Profile-history alignment (pick active profile per day by `startDate`)
+- [ ] Fill scheduled-basal gaps so LoopAlgorithm basal timeline starts ≤ first dose
+- [ ] Tests: overlap trim, suspend, dedupe, TZ bucketing, retroactive edits
+
+### Phase 4 — Replay ⬜
+- [ ] Window builder satisfying LoopAlgorithm coverage rules (`04` §3): glucose t−10h, doses/basal t−16h, ISF t−16h…t+6h10m, CR covering carb starts
+- [ ] Pre-validation guard (coverage gaps are `preconditionFailure` crashes)
+- [ ] Compute `deviations`, `BGI`, `avgDelta`, IOB, COB per datum
+- [ ] Constant provenance for ICE continuity; sorted arrays for binary-search assert
+- [ ] `PrecomputedInsulinInput` fast path for candidate sweeps
+- [ ] Tests: deviation timeline vs a hand-built LoopAlgorithm fixture
+
+### Phase 5 — Tune ⬜
+- [ ] Categorizer (CSF/UAM/basal/ISF) with clamps
+- [ ] UAM reassignment policy (default UAM→basal for Loop)
+- [ ] Basal per-hour tuner + unused-hour smoothing + caps
+- [ ] ISF median-ratio tuner (≥10 pts, adjustmentFraction, caps)
+- [ ] CR per-meal tuner (≥60min periods, caps)
+- [ ] Day chaining harness (chronological, pump profile as fixed cap baseline)
+- [ ] oref0 parity tests on ported prep→core fixtures
+
+### Phase 6 — Recommendations ⬜
+- [ ] Loop guardrail clamping + status (recommended/absolute/limit)
+- [ ] Change tiers (10% yellow, 20%/−30% red)
+- [ ] Per-hour / per-parameter day-count confidence
+- [ ] Meal-dominated-hour flagging
+- [ ] `TuningResult` serialization + summary formatter
+
+### Phase 7 — CLI ⬜
+- [ ] `looptune fetch` (dump normalized NS data to JSON)
+- [ ] `looptune tune` (full pipeline → recommendation JSON/table)
+- [ ] `looptune report` (autotune-style fixed-width table)
+- [ ] Config: URL, token, days, insulin type, options; env + flags
+- [ ] Golden CLI output tests
+
+### Phase 8 — SwiftUI app ⬜
+- [ ] Wizard: connect → profile pick/confirm → options → run → results
+- [ ] Results: ISF/CR cards + basal table with pump vs tuned + tiers + confidence
+- [ ] Charts (basal schedule, per-hour deviation coverage) — see `/dataviz`
+- [ ] Loud medical disclaimer gate; "review with your care team" copy
+- [ ] Keychain storage for URL/token; no telemetry
+- [ ] UI tests / snapshot where feasible
+
+### Phase 9 — Hardening ⬜
+- [ ] Expand golden fixtures; fuzz malformed NS payloads
+- [ ] Timezone/DST torture tests; leap/`ETC/GMT` cases
+- [ ] Performance: 30-day replay within a few seconds (PrecomputedInsulinInput)
+- [ ] `coderabbit` CLI clean pass
+- [ ] User docs (how to read recommendations, caveats)
+
+---
+
+## 7. Open questions / decisions to revisit
+
+- **OQ-1 (settled).** Use LoopAlgorithm for the forward model + oref0-adapted
+  tuning layer. Rationale in §1.
+- **OQ-2.** Should categorization COB come purely from LoopAlgorithm's dynamic
+  absorption, or do we keep a `min_5m_carbimpact`-style floor for robustness on
+  sparse data? Leaning: pure LoopAlgorithm COB; revisit if meal periods look
+  unstable on real data.
+- **OQ-3.** UAM handling for Loop: default UAM→basal. Expose as an option?
+  nighttune defaults `uam_as_basal = true`. Likely keep as an advanced toggle.
+- **OQ-4.** Tune a full ISF *schedule* (Loop supports 48 entries) vs a single
+  ISF (autotune parity)? v1 = single; schedule is a stretch goal.
+- **OQ-5.** Overrides during a window: exclude those intervals from tuning, or
+  model the scale factor? Leaning: exclude override intervals from
+  basal/ISF/CR attribution in v1 (cleaner), flag coverage loss.
+- **OQ-6.** Write-back to Nightscout as a new profile (nighttune has it). Out of
+  v1 scope; if added, gate behind explicit confirmation + `api:profile:*` roles.
+
+---
+
+## 8. Status log (append-only)
+
+- **2026-07-04** — Repo initialized; scaffold (LoopTuneKit/CLI/App) builds and
+  tests green against pinned LoopAlgorithm; CI added; pushed to
+  `carlrosell/looptune` (private). Ran a 7-agent research workflow over
+  nighttune, AutotuneWeb, oref0, LoopAlgorithm, loopdocs, Nightscout/Loop data
+  formats, and prior art; distilled notes saved under `references/notes/`.
+  Wrote this plan. Core architectural decision (OQ-1) settled: LoopAlgorithm
+  forward model + oref0-adapted tuning.
