@@ -39,11 +39,5 @@ struct ContentView: View {
             ResultsPane(model: model)
                 .frame(minWidth: 400)
         }
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text("LoopTune")
-                    .font(.headline)
-            }
-        }
     }
 }

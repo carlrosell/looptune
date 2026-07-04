@@ -59,13 +59,9 @@ struct ConnectionForm: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("LoopTune")
-                .font(.largeTitle.bold())
-            Text("Tune Loop settings from your Nightscout history.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
+        Text("Tune Loop settings from your Nightscout history.")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
     }
 
     @ViewBuilder
