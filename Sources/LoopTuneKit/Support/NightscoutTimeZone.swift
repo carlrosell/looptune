@@ -50,10 +50,26 @@ public enum NightscoutTimeZone {
             guard let signChar = remainder.first, signChar == "+" || signChar == "-" else {
                 return nil
             }
-            let magnitudePart = remainder.dropFirst()
-            let pieces = magnitudePart.split(separator: ":")
-            guard let hours = Int(pieces[0]) else { return nil }
-            let minutes = pieces.count > 1 ? (Int(pieces[1]) ?? 0) : 0
+            let magnitudePart = String(remainder.dropFirst())
+            let (hours, minutes): (Int, Int)
+            if magnitudePart.contains(":") {
+                // HH:MM form.
+                let pieces = magnitudePart.split(separator: ":")
+                guard let h = Int(pieces[0]) else { return nil }
+                hours = h
+                minutes = pieces.count > 1 ? (Int(pieces[1]) ?? 0) : 0
+            } else if magnitudePart.count == 4, let combined = Int(magnitudePart) {
+                // HHMM form (e.g. GMT+0200).
+                hours = combined / 100
+                minutes = combined % 100
+            } else if let h = Int(magnitudePart) {
+                // Whole-hour form (e.g. ETC/GMT+5).
+                hours = h
+                minutes = 0
+            } else {
+                return nil
+            }
+            guard (0..<24).contains(hours), (0..<60).contains(minutes) else { return nil }
 
             let sign = (signChar == "+") ? 1 : -1
             let posixOffset = sign * (hours * 3600 + minutes * 60)

@@ -33,7 +33,7 @@ public struct OverridePeriod: Sendable, Equatable {
     /// Whether this override alters insulin needs (and therefore perturbs
     /// basal/ISF/CR attribution during replay).
     public var affectsInsulinNeeds: Bool {
-        if let factor = insulinNeedsScaleFactor { return factor != 1.0 }
+        if let factor = insulinNeedsScaleFactor { return abs(factor - 1.0) > 1e-9 }
         return false
     }
 

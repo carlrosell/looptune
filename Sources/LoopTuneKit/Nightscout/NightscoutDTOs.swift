@@ -28,7 +28,13 @@ extension NSEntry: Decodable {
         } else {
             throw DecodingError.dataCorruptedError(forKey: .date, in: container, debugDescription: "entry has no usable date")
         }
-        sgv = container.lenientDouble(forKey: .sgv) ?? .nan
+        // Reject missing/non-finite glucose loudly rather than storing a NaN
+        // sentinel. Batch fetches decode leniently (see `LenientArray`), so one
+        // malformed entry is skipped rather than failing the whole response.
+        guard let decodedSGV = container.lenientDouble(forKey: .sgv), decodedSGV.isFinite else {
+            throw DecodingError.dataCorruptedError(forKey: .sgv, in: container, debugDescription: "entry has no usable sgv")
+        }
+        sgv = decodedSGV
         type = container.lenientString(forKey: .type)
         device = container.lenientString(forKey: .device)
     }

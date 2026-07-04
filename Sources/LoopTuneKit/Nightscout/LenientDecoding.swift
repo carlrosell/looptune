@@ -16,12 +16,13 @@ extension KeyedDecodingContainer {
         return nil
     }
 
-    /// An `Int` encoded as a number or numeric string.
+    /// An `Int` encoded as a number or numeric string. Non-finite doubles are
+    /// rejected (rather than trapping in `Int(_:)`).
     func lenientInt(forKey key: Key) -> Int? {
         if let value = try? decodeIfPresent(Int.self, forKey: key) {
             return value
         }
-        if let value = lenientDouble(forKey: key) {
+        if let value = lenientDouble(forKey: key), value.isFinite {
             return Int(value)
         }
         return nil

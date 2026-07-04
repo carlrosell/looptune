@@ -89,21 +89,35 @@ public struct NightscoutClient: Sendable {
         return request
     }
 
-    private func fetch<T: Decodable>(_ type: T.Type, path: String, queryItems: [URLQueryItem]) async throws -> T {
+    private func fetchData(path: String, queryItems: [URLQueryItem]) async throws -> Data {
         guard let request = makeRequest(path: path, queryItems: queryItems) else {
             throw NightscoutError.invalidURL
         }
         let (data, response) = try await transport.data(for: request)
         switch response.statusCode {
         case 200..<300:
-            break
+            return data
         case 401, 403:
             throw NightscoutError.unauthorized
         default:
             throw NightscoutError.httpStatus(response.statusCode)
         }
+    }
+
+    private func fetch<T: Decodable>(_ type: T.Type, path: String, queryItems: [URLQueryItem]) async throws -> T {
+        let data = try await fetchData(path: path, queryItems: queryItems)
         do {
             return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw NightscoutError.decoding(String(describing: error))
+        }
+    }
+
+    /// Decode a JSON array, skipping individual malformed elements.
+    private func fetchArray<Element: Decodable>(_ type: Element.Type, path: String, queryItems: [URLQueryItem]) async throws -> [Element] {
+        let data = try await fetchData(path: path, queryItems: queryItems)
+        do {
+            return try JSONDecoder().decode(LenientArray<Element>.self, from: data).elements
         } catch {
             throw NightscoutError.decoding(String(describing: error))
         }
@@ -130,7 +144,7 @@ public struct NightscoutClient: Sendable {
             URLQueryItem(name: "find[date][$lte]", value: String(Int(end.timeIntervalSince1970 * 1000))),
             URLQueryItem(name: "count", value: String(count)),
         ]
-        return try await fetch([NSEntry].self, path: "/api/v1/entries/sgv.json", queryItems: items)
+        return try await fetchArray(NSEntry.self, path: "/api/v1/entries/sgv.json", queryItems: items)
     }
 
     /// Treatments in `[start, end]`, filtered by `created_at`.
@@ -140,13 +154,13 @@ public struct NightscoutClient: Sendable {
             URLQueryItem(name: "find[created_at][$lte]", value: Self.iso(end)),
             URLQueryItem(name: "count", value: String(count)),
         ]
-        return try await fetch([NSTreatment].self, path: "/api/v1/treatments.json", queryItems: items)
+        return try await fetchArray(NSTreatment.self, path: "/api/v1/treatments.json", queryItems: items)
     }
 
     /// The profile-document history (newest first).
     public func fetchProfiles(count: Int = 20) async throws -> [NSProfileDocument] {
         let items = [URLQueryItem(name: "count", value: String(count))]
-        return try await fetch([NSProfileDocument].self, path: "/api/v1/profile.json", queryItems: items)
+        return try await fetchArray(NSProfileDocument.self, path: "/api/v1/profile.json", queryItems: items)
     }
 
     // ISO8601DateFormatter is documented thread-safe for formatting.

@@ -77,6 +77,11 @@ public enum ProfileIngest {
         var entries: [DailySchedule<ClosedRange<Double>>.Entry] = []
         for (lowItem, highItem) in zip(lows.sorted { $0.timeAsSeconds < $1.timeAsSeconds },
                                        highs.sorted { $0.timeAsSeconds < $1.timeAsSeconds }) {
+            // The low/high arrays must share the same offsets; pairing mismatched
+            // times would silently corrupt the target schedule.
+            guard lowItem.timeAsSeconds == highItem.timeAsSeconds else {
+                throw IngestError.badSchedule("target")
+            }
             let lowMgdl = unit.toMilligramsPerDeciliter(lowItem.value)
             let highMgdl = unit.toMilligramsPerDeciliter(highItem.value)
             entries.append(.init(secondsSinceMidnight: lowItem.timeAsSeconds, value: min(lowMgdl, highMgdl)...max(lowMgdl, highMgdl)))

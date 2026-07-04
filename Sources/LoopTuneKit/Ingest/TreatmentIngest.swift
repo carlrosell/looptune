@@ -173,6 +173,10 @@ public enum TreatmentIngest {
         } else {
             end = nil
         }
+        // Loop uploads override `correctionRange` in mg/dL by convention,
+        // regardless of the site's display units (see research note 06 §1.4), so
+        // it is stored as-is without unit conversion. Non-Loop uploaders that
+        // emit mmol/L override ranges are out of scope for v1.
         let range: ClosedRange<Double>?
         if let bounds = treatment.correctionRange, bounds.count == 2 {
             range = min(bounds[0], bounds[1])...max(bounds[0], bounds[1])
