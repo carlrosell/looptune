@@ -272,8 +272,8 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 | 3 | Ingest: NS → domain (profile expansion, doses, carbs, TZ) | ✅ |
 | 4 | Replay: deviation computation via LoopAlgorithm | ✅ |
 | 5 | Tune: categorization + basal/ISF/CR tuning + chaining | ✅ (single-run) |
-| 6 | Recommendations: guardrails, tiers, confidence | ⬜ |
-| 7 | CLI end-to-end (`fetch` / `tune` / `report`) | ⬜ |
+| 6 | Recommendations: guardrails, tiers, confidence | ✅ |
+| 7 | CLI end-to-end (`fetch` / `tune` / `report`) | ✅ |
 | 8 | SwiftUI app (wizard + results + charts) | ⬜ |
 | 9 | Hardening: golden fixtures, edge cases, docs, coderabbit | ⬜ |
 
@@ -348,19 +348,22 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 > A naive port (residual used as impact) moved CR the wrong way — caught by a
 > sign test.
 
-### Phase 6 — Recommendations ⬜
-- [ ] Loop guardrail clamping + status (recommended/absolute/limit)
-- [ ] Change tiers (10% yellow, 20%/−30% red)
-- [ ] Per-hour / per-parameter day-count confidence
-- [ ] Meal-dominated-hour flagging
-- [ ] `TuningResult` serialization + summary formatter
+### Phase 6 — Recommendations ✅
+- [x] Loop guardrail clamping + status (ok / outside-recommended / at-limit)
+- [x] Change tiers (minimal / notable ≥10% / large ≥+20% or ≤−30%)
+- [x] Per-parameter + per-hour untuned/"no data" flags; category counts
+- [x] `TuningRecommendation` model + autotune-style text report with disclaimer
+- [x] JSON serialization (`RecommendationJSON`)
+- [x] Tests: guardrail clamp, tiers, end-to-end pipeline render (84 tests green)
+- [ ] Richer per-hour day-count confidence strip (needs day-chaining coverage data)
 
-### Phase 7 — CLI ⬜
-- [ ] `looptune fetch` (dump normalized NS data to JSON)
-- [ ] `looptune tune` (full pipeline → recommendation JSON/table)
-- [ ] `looptune report` (autotune-style fixed-width table)
-- [ ] Config: URL, token, days, insulin type, options; env + flags
-- [ ] Golden CLI output tests
+### Phase 7 — CLI ✅
+- [x] `looptune tune <url>` (full pipeline → table or `--json`)
+- [x] `looptune fetch <url>` (diagnostic: counts, timezone, units, auth probe)
+- [x] Config: URL, `--token`/`--api-secret`, `--days`, `--insulin` flags
+- [x] `TuningPipeline` orchestrator (online fetch + offline inputs paths)
+- [x] Verified end-to-end against a mock Nightscout server (`references/mock_nightscout.py`)
+- [ ] `report` from saved JSON + golden CLI output tests (nice-to-have)
 
 ### Phase 8 — SwiftUI app ⬜
 - [ ] Wizard: connect → profile pick/confirm → options → run → results
@@ -421,6 +424,15 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   fractional-second timestamps, and epoch/ISO date mixing. 39 tests green.
   Deferred: devicestatus + JWT (not needed for core tuning); per-day fetch
   orchestration folds into Phase 3.
+- **2026-07-04** — Phases 6 & 7 done. `TuningRecommendation` with Loop guardrail
+  clamping, change tiers, and category/confidence context; autotune-style text
+  report (with mandatory disclaimer) and JSON output. `TuningPipeline` ties
+  fetch → ingest → replay → tune → recommend into one call, with an offline
+  inputs path for tests. `looptune` CLI (`tune`/`fetch`) — **verified
+  end-to-end against a mock Nightscout server**: 288 samples fetched, replayed,
+  categorized (basal/ISF/CSF), and rendered as a recommendation. ISF correctly
+  held (only 7 ISF points < 10 minimum). 84 tests green. **LoopTune is now a
+  working program**, not just a library.
 - **2026-07-04** — Phase 5 (single-run) done. Categorizer (CSF/UAM/basal/ISF)
   and the three tuners — per-hour basal, median-ratio ISF, and CR — with
   oref0-faithful percentile and pump-relative + per-run-step safety caps,
