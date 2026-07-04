@@ -52,6 +52,9 @@ struct ResultsPane: View {
 struct ResultsView: View {
     let recommendation: TuningRecommendation
     @State private var displayUnit: GlucoseUnit
+    /// Finder-style multi-selection: click, ⌘-click, ⇧-click — handy for
+    /// ticking off rows already entered into Loop.
+    @State private var basalSelection = Set<Int>()
 
     init(recommendation: TuningRecommendation) {
         self.recommendation = recommendation
@@ -105,7 +108,7 @@ struct ResultsView: View {
                 recommendation.roundedDailyBasal()
             )
         ) {
-            Table(recommendation.basalHours) {
+            Table(recommendation.basalHours, selection: $basalSelection) {
                 TableColumn("Hour") { hour in
                     Text(String(format: "%02d:00", hour.hour))
                         .monospacedDigit()

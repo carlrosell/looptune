@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Standardized wrapper for native macOS tables in the results view: a
 /// consistent title/subtitle header, an optional trailing accessory (e.g. a
@@ -7,7 +8,7 @@ import SwiftUI
 /// Usage:
 /// ```swift
 /// TableCard(title: "…", subtitle: "…", footer: "…") {
-///     Table(rows) { TableColumn(…) { … } }
+///     Table(rows, selection: $selection) { TableColumn(…) { … } }
 ///         .resultsTable(rowCount: rows.count)
 /// } accessory: {
 ///     Button("Copy") { … }
@@ -67,18 +68,16 @@ struct TableCard<Content: View, Accessory: View>: View {
 }
 
 extension View {
-    /// Shared styling for a results table: inset style with alternating row
+    /// Shared styling for a results table: inset style, alternating row
     /// backgrounds, internal scrolling disabled (the results pane's outer
-    /// ScrollView owns scrolling), sized to show exactly `rowCount` rows.
+    /// ScrollView owns scrolling), and a frame that hugs the content exactly.
     ///
-    /// macOS inset tables lay rows out on a 24 pt pitch with a ~28 pt header;
-    /// oversizing the frame paints phantom striped rows below the content.
-    func resultsTable(rowCount: Int) -> some View {
-        self
-            .tableStyle(.inset)
-            .alternatingRowBackgrounds(.enabled)
-            .scrollDisabled(true)
-            .frame(height: CGFloat(rowCount) * 24 + 30)
+    /// Rather than guessing at row metrics, this reaches into the backing
+    /// `NSTableView`, applies `rowHeight`, and computes the frame from the
+    /// table's real header/row/spacing values — so no phantom striped rows
+    /// appear below the content and the last row is never clipped.
+    func resultsTable(rowCount: Int, rowHeight: CGFloat = 26) -> some View {
+        modifier(ResultsTableStyle(rowCount: rowCount, rowHeight: rowHeight))
     }
 
     /// A numeric table cell: right-aligned, monospaced digits.
@@ -86,5 +85,84 @@ extension View {
         self
             .monospacedDigit()
             .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+private struct ResultsTableStyle: ViewModifier {
+    var rowCount: Int
+    var rowHeight: CGFloat
+    @State private var measuredHeight: CGFloat?
+
+    func body(content: Content) -> some View {
+        content
+            .tableStyle(.inset)
+            .alternatingRowBackgrounds(.enabled)
+            .scrollDisabled(true)
+            .frame(height: measuredHeight ?? fallbackHeight)
+            .background(TableMetricsSync(rowCount: rowCount, rowHeight: rowHeight, height: $measuredHeight))
+    }
+
+    /// Used only until the real metrics are measured (first layout pass).
+    private var fallbackHeight: CGFloat {
+        CGFloat(rowCount) * (rowHeight + 2) + 30
+    }
+}
+
+/// Locates the `NSTableView` backing the adjacent SwiftUI `Table`, applies the
+/// desired row height, and reports the exact content height (header + rows +
+/// intercell spacing + scroll-view insets) back to SwiftUI.
+private struct TableMetricsSync: NSViewRepresentable {
+    var rowCount: Int
+    var rowHeight: CGFloat
+    @Binding var height: CGFloat?
+
+    func makeNSView(context: Context) -> NSView {
+        NSView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        let rowCount = rowCount
+        let rowHeight = rowHeight
+        DispatchQueue.main.async {
+            guard let tableView = Self.findTableView(near: nsView, expectedRows: rowCount) else { return }
+            if tableView.rowHeight != rowHeight {
+                tableView.rowHeight = rowHeight
+            }
+            let header = tableView.headerView?.frame.height ?? 0
+            let spacing = tableView.intercellSpacing.height
+            var total = header + CGFloat(rowCount) * (rowHeight + spacing)
+            if let scrollView = tableView.enclosingScrollView {
+                total += scrollView.contentInsets.top + scrollView.contentInsets.bottom
+            }
+            total = ceil(total)
+            if height != total {
+                height = total
+            }
+        }
+    }
+
+    /// Walk up from the background view and search each ancestor's subtree for
+    /// the nearest table. Two results tables can share an ancestor, so prefer a
+    /// row-count match to disambiguate before falling back to the nearest.
+    static func findTableView(near view: NSView, expectedRows: Int) -> NSTableView? {
+        var ancestor: NSView? = view.superview
+        var nearest: NSTableView?
+        for _ in 0..<6 {
+            guard let current = ancestor else { break }
+            let tables = descendantTableViews(in: current)
+            if let exact = tables.first(where: { $0.numberOfRows == expectedRows }) {
+                return exact
+            }
+            if nearest == nil {
+                nearest = tables.first
+            }
+            ancestor = current.superview
+        }
+        return nearest
+    }
+
+    static func descendantTableViews(in view: NSView) -> [NSTableView] {
+        if let table = view as? NSTableView { return [table] }
+        return view.subviews.flatMap { descendantTableViews(in: $0) }
     }
 }

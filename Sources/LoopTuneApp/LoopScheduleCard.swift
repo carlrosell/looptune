@@ -8,6 +8,8 @@ import LoopTuneKit
 struct LoopScheduleCard: View {
     let recommendation: TuningRecommendation
     @State private var copied = false
+    /// Finder-style multi-selection for ticking off rows entered into Loop.
+    @State private var selection = Set<Int>()
 
     private var entries: [LoopBasalEntry] {
         recommendation.loopBasalSchedule()
@@ -18,7 +20,7 @@ struct LoopScheduleCard: View {
             title: "Basal Rates — as entered in Loop",
             subtitle: "\(entries.count) entr\(entries.count == 1 ? "y" : "ies"), matching Loop's schedule screen"
         ) {
-            Table(entries) {
+            Table(entries, selection: $selection) {
                 TableColumn("Time") { entry in
                     Text(entry.timeString)
                         .monospacedDigit()
