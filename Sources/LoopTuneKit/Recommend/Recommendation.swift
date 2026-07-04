@@ -51,6 +51,7 @@ public struct BasalHourRecommendation: Sendable, Equatable {
     public var pumpRate: Double
     public var recommendedRate: Double
     public var changeTier: ChangeTier
+    public var guardrailStatus: LoopGuardrails.Status
     public var untuned: Bool
 
     public init(hour: Int, pumpRate: Double, rawTunedRate: Double, untuned: Bool) {
@@ -59,6 +60,7 @@ public struct BasalHourRecommendation: Sendable, Equatable {
         let clamped = LoopGuardrails.clamp(rawTunedRate, to: LoopGuardrails.basalRate)
         self.recommendedRate = clamped.value
         self.changeTier = ChangeTier.classify(pump: pumpRate, tuned: clamped.value)
+        self.guardrailStatus = clamped.status
         self.untuned = untuned
     }
 }
@@ -79,6 +81,10 @@ public struct TuningRecommendation: Sendable, Equatable {
     public var pumpDailyBasal: Double { basalHours.reduce(0) { $0 + $1.pumpRate } }
 
     public init(from output: TuningOutput, daysAnalyzed: Int) {
+        precondition(
+            output.tunedBasalHourly.count == 24 && output.pumpBasalHourly.count == 24 && output.untunedBasalHours.count == 24,
+            "TuningOutput basal arrays must each contain 24 hourly entries"
+        )
         self.sensitivity = ParameterRecommendation(
             name: "Insulin Sensitivity",
             unit: "mg/dL/U",

@@ -79,6 +79,10 @@ public struct ReplayEngine: Sendable {
         )
 
         let iobTimeline = annotatedDoses.insulinOnBoardTimeline()
+        // Precompute the COB timeline once (dynamicCarbsOnBoard(at:) is O(carbs)
+        // per call, so calling it per interval would be O(intervals × carbs)).
+        let cobTimeline = carbStatuses.dynamicCarbsOnBoard()
+        let cobLookup = CarbTimelineLookup(cobTimeline)
 
         // Cumulative-effect lookups (arrays are on a 5-min grid; closestPrior
         // gives the value at or before a CGM timestamp).
@@ -108,7 +112,7 @@ public struct ReplayEngine: Sendable {
 
             let averageDelta = Self.averageDelta(in: sortedGlucose, endingAt: index)
             let iob = iobTimeline.closestPrior(to: current.date)?.value ?? 0
-            let cob = carbStatuses.dynamicCarbsOnBoard(at: current.date, absorptionModel: PiecewiseLinearAbsorption())
+            let cob = cobLookup.value(at: current.date)
 
             result.append(DeviationSample(
                 date: current.date,
@@ -172,5 +176,36 @@ struct CumulativeEffectLookup: Sendable {
         guard span > 0 else { return av }
         let fraction = date.timeIntervalSince(a.startDate) / span
         return av + (bv - av) * fraction
+    }
+}
+
+/// Nearest-prior lookup over a precomputed carbs-on-board (grams) timeline.
+struct CarbTimelineLookup: Sendable {
+    private let dates: [Date]
+    private let grams: [Double]
+
+    init(_ values: [CarbValue]) {
+        self.dates = values.map(\.startDate)
+        self.grams = values.map(\.value)
+    }
+
+    /// COB (g) at or before `date`; 0 before the first sample.
+    func value(at date: Date) -> Double {
+        guard let first = dates.first else { return 0 }
+        if date < first { return 0 }
+        // Binary search for the last entry with date <= query.
+        var low = 0
+        var high = dates.count - 1
+        var result = 0.0
+        while low <= high {
+            let mid = (low + high) / 2
+            if dates[mid] <= date {
+                result = grams[mid]
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+        return result
     }
 }

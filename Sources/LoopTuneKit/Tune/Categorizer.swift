@@ -23,12 +23,22 @@ public struct Categorizer: Sendable {
         self.options = options
     }
 
+    /// Reset the stateful absorbing/UAM flags across a CGM gap larger than this
+    /// (the replay omits gapped intervals, breaking physiological continuity).
+    static let stateResetGap: TimeInterval = 20 * 60
+
     public func categorize(_ samples: [DeviationSample]) -> [CategorizedSample] {
         var absorbing = false
         var uam = false
+        var previousDate: Date?
         var result: [CategorizedSample] = []
 
         for sample in samples {
+            if let previousDate, sample.date.timeIntervalSince(previousDate) > Self.stateResetGap {
+                absorbing = false
+                uam = false
+            }
+            previousDate = sample.date
             let scheduledBasal = profile.basalSchedule.value(at: sample.date, timeZone: profile.timeZone)
             let scheduledISF = profile.sensitivitySchedule.value(at: sample.date, timeZone: profile.timeZone)
             // Insulin activity contribution attributable to scheduled basal.

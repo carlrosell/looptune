@@ -28,6 +28,7 @@ struct RecommendationDTO: Encodable {
         var pump: Double
         var recommended: Double
         var changeTier: String
+        var guardrailStatus: String
         var untuned: Bool
     }
 
@@ -74,6 +75,7 @@ private extension RecommendationDTO.BasalHour {
             pump: rec.pumpRate,
             recommended: rec.recommendedRate,
             changeTier: rec.changeTier.rawValue,
+            guardrailStatus: rec.guardrailStatus.rawValue,
             untuned: rec.untuned
         )
     }

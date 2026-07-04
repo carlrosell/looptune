@@ -182,6 +182,22 @@ struct CategorizerTests {
         #expect(result[0].category == .basal)
     }
 
+    @Test("absorbing state resets across a data gap")
+    func stateResetsAcrossGap() throws {
+        let categorizer = Categorizer(profile: try profile())
+        // First a meal datum (COB>0) → CSF and sets absorbing; then, after a
+        // >20-min gap, a datum with no COB and low deviation must NOT stay CSF.
+        let meal = sample(0, deviation: 4, iob: 1.0, cob: 20)
+        let afterGap = DeviationSample(
+            date: base.addingTimeInterval(40 * 60), // 40-min gap
+            glucose: 120, averageDelta: -1, insulinEffect: -1, deviation: -1,
+            insulinOnBoard: 0.0, carbsOnBoard: 0
+        )
+        let result = categorizer.categorize([meal, afterGap])
+        #expect(result[0].category == .csf)
+        #expect(result[1].category != .csf)
+    }
+
     @Test("negative deviation with strong insulin activity is ISF")
     func isfCase() throws {
         let categorizer = Categorizer(profile: try profile())

@@ -36,11 +36,16 @@ final class TuningViewModel {
         let urlString = self.urlString
         let credentials: NightscoutCredentials = token.isEmpty ? .none : .token(token)
         let config = TuningConfiguration(days: days, insulinType: insulinType)
+        let now = Date()
 
         Task {
             do {
-                let client = try NightscoutClient(rawURLString: urlString, credentials: credentials)
-                let result = try await TuningPipeline().run(client: client, configuration: config, endingAt: Date())
+                // Run networking + the synchronous replay/tune compute off the
+                // main actor so the UI stays responsive.
+                let result = try await Task.detached(priority: .userInitiated) {
+                    let client = try NightscoutClient(rawURLString: urlString, credentials: credentials)
+                    return try await TuningPipeline().run(client: client, configuration: config, endingAt: now)
+                }.value
                 self.recommendation = result
                 self.phase = .done
             } catch {

@@ -26,8 +26,16 @@ public struct TuningCaps: Sendable, Equatable {
 }
 
 enum TuningMath {
-    /// Linear-interpolated percentile of a sorted array (oref0's `percentile.js`:
-    /// `index = n * p`, interpolating between adjacent ranks).
+    /// Linear-interpolated percentile of a sorted array, reproducing oref0's
+    /// `lib/percentile.js` **exactly**: `index = n * p`, interpolating between
+    /// adjacent ranks.
+    ///
+    /// This is intentionally oref0's formula, not the textbook
+    /// `index = (n − 1) · p`. Autotune uses this to take the median of ISF
+    /// ratios, and LoopTune's goal is to faithfully reproduce autotune's tuning
+    /// behavior. The two formulas differ by at most one rank; at the ≥10-sample
+    /// minimum the tuner enforces (typically 50–200 ISF points), the difference
+    /// is well under 1%. The parity tests pin oref0's values deliberately.
     static func percentile(_ sortedValues: [Double], _ p: Double) -> Double {
         guard !sortedValues.isEmpty else { return 0 }
         if sortedValues.count == 1 { return sortedValues[0] }
