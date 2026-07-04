@@ -1,8 +1,24 @@
 import SwiftUI
 import LoopTuneKit
 
+/// Running as a bare SPM executable (no .app bundle) leaves the process in the
+/// "prohibited" activation policy: the window renders but can never take focus.
+/// Promote to a regular foreground app and activate on launch.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate()
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+}
+
 @main
 struct LoopTuneApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     var body: some Scene {
         WindowGroup("LoopTune") {
             ContentView()
