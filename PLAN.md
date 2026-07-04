@@ -275,7 +275,7 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 | 6 | Recommendations: guardrails, tiers, confidence | ✅ |
 | 7 | CLI end-to-end (`fetch` / `tune` / `report`) | ✅ |
 | 8 | SwiftUI app (wizard + results + charts) | ✅ (core) |
-| 9 | Hardening: golden fixtures, edge cases, docs, coderabbit | ⬜ |
+| 9 | Hardening: golden fixtures, edge cases, docs, coderabbit | 🟡 |
 
 ### Phase 0 — Scaffold ✅
 - [x] Git repo, MIT license, README, .gitignore
@@ -374,12 +374,14 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 - [ ] Charts (basal curve, per-hour deviation coverage) — see `/dataviz` (future)
 - [ ] Keychain storage for URL/token; profile picker; snapshot tests (future)
 
-### Phase 9 — Hardening ⬜
-- [ ] Expand golden fixtures; fuzz malformed NS payloads
-- [ ] Timezone/DST torture tests; leap/`ETC/GMT` cases
-- [ ] Performance: 30-day replay within a few seconds (PrecomputedInsulinInput)
-- [ ] `coderabbit` CLI clean pass
-- [ ] User docs (how to read recommendations, caveats)
+### Phase 9 — Hardening 🟡
+- [x] Two `coderabbit` CLI passes; all findings addressed (or documented as intentional)
+- [x] Lenient array decoding fuzz-resilience; DST spring-forward test; ETC/GMT cases
+- [x] README usage docs; medical disclaimer everywhere output is produced
+- [x] COB precompute perf fix (O(intervals) not O(intervals×carbs))
+- [ ] Expand golden fixtures (LoopAlgorithm parity + oref0 prep→core parity)
+- [ ] `PrecomputedInsulinInput` fast path for 30-day sweeps
+- [ ] Snapshot/UI tests for the app
 
 ---
 
@@ -425,6 +427,15 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   fractional-second timestamps, and epoch/ISO date mixing. 39 tests green.
   Deferred: devicestatus + JWT (not needed for core tuning); per-day fetch
   orchestration folds into Phase 3.
+- **2026-07-04** — Phase 8 (core) + Phase 9 (partial). Native SwiftUI macOS app
+  (`TuningViewModel` + split-view form/results, ISF/CR cards, basal table, and
+  disclaimer) builds and launches. Second CodeRabbit pass addressed: categorizer
+  gap-state reset, COB precompute, array-length precondition, basal guardrail
+  status, off-main-actor compute; kept oref0's `n*p` percentile deliberately
+  (documented + test-pinned). 85 tests green.
+  **State of the project:** phases 0–8 are functionally complete and the tool
+  runs end-to-end (CLI + app) against a Nightscout site. Remaining work is
+  refinement: multi-day chaining, golden parity fixtures, charts, and Keychain.
 - **2026-07-04** — Phases 6 & 7 done. `TuningRecommendation` with Loop guardrail
   clamping, change tiers, and category/confidence context; autotune-style text
   report (with mandatory disclaimer) and JSON output. `TuningPipeline` ties
