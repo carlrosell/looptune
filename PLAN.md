@@ -268,8 +268,8 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 |---|-------|--------|
 | 0 | Repo, package scaffold, CI, dependency wiring | ✅ |
 | 1 | Domain model + LoopAlgorithm bridging types | ✅ |
-| 2 | Nightscout client (auth, endpoints, windowed fetch) | ⬜ |
-| 3 | Ingest: NS → domain (profile expansion, doses, carbs, TZ) | ⬜ |
+| 2 | Nightscout client (auth, endpoints, windowed fetch) | ✅ |
+| 3 | Ingest: NS → domain (profile expansion, doses, carbs, TZ) | 🟡 |
 | 4 | Replay: deviation computation via LoopAlgorithm | ⬜ |
 | 5 | Tune: categorization + basal/ISF/CR tuning + chaining | ⬜ |
 | 6 | Recommendations: guardrails, tiers, confidence | ⬜ |
@@ -294,15 +294,16 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 - [x] `InsulinType` (Sendable mirror of `FixtureInsulinType`)
 - [x] Unit tests: schedule expansion, DST spring-forward, unit conversion, TZ parsing (25 tests green)
 
-### Phase 2 — Nightscout client ⬜
-- [ ] URL normalization (strip paths, follow redirects)
-- [ ] Auth: `?token=`, `api-secret` (SHA-1 hex), JWT via `/api/v2/authorization`
-- [ ] Auth probe `/api/v1/experiments/test`; unauthenticated-first fallback
-- [ ] Endpoints: entries/sgv, treatments, profile(+history), devicestatus, status
-- [ ] Per-day windowed fetch with oref0 padding (−18h/+42h) + `count`
-- [ ] Codable DTOs tolerant of the `06` quirks (string numbers, frac seconds)
-- [ ] Units detection (status.json + profile precedence)
-- [ ] Tests against captured fixture payloads (URLProtocol stub)
+### Phase 2 — Nightscout client ✅
+- [x] URL normalization (strip pasted paths/query/fragment)
+- [x] Auth: `?token=`, `api-secret` (SHA-1 hex via CryptoKit); JWT deferred (token covers reads)
+- [x] Auth probe `/api/v1/experiments/test` (`checkAuthorized`)
+- [x] Endpoints: entries/sgv, treatments, profile history, status
+- [x] Windowed fetch (epoch-ms entries, ISO treatments) + explicit `count`
+- [x] Lenient DTOs (string numbers, bools, fractional-second + epoch dates)
+- [x] Injectable `NightscoutTransport` + stub-based tests (39 tests green)
+- [ ] devicestatus endpoint + JWT (deferred — not needed for core tuning)
+- [ ] Per-day fetch orchestration with oref0 padding (moves to Phase 3 ingest)
 
 ### Phase 3 — Ingest ⬜
 - [ ] Profile doc → `TherapyProfile` (store[defaultProfile], timezone parse incl. ETC/GMT sign inversion)
@@ -398,3 +399,10 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   `AbsoluteScheduleValue` timelines, `GlucoseUnit` conversions, and the
   `NightscoutTimeZone` parser (handles Loop's inverted-sign `ETC/GMT±N`). 25
   unit tests green, including a spring-forward DST case.
+- **2026-07-04** — Phase 2 done. Read-only `NightscoutClient` with URL
+  normalization, token/api-secret auth (SHA-1 via CryptoKit), an injectable
+  `NightscoutTransport` for testing, entries/treatments/profile/status
+  endpoints, and lenient DTOs that tolerate Nightscout's stringy numbers,
+  fractional-second timestamps, and epoch/ISO date mixing. 39 tests green.
+  Deferred: devicestatus + JWT (not needed for core tuning); per-day fetch
+  orchestration folds into Phase 3.
