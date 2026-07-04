@@ -52,6 +52,9 @@ struct Tune: AsyncParsableCommand {
     @Flag(name: .long, help: "Emit the recommendation as JSON instead of a table.")
     var json = false
 
+    @Flag(name: .long, help: "Bypass the local day cache and fetch everything from Nightscout.")
+    var noCache = false
+
     func run() async throws {
         let client = try connection.makeClient()
         guard let insulinType = InsulinType(rawValue: insulin.lowercased()) else {
@@ -62,7 +65,8 @@ struct Tune: AsyncParsableCommand {
             throw ValidationError("basal-increment must be between 0 and 1 U/hr")
         }
         let config = TuningConfiguration(days: days, insulinType: insulinType)
-        let recommendation = try await TuningPipeline().run(client: client, configuration: config, endingAt: Date())
+        let cache: DayCache? = noCache ? nil : DayCache()
+        let recommendation = try await TuningPipeline().run(client: client, configuration: config, endingAt: Date(), cache: cache)
 
         if json {
             print(try RecommendationJSON.encode(recommendation, displayUnit: displayUnit, basalIncrement: basalIncrement))
@@ -90,6 +94,9 @@ struct Fetch: AsyncParsableCommand {
     @Option(name: .long, help: "Days of history to fetch (1-30).")
     var days: Int = 7
 
+    @Flag(name: .long, help: "Bypass the local day cache and fetch everything from Nightscout.")
+    var noCache = false
+
     func run() async throws {
         let client = try connection.makeClient()
         let authorized = await client.checkAuthorized()
@@ -97,7 +104,8 @@ struct Fetch: AsyncParsableCommand {
         let inputs = try await TuningPipeline().fetchInputs(
             client: client,
             configuration: TuningConfiguration(days: days),
-            endingAt: Date()
+            endingAt: Date(),
+            cache: noCache ? nil : DayCache()
         )
         print("glucose samples: \(inputs.glucose.count)")
         print("doses: \(inputs.doses.count)")

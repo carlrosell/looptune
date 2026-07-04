@@ -96,33 +96,71 @@ public struct TuningPipeline: Sendable {
         return TuningRecommendation(from: output, daysAnalyzed: days, profileGlucoseUnit: profile.glucoseUnit)
     }
 
-    /// Fetch from a Nightscout site and run tuning.
-    public func run(client: NightscoutClient, configuration: TuningConfiguration, endingAt end: Date) async throws -> TuningRecommendation {
-        let inputs = try await fetchInputs(client: client, configuration: configuration, endingAt: end)
+    /// Fetch from a Nightscout site and run tuning. When a `cache` is supplied,
+    /// finished days load from disk and only fresh/incomplete days hit the
+    /// network.
+    public func run(
+        client: NightscoutClient,
+        configuration: TuningConfiguration,
+        endingAt end: Date,
+        cache: DayCache? = nil
+    ) async throws -> TuningRecommendation {
+        let inputs = try await fetchInputs(client: client, configuration: configuration, endingAt: end, cache: cache)
         return try run(inputs: inputs, configuration: configuration)
     }
 
-    /// Fetch and assemble inputs from Nightscout.
-    public func fetchInputs(client: NightscoutClient, configuration: TuningConfiguration, endingAt end: Date) async throws -> TuningInputs {
+    /// Fetch and assemble inputs from Nightscout, day-bucket by day-bucket.
+    ///
+    /// The window is tiled with UTC day buckets (plus one lead-in day so doses
+    /// within the insulin tail before the window are present, and a trailing
+    /// margin covering the carb-ratio timeline). With a `cache`, each finished
+    /// bucket is served from disk when available and stored after fetching;
+    /// the current (unfinished) day is always fetched live and never stored.
+    public func fetchInputs(
+        client: NightscoutClient,
+        configuration: TuningConfiguration,
+        endingAt end: Date,
+        cache: DayCache? = nil
+    ) async throws -> TuningInputs {
         let analysisStart = end.addingTimeInterval(-Double(configuration.days) * 86_400)
 
-        // Profile: use the current (most recent) document. Profile-history
-        // alignment per day is a future refinement.
+        // Profile: always fetched fresh (settings may have just changed).
         let profiles = try await client.fetchProfiles(count: 1)
         guard let profileDoc = profiles.first else { throw PipelineError.noProfile }
         var profile = try ProfileIngest.makeProfile(from: profileDoc)
         if profile.insulinType == nil { profile.insulinType = configuration.insulinType }
 
-        // Entries: analysis window plus a short lead-in for deltas.
-        let entryStart = analysisStart.addingTimeInterval(-30 * 60)
-        let entries = try await client.fetchEntries(from: entryStart, to: end, count: 400 * configuration.days)
-        let glucose = GlucoseIngest.ingest(entries)
+        cache?.pruneExpired()
 
-        // Treatments: pad for DIA lookback + timezone skew (oref0-style).
-        let treatmentStart = analysisStart.addingTimeInterval(-18 * 3600)
-        let treatmentEnd = end.addingTimeInterval(6 * 3600)
-        let treatments = try await client.fetchTreatments(from: treatmentStart, to: treatmentEnd, count: 1000 * configuration.days)
-        let ingested = TreatmentIngest.ingest(treatments)
+        // One lead-in day covers the 18h treatment lookback and the 30-min
+        // glucose delta lead; 6h trailing margin covers carb-ratio coverage.
+        let fetchStart = analysisStart.addingTimeInterval(-DayCache.dayLength)
+        let fetchEnd = end.addingTimeInterval(6 * 3600)
+        let buckets = DayCache.utcDayBuckets(covering: fetchStart, to: fetchEnd)
+        let host = client.baseURL.host ?? "unknown"
+
+        var entries: [NSEntry] = []
+        var treatments: [NSTreatment] = []
+        for bucket in buckets {
+            if let cache, let cached = cache.load(host: host, dayKey: bucket.key) {
+                entries += cached.entries
+                treatments += cached.treatments
+                continue
+            }
+            let dayEntries = try await client.fetchEntries(from: bucket.interval.start, to: bucket.interval.end, count: 1500)
+            let dayTreatments = try await client.fetchTreatments(from: bucket.interval.start, to: bucket.interval.end, count: 1500)
+            entries += dayEntries
+            treatments += dayTreatments
+            if let cache, cache.shouldStore(dayEnd: bucket.interval.end) {
+                cache.store(
+                    CachedDay(day: bucket.key, fetchedAt: Date(), entries: dayEntries, treatments: dayTreatments),
+                    host: host
+                )
+            }
+        }
+
+        let glucose = GlucoseIngest.ingest(entries)
+        let ingested = TreatmentIngest.ingest(Self.dedupeAcrossBuckets(treatments))
 
         return TuningInputs(
             profile: profile,
@@ -132,5 +170,26 @@ public struct TuningPipeline: Sendable {
             analysisStart: analysisStart,
             analysisEnd: end
         )
+    }
+
+    /// Nightscout range queries are inclusive at both ends, so a document with
+    /// a timestamp exactly on a bucket boundary appears in two buckets. Drop
+    /// exact duplicates before ingestion (boluses would otherwise double).
+    static func dedupeAcrossBuckets(_ treatments: [NSTreatment]) -> [NSTreatment] {
+        var seen = Set<String>()
+        var result: [NSTreatment] = []
+        for treatment in treatments {
+            let time: String = String(treatment.createdAt.timeIntervalSince1970)
+            let type: String = treatment.eventType ?? ""
+            let insulin: String = treatment.insulin.map { String($0) } ?? ""
+            let carbs: String = treatment.carbs.map { String($0) } ?? ""
+            let rate: String = treatment.rate.map { String($0) } ?? ""
+            let duration: String = treatment.duration.map { String($0) } ?? ""
+            let key = "\(time)|\(type)|\(insulin)|\(carbs)|\(rate)|\(duration)"
+            if seen.insert(key).inserted {
+                result.append(treatment)
+            }
+        }
+        return result
     }
 }

@@ -420,6 +420,14 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 
 ## 8. Status log (append-only)
 
+- **2026-07-04** — Local day cache. `DayCache` stores raw Nightscout documents
+  per site host and UTC day under Application Support, in wire format (DTOs
+  gained symmetric `Encodable`). The pipeline fetches per day bucket, serves
+  finished days from disk, never caches days younger than 24h (Loop's
+  retroactive-edit window), dedupes boundary documents, and prunes days older
+  than 30 days on every run. Used by the app and CLI (`--no-cache` opt-out).
+  109 tests green; verified against the mock server (finished days cached,
+  fresh days fetched live).
 - **2026-07-04** — Repo initialized; scaffold (LoopTuneKit/CLI/App) builds and
   tests green against pinned LoopAlgorithm; CI added; pushed to
   `carlrosell/looptune` (private). Ran a 7-agent research workflow over

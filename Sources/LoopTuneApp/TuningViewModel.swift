@@ -73,7 +73,9 @@ final class TuningViewModel {
                 // main actor so the UI stays responsive.
                 let result = try await Task.detached(priority: .userInitiated) {
                     let client = try NightscoutClient(rawURLString: urlString, credentials: credentials)
-                    return try await TuningPipeline().run(client: client, configuration: config, endingAt: now)
+                    // Finished days are served from the local day cache; the
+                    // current day is always fetched fresh.
+                    return try await TuningPipeline().run(client: client, configuration: config, endingAt: now, cache: DayCache())
                 }.value
                 self.recommendation = result
                 self.phase = .done

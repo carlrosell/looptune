@@ -73,6 +73,12 @@ swift build
 `looptune fetch <url>` prints a diagnostic summary (sample counts, timezone,
 units, auth status) without tuning.
 
+Fetched days are cached locally (`~/Library/Application Support/LoopTune/DayCache`,
+one JSON file per site and UTC day). A day is cached once it has been over for
+24 hours — Loop edits treatments retroactively for about a day — and cached
+days older than 30 days are deleted automatically. Pass `--no-cache` to bypass
+the cache; delete the directory to reset it.
+
 ### App
 
 ```sh

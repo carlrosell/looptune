@@ -13,9 +13,19 @@ public struct NSEntry: Sendable, Equatable {
     public var device: String?
 }
 
-extension NSEntry: Decodable {
+extension NSEntry: Codable {
     private enum CodingKeys: String, CodingKey {
         case date, dateString, sgv, type, device
+    }
+
+    /// Encodes back to Nightscout wire format (epoch-ms `date`), so cached
+    /// documents round-trip through the same lenient decoder as live fetches.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(Int((date.timeIntervalSince1970 * 1000).rounded()), forKey: .date)
+        try container.encode(sgv, forKey: .sgv)
+        try container.encodeIfPresent(type, forKey: .type)
+        try container.encodeIfPresent(device, forKey: .device)
     }
 
     public init(from decoder: Decoder) throws {
@@ -76,7 +86,7 @@ public struct NSTreatment: Sendable, Equatable {
     public var insulinType: String?
 }
 
-extension NSTreatment: Decodable {
+extension NSTreatment: Codable {
     private enum CodingKeys: String, CodingKey {
         case eventType, created_at, timestamp, enteredBy
         case insulin, programmed
@@ -84,6 +94,38 @@ extension NSTreatment: Decodable {
         case carbs, absorptionTime, foodType
         case durationType, insulinNeedsScaleFactor, correctionRange
         case insulinType
+    }
+
+    // ISO8601DateFormatter is documented thread-safe for formatting.
+    nonisolated(unsafe) private static let isoEncoder: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    /// Encodes back to Nightscout wire format (ISO `created_at`), so cached
+    /// documents round-trip through the same lenient decoder as live fetches.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(eventType, forKey: .eventType)
+        try container.encode(Self.isoEncoder.string(from: createdAt), forKey: .created_at)
+        try container.encodeIfPresent(enteredBy, forKey: .enteredBy)
+        try container.encodeIfPresent(insulin, forKey: .insulin)
+        try container.encodeIfPresent(programmed, forKey: .programmed)
+        try container.encodeIfPresent(rate, forKey: .rate)
+        try container.encodeIfPresent(absolute, forKey: .absolute)
+        try container.encodeIfPresent(amount, forKey: .amount)
+        try container.encodeIfPresent(duration, forKey: .duration)
+        try container.encodeIfPresent(temp, forKey: .temp)
+        try container.encodeIfPresent(reason, forKey: .reason)
+        try container.encodeIfPresent(automatic, forKey: .automatic)
+        try container.encodeIfPresent(carbs, forKey: .carbs)
+        try container.encodeIfPresent(absorptionTime, forKey: .absorptionTime)
+        try container.encodeIfPresent(foodType, forKey: .foodType)
+        try container.encodeIfPresent(durationType, forKey: .durationType)
+        try container.encodeIfPresent(insulinNeedsScaleFactor, forKey: .insulinNeedsScaleFactor)
+        try container.encodeIfPresent(correctionRange, forKey: .correctionRange)
+        try container.encodeIfPresent(insulinType, forKey: .insulinType)
     }
 
     public init(from decoder: Decoder) throws {
