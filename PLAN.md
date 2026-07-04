@@ -269,7 +269,7 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 | 0 | Repo, package scaffold, CI, dependency wiring | ✅ |
 | 1 | Domain model + LoopAlgorithm bridging types | ✅ |
 | 2 | Nightscout client (auth, endpoints, windowed fetch) | ✅ |
-| 3 | Ingest: NS → domain (profile expansion, doses, carbs, TZ) | 🟡 |
+| 3 | Ingest: NS → domain (profile expansion, doses, carbs, TZ) | ✅ |
 | 4 | Replay: deviation computation via LoopAlgorithm | ⬜ |
 | 5 | Tune: categorization + basal/ISF/CR tuning + chaining | ⬜ |
 | 6 | Recommendations: guardrails, tiers, confidence | ⬜ |
@@ -305,16 +305,17 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 - [ ] devicestatus endpoint + JWT (deferred — not needed for core tuning)
 - [ ] Per-day fetch orchestration with oref0 padding (moves to Phase 3 ingest)
 
-### Phase 3 — Ingest ⬜
-- [ ] Profile doc → `TherapyProfile` (store[defaultProfile], timezone parse incl. ETC/GMT sign inversion)
-- [ ] Temp Basal → dose volume (`amount` preferred; else `rate×duration`); suspend (rate 0/reason) → zero-volume basal dose
-- [ ] Overlap trimming (sort, clip to next start, drop null-duration)
-- [ ] Bolus → dose (`insulin` delivered; automatic flag retained)
-- [ ] Carb Correction → `CarbRecord` (absorptionTime default 180; ±2s dedupe)
-- [ ] Override periods → scale factors over intervals
-- [ ] Profile-history alignment (pick active profile per day by `startDate`)
-- [ ] Fill scheduled-basal gaps so LoopAlgorithm basal timeline starts ≤ first dose
-- [ ] Tests: overlap trim, suspend, dedupe, TZ bucketing, retroactive edits
+### Phase 3 — Ingest ✅ (core)
+- [x] Profile doc → `TherapyProfile` (store[defaultProfile], TZ incl. ETC/GMT sign inversion, mmol→mg/dL for ISF/targets/suspend threshold)
+- [x] Temp Basal → effective rate (`amount/duration` preferred; else `rate`/`absolute`); suspend (rate 0 / reason) → suspend dose
+- [x] Overlap trimming (sort, clip to next start, drop zero-length); skip percent temps lacking absolute rate
+- [x] Bolus → dose (delivered `insulin`; automatic flag; square via `duration`)
+- [x] Carb Correction / Meal Bolus → `CarbRecord` (absorptionTime default 3h; ±2s dedupe)
+- [x] Override periods → scale factor + correction range; indefinite closed at next override
+- [x] Glucose entries → samples (filter <39, sort, dedupe)
+- [x] Tests: mmol conversion, overlap trim, suspend, dedupe, indefinite override (53 tests green)
+- [ ] Profile-history alignment (pick active profile per day by `startDate`) — moves to Phase 4 windowing
+- [ ] Fill scheduled-basal gaps so LoopAlgorithm basal timeline starts ≤ first dose — Phase 4
 
 ### Phase 4 — Replay ⬜
 - [ ] Window builder satisfying LoopAlgorithm coverage rules (`04` §3): glucose t−10h, doses/basal t−16h, ISF t−16h…t+6h10m, CR covering carb starts
@@ -406,3 +407,9 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   fractional-second timestamps, and epoch/ISO date mixing. 39 tests green.
   Deferred: devicestatus + JWT (not needed for core tuning); per-day fetch
   orchestration folds into Phase 3.
+- **2026-07-04** — Phase 3 core done. Ingest layer: `ProfileIngest`
+  (NS profile → `TherapyProfile` with unit conversion + TZ), `TreatmentIngest`
+  (boluses, temp-basal effective rate + overlap trimming, suspends, carb dedupe,
+  indefinite-override resolution), and `GlucoseIngest` (filter/sort/dedupe). 53
+  tests green. Profile-history alignment and basal-gap filling deferred to the
+  Phase 4 window builder where they're actually consumed.
