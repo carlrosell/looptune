@@ -4,20 +4,30 @@ import LoopTuneKit
 @main
 struct LoopTuneApp: App {
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("LoopTune") {
             ContentView()
+                .frame(minWidth: 720, minHeight: 560)
         }
+        .windowResizability(.contentSize)
     }
 }
 
 struct ContentView: View {
+    @State private var model = TuningViewModel()
+
     var body: some View {
-        VStack(spacing: 12) {
-            Text("LoopTune")
-                .font(.largeTitle.bold())
-            Text("v\(LoopTuneKit.version) — UI coming soon")
-                .foregroundStyle(.secondary)
+        HSplitView {
+            ConnectionForm(model: model)
+                .frame(minWidth: 280, idealWidth: 320, maxWidth: 380)
+
+            ResultsPane(model: model)
+                .frame(minWidth: 400)
         }
-        .frame(minWidth: 480, minHeight: 320)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text("LoopTune")
+                    .font(.headline)
+            }
+        }
     }
 }

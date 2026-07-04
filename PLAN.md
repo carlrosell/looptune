@@ -274,7 +274,7 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 | 5 | Tune: categorization + basal/ISF/CR tuning + chaining | ✅ (single-run) |
 | 6 | Recommendations: guardrails, tiers, confidence | ✅ |
 | 7 | CLI end-to-end (`fetch` / `tune` / `report`) | ✅ |
-| 8 | SwiftUI app (wizard + results + charts) | ⬜ |
+| 8 | SwiftUI app (wizard + results + charts) | ✅ (core) |
 | 9 | Hardening: golden fixtures, edge cases, docs, coderabbit | ⬜ |
 
 ### Phase 0 — Scaffold ✅
@@ -365,13 +365,14 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 - [x] Verified end-to-end against a mock Nightscout server (`references/mock_nightscout.py`)
 - [ ] `report` from saved JSON + golden CLI output tests (nice-to-have)
 
-### Phase 8 — SwiftUI app ⬜
-- [ ] Wizard: connect → profile pick/confirm → options → run → results
-- [ ] Results: ISF/CR cards + basal table with pump vs tuned + tiers + confidence
-- [ ] Charts (basal schedule, per-hour deviation coverage) — see `/dataviz`
-- [ ] Loud medical disclaimer gate; "review with your care team" copy
-- [ ] Keychain storage for URL/token; no telemetry
-- [ ] UI tests / snapshot where feasible
+### Phase 8 — SwiftUI app ✅ (core)
+- [x] `@Observable` `TuningViewModel` running the pipeline off the main actor
+- [x] Split-view UI: connection/options form + results pane (idle/running/error/done)
+- [x] Results: ISF/CR cards + basal table with pump vs tuned + tier coloring + "no data" flags
+- [x] Prominent medical disclaimer banner
+- [x] Builds and launches as a native macOS app (verified process starts)
+- [ ] Charts (basal curve, per-hour deviation coverage) — see `/dataviz` (future)
+- [ ] Keychain storage for URL/token; profile picker; snapshot tests (future)
 
 ### Phase 9 — Hardening ⬜
 - [ ] Expand golden fixtures; fuzz malformed NS payloads
