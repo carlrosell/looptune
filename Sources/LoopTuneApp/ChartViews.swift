@@ -16,6 +16,13 @@ enum ChartPalette {
         scheme == .dark ? Color(red: 0x19 / 255, green: 0x9E / 255, blue: 0x70 / 255)
                         : Color(red: 0x1B / 255, green: 0xAF / 255, blue: 0x7A / 255)
     }
+
+    /// "Current settings" series in the diagnostics before/after chart.
+    /// Orange↔blue is a high-contrast, CVD-safe pair (validated both modes).
+    static func current(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color(red: 0xD9 / 255, green: 0x59 / 255, blue: 0x26 / 255)
+                        : Color(red: 0xEB / 255, green: 0x68 / 255, blue: 0x34 / 255)
+    }
 }
 
 /// 24-hour basal schedule: pump vs LoopTune as step lines.

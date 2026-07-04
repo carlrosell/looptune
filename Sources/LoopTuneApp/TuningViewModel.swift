@@ -3,7 +3,8 @@ import Observation
 import LoopTuneKit
 
 /// Drives the tuning flow for the UI: holds the connection form state, runs the
-/// pipeline off the main actor, and publishes the result.
+/// pipeline off the main actor, persists completed runs, and exposes the run
+/// history for the sidebar.
 @MainActor
 @Observable
 final class TuningViewModel {
@@ -20,15 +21,26 @@ final class TuningViewModel {
     var days: Int = 7
     var insulinType: InsulinType = .novolog
 
-    // Result
+    // State
     var phase: Phase = .idle
-    var recommendation: TuningRecommendation?
+    /// Saved runs, newest first (the sidebar list).
+    var runs: [SavedRun] = []
+    /// The run currently shown in the detail pane.
+    var selectedRunID: String?
 
     private let store: CredentialStore
+    private let runStore: RunStore
 
-    init(store: CredentialStore = CredentialStore()) {
+    var selectedRun: SavedRun? {
+        runs.first { $0.id == selectedRunID }
+    }
+
+    init(store: CredentialStore = CredentialStore(), runStore: RunStore = RunStore()) {
         self.store = store
+        self.runStore = runStore
         restore()
+        runs = runStore.loadAll()
+        selectedRunID = runs.first?.id
     }
 
     var canRun: Bool {
@@ -48,7 +60,7 @@ final class TuningViewModel {
     }
 
     /// Persist settings after a successful analysis (token to the Keychain).
-    private func persist() {
+    private func persistSettings() {
         store.urlString = urlString
         store.days = days
         store.insulinTypeRaw = insulinType.rawValue
@@ -60,7 +72,6 @@ final class TuningViewModel {
     func run() {
         guard canRun else { return }
         phase = .running
-        recommendation = nil
 
         let urlString = self.urlString
         let credentials: NightscoutCredentials = token.isEmpty ? .none : .token(token)
@@ -69,20 +80,38 @@ final class TuningViewModel {
 
         Task {
             do {
-                // Run networking + the synchronous replay/tune compute off the
-                // main actor so the UI stays responsive.
-                let result = try await Task.detached(priority: .userInitiated) {
+                let output = try await Task.detached(priority: .userInitiated) {
                     let client = try NightscoutClient(rawURLString: urlString, credentials: credentials)
                     // Finished days are served from the local day cache; the
                     // current day is always fetched fresh.
-                    return try await TuningPipeline().run(client: client, configuration: config, endingAt: now, cache: DayCache())
+                    return try await TuningPipeline().runWithDiagnostics(client: client, configuration: config, endingAt: now, cache: DayCache())
                 }.value
-                self.recommendation = result
+
+                let run = SavedRun(
+                    id: RunStore.makeID(createdAt: now),
+                    createdAt: now,
+                    siteHost: output.host,
+                    days: config.days,
+                    insulinType: config.insulinType,
+                    recommendation: output.recommendation,
+                    diagnostics: output.diagnostics
+                )
+                self.runStore.save(run)
+                self.runs.insert(run, at: 0)
+                self.selectedRunID = run.id
                 self.phase = .done
-                self.persist()
+                self.persistSettings()
             } catch {
                 self.phase = .failed(Self.describe(error))
             }
+        }
+    }
+
+    func deleteRun(id: String) {
+        runStore.delete(id: id)
+        runs.removeAll { $0.id == id }
+        if selectedRunID == id {
+            selectedRunID = runs.first?.id
         }
     }
 

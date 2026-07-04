@@ -22,7 +22,7 @@ struct LoopTuneApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .frame(minWidth: 780, minHeight: 560)
+                .frame(minWidth: 860, minHeight: 600)
         }
     }
 }
@@ -32,19 +32,18 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            ConnectionForm(model: model)
+            SidebarView(model: model)
                 .navigationSplitViewColumnWidth(min: 300, ideal: 330, max: 400)
         } detail: {
-            ResultsPane(model: model)
-                .frame(minWidth: 460)
+            DetailPane(model: model)
+                .frame(minWidth: 520)
         }
         .navigationTitle("LoopTune")
         .navigationSubtitle(subtitle)
     }
 
-    /// Window subtitle: a quiet summary of the last analysis.
     private var subtitle: String {
-        guard case .done = model.phase, let rec = model.recommendation else { return "" }
-        return "\(rec.daysAnalyzed) day\(rec.daysAnalyzed == 1 ? "" : "s") · \(rec.totalSamples) samples"
+        guard let run = model.selectedRun else { return "" }
+        return "\(run.days) day\(run.days == 1 ? "" : "s") · \(run.recommendation.totalSamples) samples"
     }
 }

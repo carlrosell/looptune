@@ -420,6 +420,16 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 
 ## 8. Status log (append-only)
 
+- **2026-07-04** — Run history + diagnostics tab. Completed runs are persisted
+  (`RunStore`, one JSON per run under Application Support, newest-50 kept) and
+  listed in the sidebar; selecting one reopens it. The detail pane is now two
+  tabs: Recommendations and Data & diagnostics. `DiagnosticsBuilder` replays the
+  window twice — current settings vs recommended — and reports the mean-absolute
+  deviation improvement, per-hour before/after deviation (chart + flagged
+  table), and per-day ingested-data summaries (CGM count, mean, TIR, boluses,
+  insulin, carbs). `TuningRecommendation`/`RunDiagnostics`/`SavedRun` are
+  Codable for persistence. 122 tests green.
+
 - **2026-07-04** — Local day cache. `DayCache` stores raw Nightscout documents
   per site host and UTC day under Application Support, in wire format (DTOs
   gained symmetric `Encodable`). The pipeline fetches per day bucket, serves

@@ -123,6 +123,20 @@ public struct TuningPipeline: Sendable {
         return try run(inputs: inputs, configuration: configuration)
     }
 
+    /// Fetch and run tuning, returning the recommendation together with the
+    /// full diagnostics (ingested-data summaries and before/after deviation).
+    public func runWithDiagnostics(
+        client: NightscoutClient,
+        configuration: TuningConfiguration,
+        endingAt end: Date,
+        cache: DayCache? = nil
+    ) async throws -> (recommendation: TuningRecommendation, diagnostics: RunDiagnostics, host: String) {
+        let inputs = try await fetchInputs(client: client, configuration: configuration, endingAt: end, cache: cache)
+        let recommendation = try run(inputs: inputs, configuration: configuration)
+        let diagnostics = DiagnosticsBuilder().build(inputs: inputs, recommendation: recommendation)
+        return (recommendation, diagnostics, client.baseURL.host ?? "unknown")
+    }
+
     /// Fetch and assemble inputs from Nightscout, day-bucket by day-bucket.
     ///
     /// The window is tiled with UTC day buckets (plus one lead-in day so doses

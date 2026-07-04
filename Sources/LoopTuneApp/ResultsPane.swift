@@ -1,38 +1,54 @@
 import SwiftUI
 import LoopTuneKit
 
-/// Right-hand results pane: empty/running/error/results states.
-struct ResultsPane: View {
+/// Right-hand detail pane. While a run is in flight it shows progress or an
+/// error; otherwise it shows the selected run in two tabs.
+struct DetailPane: View {
     let model: TuningViewModel
+
+    private enum Tab: Hashable { case recommendations, diagnostics }
+    @State private var tab: Tab = .recommendations
 
     var body: some View {
         Group {
-            switch model.phase {
-            case .idle:
-                ContentUnavailableView {
-                    Label("Ready to analyze", systemImage: "waveform.path.ecg")
-                } description: {
-                    Text("Connect your Nightscout site, then click Analyze.")
-                }
-            case .running:
+            if model.phase == .running {
                 VStack(spacing: 14) {
-                    ProgressView()
-                        .controlSize(.large)
+                    ProgressView().controlSize(.large)
                     Text("Fetching and replaying your data…")
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .failed(let message):
+            } else if case .failed(let message) = model.phase {
                 ContentUnavailableView {
                     Label("Couldn't analyze", systemImage: "exclamationmark.triangle")
                 } description: {
                     Text(message)
                 }
-            case .done:
-                if let recommendation = model.recommendation {
-                    ResultsView(recommendation: recommendation)
-                } else {
-                    ContentUnavailableView("No result", systemImage: "questionmark")
+            } else if let run = model.selectedRun {
+                VStack(spacing: 0) {
+                    Picker("View", selection: $tab) {
+                        Text("Recommendations").tag(Tab.recommendations)
+                        Text("Data & diagnostics").tag(Tab.diagnostics)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    .padding(10)
+
+                    Divider()
+
+                    switch tab {
+                    case .recommendations:
+                        ResultsView(recommendation: run.recommendation)
+                    case .diagnostics:
+                        DiagnosticsView(run: run)
+                    }
+                }
+            } else {
+                ContentUnavailableView {
+                    Label("Ready to analyze", systemImage: "waveform.path.ecg")
+                } description: {
+                    Text("Connect your Nightscout site, then click Analyze.")
                 }
             }
         }
