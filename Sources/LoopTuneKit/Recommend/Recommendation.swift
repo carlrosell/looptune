@@ -115,6 +115,23 @@ public struct BasalHourRecommendation: Sendable, Equatable {
         self.daysMissing = daysMissing
         self.sampleCount = sampleCount
     }
+
+    /// Loop's scheduled-basal granularity on typical pumps (Omnipod, most
+    /// Medtronic models): 0.05 U/hr.
+    public static let loopBasalIncrement = 0.05
+
+    /// The recommended rate rounded to the pump's supported increment — the
+    /// value a user can actually enter into Loop. Never rounds an above-zero
+    /// recommendation down to zero.
+    public func roundedRate(toIncrement increment: Double = Self.loopBasalIncrement) -> Double {
+        guard increment > 0 else { return recommendedRate }
+        var rounded = (recommendedRate / increment).rounded() * increment
+        if rounded == 0, recommendedRate > 0 {
+            rounded = increment
+        }
+        // Shave floating-point dust (e.g. 0.15000000000000002).
+        return (rounded * 10_000).rounded() / 10_000
+    }
 }
 
 /// The full tuning recommendation, ready for presentation.
@@ -135,6 +152,10 @@ public struct TuningRecommendation: Sendable, Equatable {
     /// Sum of tuned basal over 24 hours (daily total, U).
     public var tunedDailyBasal: Double { basalHours.reduce(0) { $0 + $1.recommendedRate } }
     public var pumpDailyBasal: Double { basalHours.reduce(0) { $0 + $1.pumpRate } }
+    /// Daily total of the increment-rounded rates (what Loop would deliver).
+    public func roundedDailyBasal(increment: Double = BasalHourRecommendation.loopBasalIncrement) -> Double {
+        basalHours.reduce(0) { $0 + $1.roundedRate(toIncrement: increment) }
+    }
 
     public init(
         from output: TuningOutput,

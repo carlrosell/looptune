@@ -10,8 +10,13 @@ public enum TuningReport {
     """
 
     /// Render the report. `displayUnit` defaults to the site's own glucose unit;
-    /// glucose-denominated values (ISF) are shown in that unit.
-    public static func render(_ recommendation: TuningRecommendation, displayUnit: GlucoseUnit? = nil) -> String {
+    /// glucose-denominated values (ISF) are shown in that unit. `basalIncrement`
+    /// is the pump's scheduled-basal granularity for the Rounded column.
+    public static func render(
+        _ recommendation: TuningRecommendation,
+        displayUnit: GlucoseUnit? = nil,
+        basalIncrement: Double = BasalHourRecommendation.loopBasalIncrement
+    ) -> String {
         let unit = displayUnit ?? recommendation.profileGlucoseUnit
         var lines: [String] = []
         lines.append("LoopTune recommendations")
@@ -27,14 +32,19 @@ public enum TuningReport {
         lines.append(parameterRow(recommendation.carbRatio, unit: unit))
         lines.append("")
 
-        lines.append("Basal schedule [U/hr]")
-        lines.append(pad("Hour", 8) + pad("Pump", 12) + pad("LoopTune", 12) + pad("Days missing", 14) + "Flag")
-        lines.append(String(repeating: "-", count: 52))
+        lines.append("Basal schedule [U/hr] — Rounded = nearest \(String(format: "%.3g", basalIncrement)) U/hr (what Loop accepts)")
+        lines.append(pad("Hour", 8) + pad("Pump", 12) + pad("LoopTune", 12) + pad("Rounded", 10) + pad("Days missing", 14) + "Flag")
+        lines.append(String(repeating: "-", count: 62))
         for hour in recommendation.basalHours where hour.pumpRate != hour.recommendedRate || !hour.untuned {
-            lines.append(basalRow(hour))
+            lines.append(basalRow(hour, increment: basalIncrement))
         }
-        lines.append(String(repeating: "-", count: 52))
-        lines.append(pad("Total", 8) + pad(fmt(recommendation.pumpDailyBasal), 12) + pad(fmt(recommendation.tunedDailyBasal), 12))
+        lines.append(String(repeating: "-", count: 62))
+        lines.append(
+            pad("Total", 8)
+            + pad(fmt(recommendation.pumpDailyBasal), 12)
+            + pad(fmt(recommendation.tunedDailyBasal), 12)
+            + pad(fmt2(recommendation.roundedDailyBasal(increment: basalIncrement)), 10)
+        )
         lines.append("")
         lines.append(disclaimer)
         return lines.joined(separator: "\n")
@@ -52,11 +62,20 @@ public enum TuningReport {
         return pad(rec.name, 22) + pad(pump, 14) + pad(tuned, 14) + change + flagSuffix(tier: rec.changeTier, status: rec.guardrailStatus)
     }
 
-    private static func basalRow(_ hour: BasalHourRecommendation) -> String {
+    private static func basalRow(_ hour: BasalHourRecommendation, increment: Double) -> String {
         let label = String(format: "%02d:00", hour.hour)
         let flag = hour.untuned ? "(no data)" : tierFlag(hour.changeTier)
         let missing = hour.daysMissing > 0 ? String(hour.daysMissing) : ""
-        return pad(label, 8) + pad(fmt(hour.pumpRate), 12) + pad(fmt(hour.recommendedRate), 12) + pad(missing, 14) + flag
+        return pad(label, 8)
+            + pad(fmt(hour.pumpRate), 12)
+            + pad(fmt(hour.recommendedRate), 12)
+            + pad(fmt2(hour.roundedRate(toIncrement: increment)), 10)
+            + pad(missing, 14)
+            + flag
+    }
+
+    private static func fmt2(_ value: Double) -> String {
+        String(format: "%.2f", value)
     }
 
     private static func flagSuffix(tier: ChangeTier, status: LoopGuardrails.Status) -> String {

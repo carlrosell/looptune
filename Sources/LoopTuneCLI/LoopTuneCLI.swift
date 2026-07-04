@@ -46,6 +46,9 @@ struct Tune: AsyncParsableCommand {
     @Option(name: .long, help: "Display units: auto (site default), mgdl, or mmol.")
     var units: String = "auto"
 
+    @Option(name: .long, help: "Pump basal increment for the Rounded column (Loop default 0.05 U/hr).")
+    var basalIncrement: Double = 0.05
+
     @Flag(name: .long, help: "Emit the recommendation as JSON instead of a table.")
     var json = false
 
@@ -55,13 +58,16 @@ struct Tune: AsyncParsableCommand {
             throw ValidationError("Unknown insulin type: \(insulin)")
         }
         let displayUnit = try Self.parseUnits(units)
+        guard basalIncrement > 0, basalIncrement <= 1 else {
+            throw ValidationError("basal-increment must be between 0 and 1 U/hr")
+        }
         let config = TuningConfiguration(days: days, insulinType: insulinType)
         let recommendation = try await TuningPipeline().run(client: client, configuration: config, endingAt: Date())
 
         if json {
-            print(try RecommendationJSON.encode(recommendation, displayUnit: displayUnit))
+            print(try RecommendationJSON.encode(recommendation, displayUnit: displayUnit, basalIncrement: basalIncrement))
         } else {
-            print(TuningReport.render(recommendation, displayUnit: displayUnit))
+            print(TuningReport.render(recommendation, displayUnit: displayUnit, basalIncrement: basalIncrement))
         }
     }
 

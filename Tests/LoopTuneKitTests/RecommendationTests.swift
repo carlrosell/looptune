@@ -32,6 +32,47 @@ struct GuardrailTests {
         #expect(ChangeTier.classify(pump: 100, tuned: 88) == .notable)    // -12%
     }
 
+    @Test("basal rates round to the pump increment")
+    func basalRounding() {
+        func hourRec(_ rate: Double) -> BasalHourRecommendation {
+            BasalHourRecommendation(hour: 0, pumpRate: 1.0, rawTunedRate: rate, untuned: false)
+        }
+        // 0.194 → 0.20 at Loop's 0.05 steps.
+        #expect(hourRec(0.194).roundedRate() == 0.2)
+        #expect(hourRec(1.021).roundedRate() == 1.0)
+        #expect(hourRec(1.097).roundedRate() == 1.1)
+        // Half-step rounds away from zero: 0.125 → 0.15.
+        #expect(hourRec(0.125).roundedRate() == 0.15)
+        // Exact multiples pass through without FP dust.
+        #expect(hourRec(0.85).roundedRate() == 0.85)
+        // A tiny positive recommendation never rounds down to zero…
+        #expect(hourRec(0.06).roundedRate(toIncrement: 0.25) == 0.25)
+        // …and other increments work (Medtronic 0.025).
+        #expect(hourRec(0.194).roundedRate(toIncrement: 0.025) == 0.2)
+        #expect(hourRec(0.21).roundedRate(toIncrement: 0.025) == 0.2)
+    }
+
+    @Test("report and JSON include the rounded basal column")
+    func roundedInOutputs() throws {
+        let output = TuningOutput(
+            tunedBasalHourly: Array(repeating: 1.021, count: 24),
+            pumpBasalHourly: Array(repeating: 1.0, count: 24),
+            untunedBasalHours: Array(repeating: false, count: 24),
+            tunedISF: 48.0, pumpISF: 50.0,
+            tunedCarbRatio: 10.0, pumpCarbRatio: 10.0,
+            categoryCounts: [:], totalSamples: 100
+        )
+        let rec = TuningRecommendation(from: output, daysAnalyzed: 1)
+        let text = TuningReport.render(rec)
+        #expect(text.contains("Rounded"))
+        #expect(text.contains("1.00"))
+        let json = try RecommendationJSON.encode(rec)
+        #expect(json.contains("recommendedRounded"))
+        #expect(json.contains("basalIncrement"))
+        // 24 × 1.00 rounded.
+        #expect(abs(rec.roundedDailyBasal() - 24.0) < 1e-9)
+    }
+
     @Test("ISF converts to mmol/L/U for display; carb ratio and % change do not")
     func mmolDisplay() {
         let isf = ParameterRecommendation(

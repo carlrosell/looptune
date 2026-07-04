@@ -96,10 +96,14 @@ struct ResultsView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Basal schedule (U/hr)")
                 .font(.headline)
+            Text("Enter into Loop = the raw recommendation rounded to your pump's 0.05 U/hr steps.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             HStack {
                 Text("Hour").frame(width: 60, alignment: .leading)
                 Text("Pump").frame(width: 80, alignment: .trailing)
                 Text("LoopTune").frame(width: 90, alignment: .trailing)
+                Text("Enter into Loop").frame(width: 110, alignment: .trailing)
                 Text("").frame(maxWidth: .infinity)
             }
             .font(.caption.weight(.semibold))
@@ -111,6 +115,10 @@ struct ResultsView: View {
                     Text(String(format: "%.3f", hour.pumpRate)).frame(width: 80, alignment: .trailing).monospacedDigit()
                     Text(String(format: "%.3f", hour.recommendedRate))
                         .frame(width: 90, alignment: .trailing).monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    Text(String(format: "%.2f", hour.roundedRate()))
+                        .frame(width: 110, alignment: .trailing).monospacedDigit()
+                        .fontWeight(.semibold)
                         .foregroundStyle(color(for: hour.changeTier))
                     if hour.untuned {
                         Text("no data").font(.caption).foregroundStyle(.tertiary)
@@ -126,6 +134,7 @@ struct ResultsView: View {
                 Text("Daily total").frame(width: 60, alignment: .leading)
                 Text(String(format: "%.2f", recommendation.pumpDailyBasal)).frame(width: 80, alignment: .trailing).monospacedDigit()
                 Text(String(format: "%.2f", recommendation.tunedDailyBasal)).frame(width: 90, alignment: .trailing).monospacedDigit()
+                Text(String(format: "%.2f", recommendation.roundedDailyBasal())).frame(width: 110, alignment: .trailing).monospacedDigit()
                 Spacer()
             }
             .font(.callout.weight(.semibold))
