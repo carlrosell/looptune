@@ -1,48 +1,39 @@
 import SwiftUI
 import LoopTuneKit
 
-/// Left-hand connection + options form.
+/// Sidebar configuration form, using the native grouped form style.
 struct ConnectionForm: View {
     @Bindable var model: TuningViewModel
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                header
+        Form {
+            Section {
+                TextField("Site URL", text: $model.urlString, prompt: Text("your-site.example.com"))
+                    .autocorrectionDisabled()
+                SecureField("Access token", text: $model.token, prompt: Text("Optional"))
+            } header: {
+                Text("Nightscout")
+            } footer: {
+                Text("A token with the readable role is only needed for private sites.")
+            }
 
-                section("Nightscout") {
-                    labeledField("Site URL") {
-                        TextField("https://your-site.example.com", text: $model.urlString)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    labeledField("Access token (optional)") {
-                        SecureField("token", text: $model.token)
-                            .textFieldStyle(.roundedBorder)
+            Section("Analysis") {
+                Stepper(value: $model.days, in: 1...30) {
+                    LabeledContent("History", value: "\(model.days) day\(model.days == 1 ? "" : "s")")
+                }
+                Picker("Insulin", selection: $model.insulinType) {
+                    ForEach(InsulinType.allCases, id: \.self) { type in
+                        Text(type.rawValue.capitalized).tag(type)
                     }
                 }
+            }
 
-                section("Analysis") {
-                    labeledField("Days of history: \(model.days)") {
-                        Slider(value: Binding(
-                            get: { Double(model.days) },
-                            set: { model.days = Int($0) }
-                        ), in: 1...30, step: 1)
-                    }
-                    labeledField("Insulin type") {
-                        Picker("", selection: $model.insulinType) {
-                            ForEach(InsulinType.allCases, id: \.self) { type in
-                                Text(type.rawValue.capitalized).tag(type)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                    }
-                }
-
+            Section {
                 Button(action: model.run) {
-                    HStack {
+                    HStack(spacing: 8) {
                         if model.phase == .running {
-                            ProgressView().controlSize(.small)
+                            ProgressView()
+                                .controlSize(.small)
                         }
                         Text(model.phase == .running ? "Analyzing…" : "Analyze")
                             .frame(maxWidth: .infinity)
@@ -50,36 +41,13 @@ struct ConnectionForm: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .keyboardShortcut(.defaultAction)
                 .disabled(!model.canRun)
-
-                Spacer(minLength: 0)
+            } footer: {
+                Text("Experimental analysis, not medical advice. Review results with your care team.")
             }
-            .padding(20)
         }
-    }
-
-    private var header: some View {
-        Text("Tune Loop settings from your Nightscout history.")
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-    }
-
-    @ViewBuilder
-    private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title.uppercased())
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            content()
-        }
-    }
-
-    @ViewBuilder
-    private func labeledField(_ label: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(.callout)
-            content()
-        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
     }
 }

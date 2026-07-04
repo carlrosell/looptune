@@ -52,9 +52,9 @@ struct TableCard<Content: View, Accessory: View>: View {
             }
 
             content()
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .strokeBorder(.quaternary, lineWidth: 1)
                 )
 

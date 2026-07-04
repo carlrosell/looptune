@@ -20,11 +20,10 @@ struct LoopTuneApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        WindowGroup("LoopTune") {
+        WindowGroup {
             ContentView()
-                .frame(minWidth: 720, minHeight: 560)
+                .frame(minWidth: 780, minHeight: 560)
         }
-        .windowResizability(.contentSize)
     }
 }
 
@@ -32,12 +31,20 @@ struct ContentView: View {
     @State private var model = TuningViewModel()
 
     var body: some View {
-        HSplitView {
+        NavigationSplitView {
             ConnectionForm(model: model)
-                .frame(minWidth: 280, idealWidth: 320, maxWidth: 380)
-
+                .navigationSplitViewColumnWidth(min: 300, ideal: 330, max: 400)
+        } detail: {
             ResultsPane(model: model)
-                .frame(minWidth: 400)
+                .frame(minWidth: 460)
         }
+        .navigationTitle("LoopTune")
+        .navigationSubtitle(subtitle)
+    }
+
+    /// Window subtitle: a quiet summary of the last analysis.
+    private var subtitle: String {
+        guard case .done = model.phase, let rec = model.recommendation else { return "" }
+        return "\(rec.daysAnalyzed) day\(rec.daysAnalyzed == 1 ? "" : "s") · \(rec.totalSamples) samples"
     }
 }
