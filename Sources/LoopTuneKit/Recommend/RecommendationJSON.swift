@@ -3,8 +3,9 @@ import Foundation
 /// JSON encoding of a `TuningRecommendation` for the CLI `--json` mode and for
 /// persistence/golden tests.
 public enum RecommendationJSON {
-    public static func encode(_ recommendation: TuningRecommendation) throws -> String {
-        let dto = RecommendationDTO(recommendation)
+    public static func encode(_ recommendation: TuningRecommendation, displayUnit: GlucoseUnit? = nil) throws -> String {
+        let unit = displayUnit ?? recommendation.profileGlucoseUnit
+        let dto = RecommendationDTO(recommendation, displayUnit: unit)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(dto)
@@ -34,6 +35,7 @@ struct RecommendationDTO: Encodable {
 
     var daysAnalyzed: Int
     var totalSamples: Int
+    var displayUnit: String
     var categoryCounts: [String: Int]
     var sensitivity: Parameter
     var carbRatio: Parameter
@@ -41,12 +43,13 @@ struct RecommendationDTO: Encodable {
     var tunedDailyBasal: Double
     var basal: [BasalHour]
 
-    init(_ recommendation: TuningRecommendation) {
+    init(_ recommendation: TuningRecommendation, displayUnit: GlucoseUnit) {
         daysAnalyzed = recommendation.daysAnalyzed
         totalSamples = recommendation.totalSamples
+        self.displayUnit = displayUnit.shortLabel
         categoryCounts = Dictionary(uniqueKeysWithValues: recommendation.categoryCounts.map { ($0.key.rawValue, $0.value) })
-        sensitivity = Parameter(recommendation.sensitivity)
-        carbRatio = Parameter(recommendation.carbRatio)
+        sensitivity = Parameter(recommendation.sensitivity, in: displayUnit)
+        carbRatio = Parameter(recommendation.carbRatio, in: displayUnit)
         pumpDailyBasal = recommendation.pumpDailyBasal
         tunedDailyBasal = recommendation.tunedDailyBasal
         basal = recommendation.basalHours.map(BasalHour.init)
@@ -54,13 +57,13 @@ struct RecommendationDTO: Encodable {
 }
 
 private extension RecommendationDTO.Parameter {
-    init(_ rec: ParameterRecommendation) {
+    init(_ rec: ParameterRecommendation, in unit: GlucoseUnit) {
         self.init(
             name: rec.name,
-            unit: rec.unit,
-            pump: rec.pumpValue,
-            recommended: rec.recommendedValue,
-            rawTuned: rec.rawTunedValue,
+            unit: rec.unitLabel(in: unit),
+            pump: rec.pumpValue(in: unit),
+            recommended: rec.recommendedValue(in: unit),
+            rawTuned: rec.rawTunedValue(in: unit),
             percentChange: rec.percentChange,
             changeTier: rec.changeTier.rawValue,
             guardrailStatus: rec.guardrailStatus.rawValue

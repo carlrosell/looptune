@@ -18,9 +18,11 @@ public enum ChangeTier: String, Sendable, Equatable {
     }
 }
 
-/// A single tunable parameter's recommendation.
+/// A single tunable parameter's recommendation. Values are stored canonically
+/// (ISF in mg/dL/U); glucose-denominated parameters are converted for display.
 public struct ParameterRecommendation: Sendable, Equatable {
     public var name: String
+    /// Canonical unit label (mg/dL/U for ISF, g/U for carb ratio).
     public var unit: String
     public var pumpValue: Double
     /// The tuned value after guardrail clamping.
@@ -29,10 +31,13 @@ public struct ParameterRecommendation: Sendable, Equatable {
     public var rawTunedValue: Double
     public var changeTier: ChangeTier
     public var guardrailStatus: LoopGuardrails.Status
-    /// Percent change from pump to recommended (signed).
+    /// Percent change from pump to recommended (signed, unit-invariant).
     public var percentChange: Double
+    /// Whether the value's numerator is a glucose quantity (mg/dL) and therefore
+    /// convertible to mmol/L for display.
+    public var isGlucoseDenominated: Bool
 
-    public init(name: String, unit: String, pumpValue: Double, rawTunedValue: Double, bounds: LoopGuardrails.Bounds) {
+    public init(name: String, unit: String, pumpValue: Double, rawTunedValue: Double, bounds: LoopGuardrails.Bounds, isGlucoseDenominated: Bool) {
         self.name = name
         self.unit = unit
         self.pumpValue = pumpValue
@@ -42,7 +47,47 @@ public struct ParameterRecommendation: Sendable, Equatable {
         self.guardrailStatus = clamped.status
         self.changeTier = ChangeTier.classify(pump: pumpValue, tuned: clamped.value)
         self.percentChange = pumpValue == 0 ? 0 : (clamped.value - pumpValue) / pumpValue * 100
+        self.isGlucoseDenominated = isGlucoseDenominated
     }
+
+    // MARK: - Display
+
+    private func convert(_ value: Double, to displayUnit: GlucoseUnit) -> Double {
+        isGlucoseDenominated ? displayUnit.fromMilligramsPerDeciliter(value) : value
+    }
+
+    public func pumpValue(in displayUnit: GlucoseUnit) -> Double { convert(pumpValue, to: displayUnit) }
+    public func recommendedValue(in displayUnit: GlucoseUnit) -> Double { convert(recommendedValue, to: displayUnit) }
+    public func rawTunedValue(in displayUnit: GlucoseUnit) -> Double { convert(rawTunedValue, to: displayUnit) }
+
+    /// The unit label to show for a given display unit (e.g. "mmol/L/U" for ISF).
+    public func unitLabel(in displayUnit: GlucoseUnit) -> String {
+        guard isGlucoseDenominated else { return unit }
+        return displayUnit.sensitivityUnitLabel
+    }
+
+    /// Sensible decimal places for the display unit.
+    public func decimals(in displayUnit: GlucoseUnit) -> Int {
+        isGlucoseDenominated && displayUnit == .millimolesPerLiter ? 2 : 1
+    }
+
+    /// A formatted value string in the display unit.
+    public func formatted(_ value: Double, in displayUnit: GlucoseUnit) -> String {
+        String(format: "%.\(decimals(in: displayUnit))f", value)
+    }
+}
+
+public extension GlucoseUnit {
+    /// Short glucose label ("mg/dL" / "mmol/L").
+    var shortLabel: String {
+        switch self {
+        case .milligramsPerDeciliter: return "mg/dL"
+        case .millimolesPerLiter: return "mmol/L"
+        }
+    }
+
+    /// Sensitivity (ISF) unit label ("mg/dL/U" / "mmol/L/U").
+    var sensitivityUnitLabel: String { shortLabel + "/U" }
 }
 
 /// One tuned basal hour.
@@ -75,12 +120,14 @@ public struct TuningRecommendation: Sendable, Equatable {
     public var categoryCounts: [DeviationCategory: Int]
     public var totalSamples: Int
     public var daysAnalyzed: Int
+    /// The site's own display unit — a sensible default for presentation.
+    public var profileGlucoseUnit: GlucoseUnit
 
     /// Sum of tuned basal over 24 hours (daily total, U).
     public var tunedDailyBasal: Double { basalHours.reduce(0) { $0 + $1.recommendedRate } }
     public var pumpDailyBasal: Double { basalHours.reduce(0) { $0 + $1.pumpRate } }
 
-    public init(from output: TuningOutput, daysAnalyzed: Int) {
+    public init(from output: TuningOutput, daysAnalyzed: Int, profileGlucoseUnit: GlucoseUnit = .milligramsPerDeciliter) {
         precondition(
             output.tunedBasalHourly.count == 24 && output.pumpBasalHourly.count == 24 && output.untunedBasalHours.count == 24,
             "TuningOutput basal arrays must each contain 24 hourly entries"
@@ -90,14 +137,16 @@ public struct TuningRecommendation: Sendable, Equatable {
             unit: "mg/dL/U",
             pumpValue: output.pumpISF,
             rawTunedValue: output.tunedISF,
-            bounds: LoopGuardrails.sensitivity
+            bounds: LoopGuardrails.sensitivity,
+            isGlucoseDenominated: true
         )
         self.carbRatio = ParameterRecommendation(
             name: "Carb Ratio",
             unit: "g/U",
             pumpValue: output.pumpCarbRatio,
             rawTunedValue: output.tunedCarbRatio,
-            bounds: LoopGuardrails.carbRatio
+            bounds: LoopGuardrails.carbRatio,
+            isGlucoseDenominated: false
         )
         self.basalHours = (0..<24).map { hour in
             BasalHourRecommendation(
@@ -110,5 +159,6 @@ public struct TuningRecommendation: Sendable, Equatable {
         self.categoryCounts = output.categoryCounts
         self.totalSamples = output.totalSamples
         self.daysAnalyzed = daysAnalyzed
+        self.profileGlucoseUnit = profileGlucoseUnit
     }
 }

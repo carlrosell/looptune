@@ -43,6 +43,9 @@ struct Tune: AsyncParsableCommand {
     @Option(name: .long, help: "Insulin type: novolog, humalog, apidra, fiasp, lyumjev, afrezza.")
     var insulin: String = "novolog"
 
+    @Option(name: .long, help: "Display units: auto (site default), mgdl, or mmol.")
+    var units: String = "auto"
+
     @Flag(name: .long, help: "Emit the recommendation as JSON instead of a table.")
     var json = false
 
@@ -51,13 +54,24 @@ struct Tune: AsyncParsableCommand {
         guard let insulinType = InsulinType(rawValue: insulin.lowercased()) else {
             throw ValidationError("Unknown insulin type: \(insulin)")
         }
+        let displayUnit = try Self.parseUnits(units)
         let config = TuningConfiguration(days: days, insulinType: insulinType)
         let recommendation = try await TuningPipeline().run(client: client, configuration: config, endingAt: Date())
 
         if json {
-            print(try RecommendationJSON.encode(recommendation))
+            print(try RecommendationJSON.encode(recommendation, displayUnit: displayUnit))
         } else {
-            print(TuningReport.render(recommendation))
+            print(TuningReport.render(recommendation, displayUnit: displayUnit))
+        }
+    }
+
+    /// `nil` = auto (use the site's own unit).
+    static func parseUnits(_ raw: String) throws -> GlucoseUnit? {
+        switch raw.lowercased() {
+        case "auto": return nil
+        case "mgdl", "mg/dl": return .milligramsPerDeciliter
+        case "mmol", "mmol/l": return .millimolesPerLiter
+        default: throw ValidationError("Unknown units: \(raw) (use auto, mgdl, or mmol)")
         }
     }
 }

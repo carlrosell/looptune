@@ -9,19 +9,22 @@ public enum TuningReport {
         change one setting at a time, and monitor closely. Use at your own risk.
     """
 
-    public static func render(_ recommendation: TuningRecommendation) -> String {
+    /// Render the report. `displayUnit` defaults to the site's own glucose unit;
+    /// glucose-denominated values (ISF) are shown in that unit.
+    public static func render(_ recommendation: TuningRecommendation, displayUnit: GlucoseUnit? = nil) -> String {
+        let unit = displayUnit ?? recommendation.profileGlucoseUnit
         var lines: [String] = []
         lines.append("LoopTune recommendations")
         lines.append(String(repeating: "=", count: 60))
         lines.append("")
-        lines.append("Days analyzed: \(recommendation.daysAnalyzed)   Samples: \(recommendation.totalSamples)")
+        lines.append("Days analyzed: \(recommendation.daysAnalyzed)   Samples: \(recommendation.totalSamples)   Units: \(unit.shortLabel)")
         lines.append(categoryLine(recommendation.categoryCounts))
         lines.append("")
 
-        lines.append(pad("Parameter", 22) + pad("Pump", 12) + pad("LoopTune", 12) + "Change")
+        lines.append(pad("Parameter", 22) + pad("Pump", 14) + pad("LoopTune", 14) + "Change")
         lines.append(String(repeating: "-", count: 60))
-        lines.append(parameterRow(recommendation.sensitivity))
-        lines.append(parameterRow(recommendation.carbRatio))
+        lines.append(parameterRow(recommendation.sensitivity, unit: unit))
+        lines.append(parameterRow(recommendation.carbRatio, unit: unit))
         lines.append("")
 
         lines.append("Basal schedule [U/hr]")
@@ -42,9 +45,11 @@ public enum TuningReport {
         return "Categorized — " + parts.joined(separator: "  ")
     }
 
-    private static func parameterRow(_ rec: ParameterRecommendation) -> String {
+    private static func parameterRow(_ rec: ParameterRecommendation, unit: GlucoseUnit) -> String {
         let change = String(format: "%+.0f%%", rec.percentChange)
-        return pad(rec.name, 22) + pad(fmt(rec.pumpValue), 12) + pad(fmt(rec.recommendedValue), 12) + change + flagSuffix(tier: rec.changeTier, status: rec.guardrailStatus)
+        let pump = "\(rec.formatted(rec.pumpValue(in: unit), in: unit)) \(rec.unitLabel(in: unit))"
+        let tuned = rec.formatted(rec.recommendedValue(in: unit), in: unit)
+        return pad(rec.name, 22) + pad(pump, 14) + pad(tuned, 14) + change + flagSuffix(tier: rec.changeTier, status: rec.guardrailStatus)
     }
 
     private static func basalRow(_ hour: BasalHourRecommendation) -> String {

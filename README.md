@@ -48,7 +48,9 @@ Nightscout ─▶ Ingest ─▶ Replay (LoopAlgorithm) ─▶ Tune ─▶ Recomm
 ```sh
 swift build
 .build/debug/looptune tune https://your-site.example.com --days 7 --insulin novolog
-# add --token <access-token> for private sites, or --json for machine output
+# --token <access-token> for private sites
+# --units mmol   (or mgdl; default "auto" uses your site's own unit)
+# --json         for machine-readable output
 ```
 
 `looptune fetch <url>` prints a diagnostic summary (sample counts, timezone,
@@ -61,6 +63,7 @@ swift run LoopTuneApp
 ```
 
 Enter your Nightscout URL, choose a window and insulin type, and click Analyze.
+The results view has an mg/dL ↔ mmol/L toggle (defaults to your site's unit).
 
 ## Development
 

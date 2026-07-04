@@ -31,6 +31,29 @@ struct GuardrailTests {
         #expect(ChangeTier.classify(pump: 100, tuned: 65) == .large)      // -35%
         #expect(ChangeTier.classify(pump: 100, tuned: 88) == .notable)    // -12%
     }
+
+    @Test("ISF converts to mmol/L/U for display; carb ratio and % change do not")
+    func mmolDisplay() {
+        let isf = ParameterRecommendation(
+            name: "Insulin Sensitivity", unit: "mg/dL/U",
+            pumpValue: 50, rawTunedValue: 45, bounds: LoopGuardrails.sensitivity, isGlucoseDenominated: true
+        )
+        // 45 mg/dL/U ÷ 18.0156 ≈ 2.498 mmol/L/U
+        #expect(abs(isf.recommendedValue(in: .millimolesPerLiter) - 2.498) < 0.01)
+        #expect(isf.recommendedValue(in: .milligramsPerDeciliter) == 45)
+        #expect(isf.unitLabel(in: .millimolesPerLiter) == "mmol/L/U")
+        #expect(isf.unitLabel(in: .milligramsPerDeciliter) == "mg/dL/U")
+
+        let cr = ParameterRecommendation(
+            name: "Carb Ratio", unit: "g/U",
+            pumpValue: 10, rawTunedValue: 9, bounds: LoopGuardrails.carbRatio, isGlucoseDenominated: false
+        )
+        // Carb ratio is never converted.
+        #expect(cr.recommendedValue(in: .millimolesPerLiter) == 9)
+        #expect(cr.unitLabel(in: .millimolesPerLiter) == "g/U")
+        // Percent change is unit-invariant.
+        #expect(abs(isf.percentChange - (-10)) < 1e-9)
+    }
 }
 
 @Suite("End-to-end pipeline")
@@ -91,6 +114,28 @@ struct PipelineIntegrationTests {
         let json = try RecommendationJSON.encode(rec)
         #expect(json.contains("\"sensitivity\""))
         #expect(json.contains("\"basal\""))
+
+        // Rendering in mmol/L labels the units accordingly.
+        let mmolText = TuningReport.render(rec, displayUnit: .millimolesPerLiter)
+        #expect(mmolText.contains("mmol/L"))
+        // (JSONEncoder escapes the slash as "mmol\/L", so match on "mmol".)
+        let mmolJSON = try RecommendationJSON.encode(rec, displayUnit: .millimolesPerLiter)
+        #expect(mmolJSON.contains("mmol"))
+    }
+
+    @Test("recommendation carries the site's glucose unit as the display default")
+    func profileUnitDefault() throws {
+        var profile = try profile()
+        profile.glucoseUnit = .millimolesPerLiter
+        let count = 60
+        let glucose = (0..<count).map { i in
+            GlucoseSample(date: base.addingTimeInterval(Double(i) * 300), milligramsPerDeciliter: 120)
+        }
+        let inputs = TuningInputs(profile: profile, glucose: glucose, doses: [], carbs: [], analysisStart: base, analysisEnd: glucose.last!.date)
+        let rec = try TuningPipeline().run(inputs: inputs, configuration: TuningConfiguration(days: 1))
+        #expect(rec.profileGlucoseUnit == .millimolesPerLiter)
+        // Auto-render uses the site unit.
+        #expect(TuningReport.render(rec).contains("mmol/L"))
     }
 
     @Test("stable in-range flat data recommends little change")

@@ -74,7 +74,7 @@ public struct TuningPipeline: Sendable {
         )
 
         let days = max(1, Int((inputs.analysisEnd.timeIntervalSince(inputs.analysisStart) / 86_400).rounded()))
-        return TuningRecommendation(from: output, daysAnalyzed: days)
+        return TuningRecommendation(from: output, daysAnalyzed: days, profileGlucoseUnit: profile.glucoseUnit)
     }
 
     /// Fetch from a Nightscout site and run tuning.

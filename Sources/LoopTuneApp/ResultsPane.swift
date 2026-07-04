@@ -51,19 +51,36 @@ struct ResultsPane: View {
 /// The recommendation display.
 struct ResultsView: View {
     let recommendation: TuningRecommendation
+    @State private var displayUnit: GlucoseUnit
+
+    init(recommendation: TuningRecommendation) {
+        self.recommendation = recommendation
+        // Default to the site's own unit.
+        _displayUnit = State(initialValue: recommendation.profileGlucoseUnit)
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 DisclaimerBanner()
 
-                Text("Analyzed \(recommendation.daysAnalyzed) day(s), \(recommendation.totalSamples) samples")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                HStack {
+                    Text("Analyzed \(recommendation.daysAnalyzed) day(s), \(recommendation.totalSamples) samples")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Picker("Units", selection: $displayUnit) {
+                        Text("mg/dL").tag(GlucoseUnit.milligramsPerDeciliter)
+                        Text("mmol/L").tag(GlucoseUnit.millimolesPerLiter)
+                    }
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                    .labelsHidden()
+                }
 
                 HStack(spacing: 16) {
-                    ParameterCard(rec: recommendation.sensitivity)
-                    ParameterCard(rec: recommendation.carbRatio)
+                    ParameterCard(rec: recommendation.sensitivity, displayUnit: displayUnit)
+                    ParameterCard(rec: recommendation.carbRatio, displayUnit: displayUnit)
                 }
 
                 basalTable
@@ -121,17 +138,18 @@ struct ResultsView: View {
 
 struct ParameterCard: View {
     let rec: ParameterRecommendation
+    let displayUnit: GlucoseUnit
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(rec.name).font(.subheadline.weight(.semibold))
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(String(format: "%.1f", rec.recommendedValue))
+                Text(rec.formatted(rec.recommendedValue(in: displayUnit), in: displayUnit))
                     .font(.system(size: 30, weight: .bold, design: .rounded))
                     .foregroundStyle(color)
-                Text(rec.unit).font(.caption).foregroundStyle(.secondary)
+                Text(rec.unitLabel(in: displayUnit)).font(.caption).foregroundStyle(.secondary)
             }
-            Text("was \(String(format: "%.1f", rec.pumpValue))  ·  \(String(format: "%+.0f%%", rec.percentChange))")
+            Text("was \(rec.formatted(rec.pumpValue(in: displayUnit), in: displayUnit))  ·  \(String(format: "%+.0f%%", rec.percentChange))")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if rec.guardrailStatus != .ok {
