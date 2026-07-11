@@ -127,6 +127,38 @@ public struct ReplayEngine: Sendable {
         return result
     }
 
+    /// How far back each input can physically influence deviations inside an
+    /// analysis window, used to trim inputs before replay. Doses act for the
+    /// insulin activity duration (6h10m; padded to oref0's 18h convention);
+    /// carbs absorb for at most 10h (`CarbMath.maximumAbsorptionTimeInterval`);
+    /// glucose is needed 10h back so carbs started before the window still get
+    /// their counteraction-effect attribution.
+    public static let doseLookback: TimeInterval = 18 * 3600
+    public static let carbLookback: TimeInterval = 10 * 3600
+    public static let glucoseLookback: TimeInterval = 10 * 3600
+
+    /// Trim inputs to the subset that can influence deviations inside
+    /// `[analysisStart, analysisEnd]`. Replaying a day window with trimmed
+    /// inputs produces the same deviations as replaying with the full dataset,
+    /// but costs O(day) instead of O(window) — the difference between linear
+    /// and quadratic total work for day-chained runs.
+    public static func trimmedInputs(
+        glucose: [GlucoseSample],
+        doses: [DoseRecord],
+        carbs: [CarbRecord],
+        analysisStart: Date,
+        analysisEnd: Date
+    ) -> (glucose: [GlucoseSample], doses: [DoseRecord], carbs: [CarbRecord]) {
+        let glucoseStart = analysisStart.addingTimeInterval(-glucoseLookback)
+        let doseStart = analysisStart.addingTimeInterval(-doseLookback)
+        let carbStart = analysisStart.addingTimeInterval(-carbLookback)
+        return (
+            glucose.filter { $0.date >= glucoseStart && $0.date <= analysisEnd },
+            doses.filter { $0.startDate >= doseStart && $0.startDate <= analysisEnd },
+            carbs.filter { $0.date >= carbStart && $0.date <= analysisEnd }
+        )
+    }
+
     /// Mean 5-minute glucose delta over the trailing ~20 minutes (oref0's
     /// `avgDelta`): `(BG[i] − BG[i−4]) / 4`, falling back to the single-step
     /// delta near the start of the series.

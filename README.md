@@ -94,7 +94,9 @@ launches.
 
 ## Development
 
-- `swift build` / `swift test` (84+ tests)
+- `swift build` / `swift test` (120+ tests)
+- For real workloads build with optimizations: `swift run -c release LoopTuneApp`
+  (debug builds are 5–10× slower on the replay math)
 - Depends on `LoopKit/LoopAlgorithm` (pinned by revision — the repo has no tags)
 - Reference repos and research notes live under `references/` (gitignored)
 

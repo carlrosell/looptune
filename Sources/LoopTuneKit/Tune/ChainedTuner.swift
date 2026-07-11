@@ -84,14 +84,26 @@ public struct ChainedTuner: Sendable {
                 }
             }
 
-            let deviations = try replay.computeDeviations(
+            // Trim to the inputs that can influence this window: replaying a
+            // day with the full multi-day dataset is O(window) per day, which
+            // makes the whole chained run quadratic.
+            let trimmed = ReplayEngine.trimmedInputs(
                 glucose: inputs.glucose,
                 doses: inputs.doses,
                 carbs: inputs.carbs,
-                profile: evolving,
                 analysisStart: window.start,
                 analysisEnd: window.end
             )
+            // A window whose trimmed data is too sparse (or empty) counts as a
+            // missing day rather than aborting the run.
+            let deviations = (try? replay.computeDeviations(
+                glucose: trimmed.glucose,
+                doses: trimmed.doses,
+                carbs: trimmed.carbs,
+                profile: evolving,
+                analysisStart: window.start,
+                analysisEnd: window.end
+            )) ?? []
             guard deviations.count >= Self.minimumSamplesPerDay else {
                 // A whole day without usable data: every hour goes untuned.
                 for hour in 0..<24 { daysMissing[hour] += 1 }

@@ -135,14 +135,14 @@ struct DiagnosticsBuilderTests {
     }
 
     @Test("build produces before/after deviation stats and per-hour rows")
-    func buildDiagnostics() throws {
+    func buildDiagnostics() async throws {
         let profile = try profile(basal: 1.0)
         let glucose = (0..<288).map { i in
             GlucoseSample(date: base.addingTimeInterval(Double(i) * 300), milligramsPerDeciliter: 110 + Double(i % 20))
         }
         let inputs = TuningInputs(profile: profile, glucose: glucose, doses: [], carbs: [], analysisStart: base, analysisEnd: glucose.last!.date)
         let rec = try TuningPipeline().run(inputs: inputs, configuration: TuningConfiguration(days: 1))
-        let diag = DiagnosticsBuilder().build(inputs: inputs, recommendation: rec)
+        let diag = await DiagnosticsBuilder().build(inputs: inputs, recommendation: rec)
 
         #expect(diag.hourlyDeviation.count == 24)
         #expect(diag.glucoseCount == 288)

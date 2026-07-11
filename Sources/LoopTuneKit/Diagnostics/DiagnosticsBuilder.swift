@@ -10,7 +10,7 @@ import Foundation
 public struct DiagnosticsBuilder: Sendable {
     public init() {}
 
-    public func build(inputs: TuningInputs, recommendation: TuningRecommendation) -> RunDiagnostics {
+    public func build(inputs: TuningInputs, recommendation: TuningRecommendation) async -> RunDiagnostics {
         let profile = inputs.profile
         let timeZone = profile.timeZone
 
@@ -21,8 +21,11 @@ public struct DiagnosticsBuilder: Sendable {
             carbRatio: recommendation.carbRatio.recommendedValue
         )) ?? profile
 
-        let before = deviations(for: profile, inputs: inputs)
-        let after = deviations(for: recommendedProfile, inputs: inputs)
+        // The two replays are independent CPU-bound work — run them as
+        // concurrent child tasks.
+        async let beforeTask = deviations(for: profile, inputs: inputs)
+        async let afterTask = deviations(for: recommendedProfile, inputs: inputs)
+        let (before, after) = await (beforeTask, afterTask)
 
         let hourly = hourlyDeviations(before: before, after: after, timeZone: timeZone)
         let daySummaries = Self.daySummaries(inputs: inputs, timeZone: timeZone)
@@ -40,15 +43,36 @@ public struct DiagnosticsBuilder: Sendable {
         )
     }
 
+    /// Replay day-by-day with trimmed inputs and concatenate — the same cost
+    /// shape as the chained tuner (linear in days), instead of one full-window
+    /// replay whose insulin-effect computation is quadratic in window length.
     private func deviations(for profile: TherapyProfile, inputs: TuningInputs) -> [DeviationSample] {
-        (try? ReplayEngine().computeDeviations(
-            glucose: inputs.glucose,
-            doses: inputs.doses,
-            carbs: inputs.carbs,
-            profile: profile,
-            analysisStart: inputs.analysisStart,
-            analysisEnd: inputs.analysisEnd
-        )) ?? []
+        let engine = ReplayEngine()
+        let windows = ChainedTuner.dayWindows(
+            from: inputs.analysisStart,
+            to: inputs.analysisEnd,
+            timeZone: profile.timeZone
+        )
+        var all: [DeviationSample] = []
+        for window in windows {
+            let trimmed = ReplayEngine.trimmedInputs(
+                glucose: inputs.glucose,
+                doses: inputs.doses,
+                carbs: inputs.carbs,
+                analysisStart: window.start,
+                analysisEnd: window.end
+            )
+            let samples = (try? engine.computeDeviations(
+                glucose: trimmed.glucose,
+                doses: trimmed.doses,
+                carbs: trimmed.carbs,
+                profile: profile,
+                analysisStart: window.start,
+                analysisEnd: window.end
+            )) ?? []
+            all += samples
+        }
+        return all
     }
 
     private func meanAbsolute(_ samples: [DeviationSample]) -> Double {

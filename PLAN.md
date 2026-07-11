@@ -420,6 +420,16 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 
 ## 8. Status log (append-only)
 
+- **2026-07-12** — Performance: chained tuning was quadratic (each day window
+  replayed the entire multi-day dataset) and diagnostics added two more
+  full-window replays. `ReplayEngine.trimmedInputs` now trims each replay to
+  the physically relevant inputs (doses 18h back, carbs/glucose 10h back), the
+  chained tuner and diagnostics both use it, and the diagnostics before/after
+  replays run as concurrent child tasks. Benchmark (7 days, 5-min temp basals,
+  debug build): tune 34.7s → 2.1s, diagnostics 8.7s → 2.4s (~10× overall).
+  122 tests green — trimming preserves results exactly (insulin tail and carb
+  absorption windows are fully covered by the lookbacks).
+
 - **2026-07-04** — Run history + diagnostics tab. Completed runs are persisted
   (`RunStore`, one JSON per run under Application Support, newest-50 kept) and
   listed in the sidebar; selecting one reopens it. The detail pane is now two

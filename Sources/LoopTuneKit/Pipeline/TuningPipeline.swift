@@ -133,7 +133,7 @@ public struct TuningPipeline: Sendable {
     ) async throws -> (recommendation: TuningRecommendation, diagnostics: RunDiagnostics, host: String) {
         let inputs = try await fetchInputs(client: client, configuration: configuration, endingAt: end, cache: cache)
         let recommendation = try run(inputs: inputs, configuration: configuration)
-        let diagnostics = DiagnosticsBuilder().build(inputs: inputs, recommendation: recommendation)
+        let diagnostics = await DiagnosticsBuilder().build(inputs: inputs, recommendation: recommendation)
         return (recommendation, diagnostics, client.baseURL.host ?? "unknown")
     }
 
