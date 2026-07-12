@@ -98,8 +98,12 @@ private struct ResultsTableStyle: ViewModifier {
             .tableStyle(.inset)
             .alternatingRowBackgrounds(.enabled)
             .scrollDisabled(true)
+            // Request the row height through SwiftUI's own API — never by
+            // mutating the NSTableView, which AppKit flags as a reentrant
+            // delegate operation when it happens inside a table update.
+            .environment(\.defaultMinListRowHeight, rowHeight)
             .frame(height: measuredHeight ?? fallbackHeight)
-            .background(TableMetricsSync(rowCount: rowCount, rowHeight: rowHeight, height: $measuredHeight))
+            .background(TableMetricsSync(rowCount: rowCount, height: $measuredHeight))
     }
 
     /// Used only until the real metrics are measured (first layout pass).
@@ -108,12 +112,18 @@ private struct ResultsTableStyle: ViewModifier {
     }
 }
 
-/// Locates the `NSTableView` backing the adjacent SwiftUI `Table`, applies the
-/// desired row height, and reports the exact content height (header + rows +
-/// intercell spacing + scroll-view insets) back to SwiftUI.
+/// Locates the `NSTableView` backing the adjacent SwiftUI `Table` and reports
+/// the exact content height (header + rows + intercell spacing + scroll-view
+/// insets) back to SwiftUI.
+///
+/// Strictly READ-ONLY: it never mutates the table. SwiftUI owns that
+/// `NSTableView`, and writing to it (e.g. `rowHeight`) from inside an update
+/// cycle triggers AppKit's "reentrant operation in its NSTableView delegate"
+/// warning — a future assert. Row height is requested via
+/// `defaultMinListRowHeight` instead, and whatever height the table actually
+/// uses is measured here.
 private struct TableMetricsSync: NSViewRepresentable {
     var rowCount: Int
-    var rowHeight: CGFloat
     @Binding var height: CGFloat?
 
     func makeNSView(context: Context) -> NSView {
@@ -122,15 +132,11 @@ private struct TableMetricsSync: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         let rowCount = rowCount
-        let rowHeight = rowHeight
         DispatchQueue.main.async {
             guard let tableView = Self.findTableView(near: nsView, expectedRows: rowCount) else { return }
-            if tableView.rowHeight != rowHeight {
-                tableView.rowHeight = rowHeight
-            }
             let header = tableView.headerView?.frame.height ?? 0
             let spacing = tableView.intercellSpacing.height
-            var total = header + CGFloat(rowCount) * (rowHeight + spacing)
+            var total = header + CGFloat(rowCount) * (tableView.rowHeight + spacing)
             if let scrollView = tableView.enclosingScrollView {
                 total += scrollView.contentInsets.top + scrollView.contentInsets.bottom
             }
