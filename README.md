@@ -95,6 +95,9 @@ launches.
 ## Development
 
 - `swift build` / `swift test` (120+ tests)
+- `scripts/dev.sh` — watch mode: rebuilds and relaunches the app on every
+  save (the app restores its state on launch, so a relaunch is nearly free);
+  pass `release` for an optimized build
 - For real workloads build with optimizations: `swift run -c release LoopTuneApp`
   (debug builds are 5–10× slower on the replay math)
 - Depends on `LoopKit/LoopAlgorithm` (pinned by revision — the repo has no tags)
