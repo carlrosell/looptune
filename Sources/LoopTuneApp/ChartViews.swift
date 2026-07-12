@@ -25,10 +25,62 @@ enum ChartPalette {
     }
 }
 
+/// Shared hover-tooltip card: material background, one row per series with a
+/// color chip so identity never relies on position alone.
+struct ChartTooltip<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+            content()
+        }
+        .font(.caption)
+        .padding(8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(.quaternary, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+    }
+}
+
+/// One tooltip row: color chip + label + value.
+struct TooltipRow: View {
+    var color: Color?
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if let color {
+                Circle().fill(color).frame(width: 7, height: 7)
+            }
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            Text(value)
+                .fontWeight(.medium)
+                .monospacedDigit()
+        }
+    }
+}
+
 /// 24-hour basal schedule: pump vs LoopTune as step lines.
 struct BasalChartView: View {
     let hours: [BasalHourRecommendation]
     @Environment(\.colorScheme) private var colorScheme
+    /// Hovered x position (macOS pointer tracking via chartXSelection).
+    @State private var selectedHour: Int?
+
+    private var hoveredHour: BasalHourRecommendation? {
+        guard let selectedHour else { return nil }
+        let clamped = min(max(selectedHour, 0), 23)
+        return hours.first { $0.hour == clamped }
+    }
 
     private struct Point: Identifiable {
         let id: String
@@ -56,19 +108,38 @@ struct BasalChartView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Basal schedule — pump vs LoopTune (U/hr)")
                 .font(.subheadline.weight(.semibold))
-            Chart(points) { point in
-                LineMark(
-                    x: .value("Hour", point.hour),
-                    y: .value("U/hr", point.rate)
-                )
-                .foregroundStyle(by: .value("Series", point.series))
-                .interpolationMethod(.stepEnd)
-                .lineStyle(StrokeStyle(lineWidth: 2))
+            Chart {
+                ForEach(points) { point in
+                    LineMark(
+                        x: .value("Hour", point.hour),
+                        y: .value("U/hr", point.rate)
+                    )
+                    .foregroundStyle(by: .value("Series", point.series))
+                    .interpolationMethod(.stepEnd)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                }
+                if let hovered = hoveredHour {
+                    RuleMark(x: .value("Hour", hovered.hour))
+                        .foregroundStyle(.secondary.opacity(0.35))
+                        .lineStyle(StrokeStyle(lineWidth: 1))
+                        .annotation(
+                            position: .top,
+                            spacing: 4,
+                            overflowResolution: .init(x: .fit(to: .chart), y: .disabled)
+                        ) {
+                            ChartTooltip(title: String(format: "%02d:00–%02d:00", hovered.hour, (hovered.hour + 1) % 24)) {
+                                TooltipRow(color: ChartPalette.pump(colorScheme), label: "Pump", value: String(format: "%.3f U/hr", hovered.pumpRate))
+                                TooltipRow(color: ChartPalette.tuned(colorScheme), label: "LoopTune", value: String(format: "%.3f U/hr", hovered.recommendedRate))
+                                TooltipRow(color: nil, label: "Enter into Loop", value: String(format: "%.2f U/hr", hovered.roundedRate()))
+                            }
+                        }
+                }
             }
             .chartForegroundStyleScale([
                 "LoopTune": ChartPalette.tuned(colorScheme),
                 "Pump": ChartPalette.pump(colorScheme),
             ])
+            .chartXSelection(value: $selectedHour)
             .chartXScale(domain: 0...24)
             .chartXAxis {
                 AxisMarks(values: [0, 4, 8, 12, 16, 20, 24]) { value in
@@ -91,20 +162,51 @@ struct BasalChartView: View {
 struct CoverageChartView: View {
     let hours: [BasalHourRecommendation]
     @Environment(\.colorScheme) private var colorScheme
+    @State private var selectedHour: Int?
+
+    private var hoveredHour: BasalHourRecommendation? {
+        guard let selectedHour else { return nil }
+        let clamped = min(max(selectedHour, 0), 23)
+        return hours.first { $0.hour == clamped }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Data coverage — basal samples per hour")
                 .font(.subheadline.weight(.semibold))
-            Chart(hours, id: \.hour) { entry in
-                BarMark(
-                    x: .value("Hour", entry.hour),
-                    y: .value("Samples", entry.sampleCount),
-                    width: .fixed(8)
-                )
-                .foregroundStyle(ChartPalette.tuned(colorScheme))
-                .cornerRadius(2)
+            Chart {
+                ForEach(hours, id: \.hour) { entry in
+                    BarMark(
+                        x: .value("Hour", entry.hour),
+                        y: .value("Samples", entry.sampleCount),
+                        width: .fixed(8)
+                    )
+                    .foregroundStyle(ChartPalette.tuned(colorScheme))
+                    .cornerRadius(2)
+                }
+                if let hovered = hoveredHour {
+                    RuleMark(x: .value("Hour", hovered.hour))
+                        .foregroundStyle(.secondary.opacity(0.35))
+                        .lineStyle(StrokeStyle(lineWidth: 1))
+                        .annotation(
+                            position: .top,
+                            spacing: 4,
+                            overflowResolution: .init(x: .fit(to: .chart), y: .disabled)
+                        ) {
+                            ChartTooltip(title: String(format: "%02d:00", hovered.hour)) {
+                                TooltipRow(
+                                    color: ChartPalette.tuned(colorScheme),
+                                    label: "Samples",
+                                    value: hovered.sampleCount > 0 ? "\(hovered.sampleCount)" : "no data"
+                                )
+                                if hovered.daysMissing > 0 {
+                                    TooltipRow(color: nil, label: "Days missing", value: "\(hovered.daysMissing)")
+                                }
+                            }
+                        }
+                }
             }
+            .chartXSelection(value: $selectedHour)
             .chartXScale(domain: -1...24)
             .chartXAxis {
                 AxisMarks(values: [0, 4, 8, 12, 16, 20, 23]) { value in

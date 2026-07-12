@@ -8,8 +8,15 @@ struct DiagnosticsView: View {
     let run: SavedRun
     @Environment(\.colorScheme) private var colorScheme
     @State private var daySelection = Set<String>()
+    @State private var selectedHour: Int?
 
     private var diagnostics: RunDiagnostics { run.diagnostics }
+
+    private var hoveredDeviation: HourDeviation? {
+        guard let selectedHour else { return nil }
+        let clamped = min(max(selectedHour, 0), 23)
+        return diagnostics.hourlyDeviation.first { $0.hour == clamped }
+    }
 
     var body: some View {
         ScrollView {
@@ -141,11 +148,32 @@ struct DiagnosticsView: View {
                 RuleMark(y: .value("Zero", 0))
                     .foregroundStyle(.secondary.opacity(0.4))
                     .lineStyle(StrokeStyle(lineWidth: 1))
+                if let hovered = hoveredDeviation {
+                    RuleMark(x: .value("Hour", hovered.hour))
+                        .foregroundStyle(.secondary.opacity(0.35))
+                        .lineStyle(StrokeStyle(lineWidth: 1))
+                        .annotation(
+                            position: .top,
+                            spacing: 4,
+                            overflowResolution: .init(x: .fit(to: .chart), y: .disabled)
+                        ) {
+                            ChartTooltip(title: String(format: "%02d:00", hovered.hour)) {
+                                if hovered.sampleCount == 0 {
+                                    TooltipRow(color: nil, label: "No data", value: "")
+                                } else {
+                                    TooltipRow(color: ChartPalette.current(colorScheme), label: "Now", value: String(format: "%+.1f mg/dL", hovered.before))
+                                    TooltipRow(color: ChartPalette.tuned(colorScheme), label: "Recommended", value: String(format: "%+.1f mg/dL", hovered.after))
+                                    TooltipRow(color: nil, label: "Samples", value: "\(hovered.sampleCount)")
+                                }
+                            }
+                        }
+                }
             }
             .chartForegroundStyleScale([
                 "Now": ChartPalette.current(colorScheme),
                 "Recommended": ChartPalette.tuned(colorScheme),
             ])
+            .chartXSelection(value: $selectedHour)
             .chartXScale(domain: -1...24)
             .chartXAxis {
                 AxisMarks(values: [0, 4, 8, 12, 16, 20, 23]) { value in
