@@ -109,8 +109,9 @@ query tokens are stripped before the URL is remembered.
 - Dependency resolution is committed in `Package.resolved`; ArgumentParser is
   pinned exactly.
 - Reference repos and research notes live under `references/` (gitignored)
-- [CODE_REVIEW.html](CODE_REVIEW.html) is the file-by-file whole-application
-  review ledger and verification record.
+- Completed review records live in [docs/code-reviews/](docs/code-reviews/);
+  the archive includes the file-by-file whole-application review ledger and
+  verification evidence.
 
 ## License
 
