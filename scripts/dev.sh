@@ -13,6 +13,14 @@ cd "$(dirname "$0")/.."
 CONFIG="${1:-debug}"
 APP_PID=""
 
+case "$CONFIG" in
+  debug|release) ;;
+  *)
+    echo "usage: scripts/dev.sh [debug|release]" >&2
+    exit 2
+    ;;
+esac
+
 fingerprint() {
   find Sources -name '*.swift' -exec stat -f '%m %N' {} + 2>/dev/null | md5 -q
 }
@@ -34,9 +42,9 @@ build_and_relaunch() {
 
 cleanup() {
   [ -n "$APP_PID" ] && kill "$APP_PID" 2>/dev/null
-  exit 0
 }
-trap cleanup INT TERM
+trap cleanup EXIT
+trap 'exit 0' INT TERM
 
 build_and_relaunch
 echo "── watching Sources/ — save a Swift file to rebuild & relaunch (^C to stop)"

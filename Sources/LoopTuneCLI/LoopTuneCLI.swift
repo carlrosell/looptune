@@ -17,16 +17,22 @@ struct ConnectionOptions: ParsableArguments {
     @Argument(help: "Nightscout site URL (e.g. https://mysite.herokuapp.com).")
     var url: String
 
-    @Option(name: .long, help: "Nightscout access token (role: readable).")
+    @Option(name: .long, help: "Nightscout access token (prefer the LOOPTUNE_TOKEN environment variable so it is not exposed in process arguments).")
     var token: String?
 
-    @Option(name: .long, help: "Nightscout API secret (sent as SHA-1 api-secret header).")
+    @Option(name: .long, help: "Nightscout API secret (prefer LOOPTUNE_API_SECRET; sent as a SHA-1 api-secret header).")
     var apiSecret: String?
 
     func makeClient() throws -> NightscoutClient {
+        let environment = ProcessInfo.processInfo.environment
+        let effectiveToken = token ?? environment["LOOPTUNE_TOKEN"]
+        let effectiveSecret = apiSecret ?? environment["LOOPTUNE_API_SECRET"]
+        guard effectiveToken == nil || effectiveSecret == nil else {
+            throw ValidationError("Provide either a Nightscout token or an API secret, not both.")
+        }
         let credentials: NightscoutCredentials
-        if let token { credentials = .token(token) }
-        else if let apiSecret { credentials = .apiSecret(apiSecret) }
+        if let effectiveToken { credentials = .token(effectiveToken) }
+        else if let effectiveSecret { credentials = .apiSecret(effectiveSecret) }
         else { credentials = .none }
         return try NightscoutClient(rawURLString: url, credentials: credentials)
     }
@@ -56,12 +62,15 @@ struct Tune: AsyncParsableCommand {
     var noCache = false
 
     func run() async throws {
+        guard (1...30).contains(days) else {
+            throw ValidationError("days must be between 1 and 30")
+        }
         let client = try connection.makeClient()
         guard let insulinType = InsulinType(rawValue: insulin.lowercased()) else {
             throw ValidationError("Unknown insulin type: \(insulin)")
         }
         let displayUnit = try Self.parseUnits(units)
-        guard basalIncrement > 0, basalIncrement <= 1 else {
+        guard basalIncrement.isFinite, basalIncrement > 0, basalIncrement <= 1 else {
             throw ValidationError("basal-increment must be between 0 and 1 U/hr")
         }
         let config = TuningConfiguration(days: days, insulinType: insulinType)
@@ -98,6 +107,9 @@ struct Fetch: AsyncParsableCommand {
     var noCache = false
 
     func run() async throws {
+        guard (1...30).contains(days) else {
+            throw ValidationError("days must be between 1 and 30")
+        }
         let client = try connection.makeClient()
         let authorized = await client.checkAuthorized()
         FileHandle.standardError.write(Data("authorized: \(authorized)\n".utf8))
@@ -110,6 +122,7 @@ struct Fetch: AsyncParsableCommand {
         print("glucose samples: \(inputs.glucose.count)")
         print("doses: \(inputs.doses.count)")
         print("carbs: \(inputs.carbs.count)")
+        print("overrides: \(inputs.overrides.count)")
         print("timezone: \(inputs.profile.timeZone.identifier)")
         print("units: \(inputs.profile.glucoseUnit.rawValue)")
     }

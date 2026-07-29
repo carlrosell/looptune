@@ -18,7 +18,7 @@ let package = Package(
             url: "https://github.com/LoopKit/LoopAlgorithm.git",
             revision: "2f5c630084aa0d72b8d14999e1e0f7c836b0c341"
         ),
-        .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
+        .package(url: "https://github.com/apple/swift-argument-parser.git", exact: "1.8.2"),
     ],
     targets: [
         .target(
