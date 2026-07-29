@@ -99,7 +99,7 @@ struct DailyScheduleTests {
         #expect(timeline[2].startDate == start.addingTimeInterval(22 * 3600))
     }
 
-    @Test("expansion is DST-correct: a 02:00 boundary stays at 02:00 local across spring-forward")
+    @Test("a nonexistent 02:00 spring-forward block starts at the first valid instant")
     func expansionDST() throws {
         // US spring-forward 2023-03-12: 02:00 -> 03:00 in America/New_York.
         let schedule = try DailySchedule(entries: [
@@ -114,6 +114,12 @@ struct DailyScheduleTests {
         let dayEnd = calendar.date(from: DateComponents(year: 2023, month: 3, day: 13, hour: 0, minute: 0))!
 
         let timeline = schedule.expand(from: dayStart, to: dayEnd, timeZone: tz)
+
+        // 02:00 does not exist on this date. Foundation resolves the scheduled
+        // boundary to 03:00, so the 1.0 block starts at the first valid instant.
+        let postJumpSegment = timeline.first { $0.value == 1.0 }
+        #expect(postJumpSegment != nil)
+        #expect(DailySchedule<Double>.secondsSinceMidnight(of: postJumpSegment!.startDate, in: tz) == 3 * 3600)
 
         // Every segment's start should read back as the right local wall-clock offset.
         for segment in timeline {

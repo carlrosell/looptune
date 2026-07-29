@@ -126,7 +126,7 @@ public struct BasalHourRecommendation: Sendable, Equatable, Identifiable {
     /// value a user can actually enter into Loop. Never rounds an above-zero
     /// recommendation down to zero.
     public func roundedRate(toIncrement increment: Double = Self.loopBasalIncrement) -> Double {
-        guard increment > 0 else { return recommendedRate }
+        guard increment.isFinite, increment > 0 else { return recommendedRate }
         var rounded = (recommendedRate / increment).rounded() * increment
         if rounded == 0, recommendedRate > 0 {
             rounded = increment
@@ -153,6 +153,8 @@ public struct TuningRecommendation: Sendable, Equatable {
     /// Therapy settings changes detected inside the window (from the profile
     /// history). The tuner restarted from the applied settings at each.
     public var settingsChanges: [Date]
+    /// Samples excluded because a temporary override changed insulin needs.
+    public var excludedOverrideSamples: Int
 
     /// Sum of tuned basal over 24 hours (daily total, U).
     public var tunedDailyBasal: Double { basalHours.reduce(0) { $0 + $1.recommendedRate } }
@@ -168,7 +170,8 @@ public struct TuningRecommendation: Sendable, Equatable {
         profileGlucoseUnit: GlucoseUnit = .milligramsPerDeciliter,
         daysMissingByHour: [Int]? = nil,
         daysTuned: Int? = nil,
-        settingsChanges: [Date] = []
+        settingsChanges: [Date] = [],
+        excludedOverrideSamples: Int = 0
     ) {
         precondition(
             output.tunedBasalHourly.count == 24 && output.pumpBasalHourly.count == 24 && output.untunedBasalHours.count == 24,
@@ -206,5 +209,6 @@ public struct TuningRecommendation: Sendable, Equatable {
         self.profileGlucoseUnit = profileGlucoseUnit
         self.daysTuned = daysTuned
         self.settingsChanges = settingsChanges
+        self.excludedOverrideSamples = excludedOverrideSamples
     }
 }

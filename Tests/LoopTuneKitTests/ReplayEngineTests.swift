@@ -118,4 +118,26 @@ struct ReplayEngineTests {
         // The gapped interval must not appear.
         #expect(!samples.contains { $0.date == glucose.last!.date })
     }
+
+    @Test("accepted irregular intervals are normalized to five-minute deltas")
+    func normalizesIrregularIntervals() throws {
+        let profile = try flatProfile()
+        let glucose = (0..<6).map { index in
+            GlucoseSample(
+                date: base.addingTimeInterval(Double(index) * 15 * 60),
+                milligramsPerDeciliter: 120 + Double(index) * 15
+            )
+        }
+        let samples = try ReplayEngine().computeDeviations(
+            glucose: glucose,
+            doses: [],
+            carbs: [],
+            profile: profile,
+            analysisStart: base,
+            analysisEnd: glucose.last!.date
+        )
+        #expect(samples.count == 5)
+        #expect(samples.allSatisfy { abs($0.deviation - 5) < 1e-9 })
+        #expect(samples.allSatisfy { abs($0.averageDelta - 5) < 1e-9 })
+    }
 }

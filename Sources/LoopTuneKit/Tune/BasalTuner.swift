@@ -39,6 +39,7 @@ public struct BasalTuner: Sendable {
         // Sum basal-categorized deviations per local hour.
         var deviationsByHour = [Double](repeating: 0, count: 24)
         var countByHour = [Int](repeating: 0, count: 24)
+        var evidenceCountByHour = [Int](repeating: 0, count: 24)
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         for entry in samples where entry.category == .basal {
@@ -59,6 +60,12 @@ public struct BasalTuner: Sendable {
             let deviationSum = round3(deviationsByHour[hour])
             let basalNeeded = round2(caps.stepFraction * deviationSum / isf)
             let priorHours = [(hour + 21) % 24, (hour + 22) % 24, (hour + 23) % 24] // h−3, h−2, h−1
+            for h in priorHours {
+                // These samples inform the prior basal hours that are actually
+                // adjusted, not the clock hour in which the resulting deviation
+                // was observed.
+                evidenceCountByHour[h] += countByHour[hour]
+            }
 
             if basalNeeded > 0 {
                 let perHour = basalNeeded / 3
@@ -78,17 +85,16 @@ public struct BasalTuner: Sendable {
             }
         }
 
-        // Cap each hour vs the pump baseline.
-        for hour in 0..<24 {
-            let lower = pumpHourly[hour] * caps.autotuneMin
-            let upper = pumpHourly[hour] * caps.autotuneMax
-            rates[hour] = round3(TuningMath.clamp(rates[hour], lower, upper))
-        }
+        capRates(&rates, against: pumpHourly)
 
         // Smooth untouched hours toward the nearest tuned neighbors.
         smoothUntouched(&rates, touched: touched, original: currentHourly)
+        // `original` may be a historical profile that lies outside the current
+        // pump-relative caps. Smoothing reads that array, so cap again afterward
+        // to preserve the safety invariant across settings changes.
+        capRates(&rates, against: pumpHourly)
 
-        return Result(hourlyRates: rates.map(round3), untuned: touched.map { !$0 }, sampleCounts: countByHour)
+        return Result(hourlyRates: rates.map(round3), untuned: touched.map { !$0 }, sampleCounts: evidenceCountByHour)
     }
 
     /// oref0's unused-basal smoothing: a forward pass over the hours, where the
@@ -110,6 +116,14 @@ public struct BasalTuner: Sendable {
                 h += 1
             }
             rates[hour] = round3(0.8 * original[hour] + 0.1 * rates[last] + 0.1 * rates[next])
+        }
+    }
+
+    private func capRates(_ rates: inout [Double], against pumpHourly: [Double]) {
+        for hour in 0..<24 {
+            let lower = pumpHourly[hour] * caps.autotuneMin
+            let upper = pumpHourly[hour] * caps.autotuneMax
+            rates[hour] = round3(TuningMath.clamp(rates[hour], lower, upper))
         }
     }
 

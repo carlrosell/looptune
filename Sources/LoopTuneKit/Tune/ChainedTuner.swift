@@ -19,6 +19,9 @@ public struct ChainedTuningResult: Sendable, Equatable {
     /// settings (from the profile history); the tuning iteration restarted from
     /// the applied settings at each.
     public var settingsChanges: [Date] = []
+    /// Replay samples excluded because a temporary override changed insulin
+    /// needs at that instant.
+    public var excludedOverrideSamples: Int = 0
 }
 
 /// Runs tuning day-by-day over a multi-day window, feeding each day's tuned
@@ -71,72 +74,88 @@ public struct ChainedTuner: Sendable {
         let tuner = LoopTuner(caps: caps, options: options)
         let replay = ReplayEngine()
 
+        var excludedOverrideSamples = 0
+
         for window in windows {
-            // If the user actually changed therapy settings by this window,
-            // the applied settings supersede the simulated tuning trajectory:
-            // restart the iteration from what is really running in Loop.
-            if let history = inputs.profileHistory {
-                let nowActive = history.activeProfile(at: window.start)
-                if !nowActive.hasSameTherapySettings(as: activeHistorical) {
-                    evolving = nowActive
-                    activeHistorical = nowActive
-                    settingsChanges.append(nowActive.activeFrom ?? window.start)
+            var windowHadTuning = false
+            var tunedHoursInWindow = [Bool](repeating: false, count: 24)
+
+            // A settings change can occur at any instant, not only at a 04:00
+            // day boundary. Split the day at every profile activation so
+            // neither replay nor tuning attributes data to the wrong settings.
+            for segment in Self.profileSegments(for: window, history: inputs.profileHistory) {
+                if let history = inputs.profileHistory {
+                    let nowActive = history.activeProfile(at: segment.start)
+                    if !nowActive.hasSameTherapySettings(as: activeHistorical) {
+                        evolving = nowActive
+                        activeHistorical = nowActive
+                        settingsChanges.append(nowActive.activeFrom ?? segment.start)
+                    }
                 }
+
+                // Trim to the inputs that can influence this segment: replaying
+                // with the full multi-day dataset would make chaining quadratic.
+                let trimmed = ReplayEngine.trimmedInputs(
+                    glucose: inputs.glucose,
+                    doses: inputs.doses,
+                    carbs: inputs.carbs,
+                    analysisStart: segment.start,
+                    analysisEnd: segment.end
+                )
+                let allDeviations: [DeviationSample]
+                do {
+                    allDeviations = try replay.computeDeviations(
+                        glucose: trimmed.glucose,
+                        doses: trimmed.doses,
+                        carbs: trimmed.carbs,
+                        profile: evolving,
+                        analysisStart: segment.start,
+                        analysisEnd: segment.end
+                    )
+                } catch ReplayEngine.ReplayError.insufficientGlucose {
+                    allDeviations = []
+                }
+                let deviations = inputs.eligibleDeviations(allDeviations)
+                excludedOverrideSamples += allDeviations.count - deviations.count
+                guard deviations.count >= Self.minimumSamplesPerDay else { continue }
+
+                let output = tuner.tune(
+                    deviations: deviations,
+                    carbs: inputs.eligibleCarbs(from: segment.start, to: segment.end),
+                    currentProfile: evolving,
+                    pumpProfile: pumpProfile,
+                    analysisStart: segment.start,
+                    analysisEnd: segment.end
+                )
+
+                for hour in 0..<24 {
+                    if !output.untunedBasalHours[hour] {
+                        tunedHoursInWindow[hour] = true
+                    }
+                    sampleCountByHour[hour] += output.basalSampleCountByHour[hour]
+                }
+                for (category, count) in output.categoryCounts {
+                    mergedCategoryCounts[category, default: 0] += count
+                }
+                totalSamples += output.totalSamples
+                windowHadTuning = true
+                lastOutput = output
+
+                evolving = try evolving.replacing(
+                    basalHourly: output.tunedBasalHourly,
+                    isf: output.tunedISF,
+                    carbRatio: output.tunedCarbRatio
+                )
             }
 
-            // Trim to the inputs that can influence this window: replaying a
-            // day with the full multi-day dataset is O(window) per day, which
-            // makes the whole chained run quadratic.
-            let trimmed = ReplayEngine.trimmedInputs(
-                glucose: inputs.glucose,
-                doses: inputs.doses,
-                carbs: inputs.carbs,
-                analysisStart: window.start,
-                analysisEnd: window.end
-            )
-            // A window whose trimmed data is too sparse (or empty) counts as a
-            // missing day rather than aborting the run.
-            let deviations = (try? replay.computeDeviations(
-                glucose: trimmed.glucose,
-                doses: trimmed.doses,
-                carbs: trimmed.carbs,
-                profile: evolving,
-                analysisStart: window.start,
-                analysisEnd: window.end
-            )) ?? []
-            guard deviations.count >= Self.minimumSamplesPerDay else {
-                // A whole day without usable data: every hour goes untuned.
-                for hour in 0..<24 { daysMissing[hour] += 1 }
-                continue
+            for hour in 0..<24 where !tunedHoursInWindow[hour] {
+                daysMissing[hour] += 1
             }
-
-            let output = tuner.tune(
-                deviations: deviations,
-                carbs: inputs.carbs,
-                currentProfile: evolving,
-                pumpProfile: pumpProfile,
-                analysisStart: window.start,
-                analysisEnd: window.end
-            )
-
-            for hour in 0..<24 {
-                if output.untunedBasalHours[hour] { daysMissing[hour] += 1 }
-                sampleCountByHour[hour] += output.basalSampleCountByHour[hour]
+            if windowHadTuning {
+                daysTuned += 1
+                dailyISF.append(evolving.sensitivitySchedule.timeWeightedAverage())
+                dailyCR.append(evolving.carbRatioSchedule.timeWeightedAverage())
             }
-            for (category, count) in output.categoryCounts {
-                mergedCategoryCounts[category, default: 0] += count
-            }
-            totalSamples += output.totalSamples
-            daysTuned += 1
-            dailyISF.append(output.tunedISF)
-            dailyCR.append(output.tunedCarbRatio)
-            lastOutput = output
-
-            evolving = try evolving.replacing(
-                basalHourly: output.tunedBasalHourly,
-                isf: output.tunedISF,
-                carbRatio: output.tunedCarbRatio
-            )
         }
 
         let totalWindows = windows.count
@@ -162,7 +181,8 @@ public struct ChainedTuner: Sendable {
                 daysTuned: 0,
                 dailyISF: [],
                 dailyCarbRatio: [],
-                settingsChanges: settingsChanges
+                settingsChanges: settingsChanges,
+                excludedOverrideSamples: excludedOverrideSamples
             )
         }
 
@@ -179,8 +199,38 @@ public struct ChainedTuner: Sendable {
             daysTuned: daysTuned,
             dailyISF: dailyISF,
             dailyCarbRatio: dailyCR,
-            settingsChanges: settingsChanges
+            settingsChanges: settingsChanges,
+            excludedOverrideSamples: excludedOverrideSamples
         )
+    }
+
+    /// Split a day window at each activation that changes replay-relevant
+    /// therapy. Target-only or other metadata uploads do not fragment the
+    /// evidence into smaller tuning segments.
+    static func profileSegments(
+        for window: DateInterval,
+        history: ProfileHistory?
+    ) -> [DateInterval] {
+        var changes: [Date] = []
+        if let history {
+            var previous = history.activeProfile(at: window.start)
+            let candidates = Set(history.timeline.compactMap(\.activeFrom).filter {
+                $0 > window.start && $0 < window.end
+            }).sorted()
+            for date in candidates {
+                let active = history.activeProfile(at: date)
+                if !active.hasSameTherapySettings(as: previous) {
+                    changes.append(date)
+                }
+                previous = active
+            }
+        }
+        let cuts = ([window.start] + changes + [window.end]).sorted()
+        var segments: [DateInterval] = []
+        for index in 0..<(cuts.count - 1) where cuts[index] < cuts[index + 1] {
+            segments.append(DateInterval(start: cuts[index], end: cuts[index + 1]))
+        }
+        return segments
     }
 
     /// Split `[start, end]` into windows cut at 04:00 local. The first and last

@@ -14,6 +14,9 @@ public struct ReplayEngine: Sendable {
     /// Insulin model duration Loop uses (6h10m); doses this far before the
     /// window start still contribute effects.
     static let insulinActivityDuration: TimeInterval = InsulinMath.defaultInsulinActivityDuration
+    /// Tuning thresholds and oref0 parity are expressed per five-minute datum.
+    static let standardInterval: TimeInterval = 5 * 60
+    static let maximumCGMGap: TimeInterval = 20 * 60
 
     public init() {}
 
@@ -98,11 +101,20 @@ public struct ReplayEngine: Sendable {
             // Skip implausible readings / long gaps (mirrors oref0's guards).
             guard current.milligramsPerDeciliter >= 40, previous.milligramsPerDeciliter >= 40 else { continue }
             let intervalSeconds = current.date.timeIntervalSince(previous.date)
-            guard intervalSeconds > 0, intervalSeconds <= 20 * 60 else { continue }
+            guard intervalSeconds > 0, intervalSeconds <= Self.maximumCGMGap else { continue }
 
-            let observedDelta = current.milligramsPerDeciliter - previous.milligramsPerDeciliter
-            let insulinDelta = insulinLookup.value(at: current.date) - insulinLookup.value(at: previous.date)
-            let carbDelta = carbLookup.value(at: current.date) - carbLookup.value(at: previous.date)
+            // Nightscout timestamps have jitter and can occasionally miss one or
+            // more readings. The tuner and categorizer thresholds are defined in
+            // mg/dL per five minutes, so normalize every accepted interval rather
+            // than counting (for example) a 15-minute change at triple weight.
+            let intervalScale = Self.standardInterval / intervalSeconds
+            let observedDelta = (current.milligramsPerDeciliter - previous.milligramsPerDeciliter) * intervalScale
+            let insulinDelta = (
+                insulinLookup.value(at: current.date) - insulinLookup.value(at: previous.date)
+            ) * intervalScale
+            let carbDelta = (
+                carbLookup.value(at: current.date) - carbLookup.value(at: previous.date)
+            ) * intervalScale
             var deviation = observedDelta - insulinDelta - carbDelta
 
             // Post-hypo rebound guard: don't count rises below 80 as need.
@@ -159,16 +171,26 @@ public struct ReplayEngine: Sendable {
         )
     }
 
-    /// Mean 5-minute glucose delta over the trailing ~20 minutes (oref0's
-    /// `avgDelta`): `(BG[i] − BG[i−4]) / 4`, falling back to the single-step
-    /// delta near the start of the series.
+    /// Mean five-minute glucose delta over up to four contiguous recent
+    /// intervals. Uses elapsed time rather than sample count so timestamp jitter
+    /// and short missing-sample gaps do not change the unit.
     static func averageDelta(in glucose: [GlucoseSample], endingAt index: Int) -> Double {
-        let lookback = min(4, index)
-        guard lookback > 0 else { return 0 }
+        guard index > 0, index < glucose.count else { return 0 }
+        var startIndex = index
+        var acceptedIntervals = 0
+        while startIndex > 0, acceptedIntervals < 4 {
+            let gap = glucose[startIndex].date.timeIntervalSince(glucose[startIndex - 1].date)
+            guard gap > 0, gap <= Self.maximumCGMGap else { break }
+            startIndex -= 1
+            acceptedIntervals += 1
+        }
+        guard startIndex < index else { return 0 }
         let current = glucose[index]
-        let past = glucose[index - lookback]
-        let spanIntervals = Double(lookback)
-        return (current.milligramsPerDeciliter - past.milligramsPerDeciliter) / spanIntervals
+        let past = glucose[startIndex]
+        let span = current.date.timeIntervalSince(past.date)
+        guard span > 0 else { return 0 }
+        return (current.milligramsPerDeciliter - past.milligramsPerDeciliter)
+            * Self.standardInterval / span
     }
 }
 

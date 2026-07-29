@@ -75,6 +75,7 @@ extension TuningRecommendation: Codable {
     private enum CodingKeys: String, CodingKey {
         case sensitivity, carbRatio, basalHours, categoryCounts, totalSamples
         case daysAnalyzed, profileGlucoseUnit, daysTuned, settingsChanges
+        case excludedOverrideSamples
     }
 
     public init(from decoder: Decoder) throws {
@@ -91,6 +92,10 @@ extension TuningRecommendation: Codable {
         self.profileGlucoseUnit = try container.decode(GlucoseUnit.self, forKey: .profileGlucoseUnit)
         self.daysTuned = try container.decodeIfPresent(Int.self, forKey: .daysTuned)
         self.settingsChanges = try container.decodeIfPresent([Date].self, forKey: .settingsChanges) ?? []
+        self.excludedOverrideSamples = try container.decodeIfPresent(
+            Int.self,
+            forKey: .excludedOverrideSamples
+        ) ?? 0
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -105,5 +110,6 @@ extension TuningRecommendation: Codable {
         try container.encode(profileGlucoseUnit, forKey: .profileGlucoseUnit)
         try container.encodeIfPresent(daysTuned, forKey: .daysTuned)
         try container.encode(settingsChanges, forKey: .settingsChanges)
+        try container.encode(excludedOverrideSamples, forKey: .excludedOverrideSamples)
     }
 }

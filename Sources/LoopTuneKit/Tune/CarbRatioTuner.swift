@@ -46,11 +46,18 @@ public struct CarbRatioTuner: Sendable {
             .filter { $0.category == .csf }
             .reduce(0.0) { $0 + $1.sample.deviation }
 
-        guard totalMealCarbs > 0, replayISF > 0, currentCR > 0 else { return currentCR }
+        guard totalMealCarbs.isFinite, totalMealCarbs > 0,
+              replayISF.isFinite, replayISF > 0,
+              targetISF.isFinite, targetISF > 0,
+              currentCR.isFinite, currentCR > 0,
+              pumpCR.isFinite, pumpCR > 0,
+              mealDeviations.isFinite else {
+            return currentCR
+        }
 
         let csfReplay = replayISF / currentCR
         let csfTrue = csfReplay + mealDeviations / totalMealCarbs
-        guard csfTrue > 0 else { return currentCR }
+        guard csfTrue.isFinite, csfTrue > 0 else { return currentCR }
 
         let fullNewCR = targetISF / csfTrue
 

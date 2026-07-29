@@ -107,6 +107,7 @@ struct GuardrailTests {
         let json = try RecommendationJSON.encode(rec)
         #expect(json.contains("recommendedRounded"))
         #expect(json.contains("basalIncrement"))
+        #expect(json.contains("NOT medical advice"))
         // 24 × 1.00 rounded.
         #expect(abs(rec.roundedDailyBasal() - 24.0) < 1e-9)
     }
@@ -149,6 +150,15 @@ struct PipelineIntegrationTests {
             glucoseUnit: .milligramsPerDeciliter,
             insulinType: .novolog
         )
+    }
+
+    @Test("configuration keeps days inside the documented 1...30 range after mutation")
+    func configurationClampsMutations() {
+        var configuration = TuningConfiguration(days: 7)
+        configuration.days = 0
+        #expect(configuration.days == 1)
+        configuration.days = 100
+        #expect(configuration.days == 30)
     }
 
     @Test("under-basaled data recommends higher basal")
@@ -229,5 +239,126 @@ struct PipelineIntegrationTests {
         // ISF has < 10 ISF-categorized points here (flat, no insulin activity) so
         // it stays put; basal daily total should be close to pump.
         #expect(abs(rec.tunedDailyBasal - rec.pumpDailyBasal) < rec.pumpDailyBasal * 0.35)
+    }
+
+    @Test("pipeline rejects an invalid window and windows without enough usable evidence")
+    func rejectsInvalidOrSparseWindows() throws {
+        let profile = try profile()
+        let two = [
+            GlucoseSample(date: base, milligramsPerDeciliter: 120),
+            GlucoseSample(date: base.addingTimeInterval(300), milligramsPerDeciliter: 121),
+        ]
+        let pipeline = TuningPipeline()
+        #expect(throws: TuningPipeline.PipelineError.invalidAnalysisWindow) {
+            _ = try pipeline.run(
+                inputs: TuningInputs(
+                    profile: profile,
+                    glucose: two,
+                    doses: [],
+                    carbs: [],
+                    analysisStart: base,
+                    analysisEnd: base
+                ),
+                configuration: TuningConfiguration(days: 1)
+            )
+        }
+        #expect(throws: TuningPipeline.PipelineError.insufficientUsableData(minimum: 12, actual: 1)) {
+            _ = try pipeline.run(
+                inputs: TuningInputs(
+                    profile: profile,
+                    glucose: two,
+                    doses: [],
+                    carbs: [],
+                    analysisStart: base,
+                    analysisEnd: two.last!.date
+                ),
+                configuration: TuningConfiguration(days: 1)
+            )
+        }
+    }
+
+    @Test("insulin-needs overrides exclude samples and are reported")
+    func excludesOverrideSamples() throws {
+        let profile = try profile()
+        let glucose = (0..<60).map { index in
+            GlucoseSample(
+                date: base.addingTimeInterval(Double(index) * 300),
+                milligramsPerDeciliter: 120 + Double(index)
+            )
+        }
+        let override = OverridePeriod(
+            startDate: base,
+            endDate: base.addingTimeInterval(20 * 300),
+            insulinNeedsScaleFactor: 1.5
+        )
+        let rec = try TuningPipeline().run(
+            inputs: TuningInputs(
+                profile: profile,
+                glucose: glucose,
+                doses: [],
+                carbs: [],
+                overrides: [override],
+                analysisStart: base,
+                analysisEnd: glucose.last!.date
+            ),
+            configuration: TuningConfiguration(days: 1)
+        )
+        #expect(rec.excludedOverrideSamples == 19)
+        #expect(rec.totalSamples + rec.excludedOverrideSamples == 59)
+        #expect(TuningReport.render(rec).contains("19 samples during insulin-needs overrides"))
+        #expect(try RecommendationJSON.encode(rec).contains("\"excludedOverrideSamples\" : 19"))
+    }
+
+    @Test("an override covering all evidence prevents a recommendation")
+    func allEvidenceOverridden() throws {
+        let profile = try profile()
+        let glucose = (0..<20).map { index in
+            GlucoseSample(
+                date: base.addingTimeInterval(Double(index) * 300),
+                milligramsPerDeciliter: 120 + Double(index)
+            )
+        }
+        let override = OverridePeriod(
+            startDate: base,
+            endDate: nil,
+            insulinNeedsScaleFactor: 0.5
+        )
+        #expect(throws: TuningPipeline.PipelineError.insufficientUsableData(minimum: 12, actual: 0)) {
+            _ = try TuningPipeline().run(
+                inputs: TuningInputs(
+                    profile: profile,
+                    glucose: glucose,
+                    doses: [],
+                    carbs: [],
+                    overrides: [override],
+                    analysisStart: base,
+                    analysisEnd: glucose.last!.date
+                ),
+                configuration: TuningConfiguration(days: 1)
+            )
+        }
+    }
+
+    @Test("offline pipeline rejects non-finite domain input before replay")
+    func rejectsNonFiniteOfflineInput() throws {
+        let glucose = (0..<20).map { index in
+            GlucoseSample(
+                date: base.addingTimeInterval(Double(index) * 300),
+                milligramsPerDeciliter: index == 8 ? .nan : 120
+            )
+        }
+        #expect(throws: TuningPipeline.PipelineError.invalidInput("glucose")) {
+            _ = try TuningPipeline().run(
+                inputs: TuningInputs(
+                    profile: try profile(),
+                    glucose: glucose,
+                    doses: [],
+                    carbs: [],
+                    analysisStart: base,
+                    analysisEnd: glucose.last!.date
+                ),
+                configuration: TuningConfiguration(days: 1)
+            )
+        }
     }
 }

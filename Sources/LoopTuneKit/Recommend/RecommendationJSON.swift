@@ -41,8 +41,11 @@ struct RecommendationDTO: Encodable {
     }
 
     var daysAnalyzed: Int
+    var daysTuned: Int?
     var totalSamples: Int
+    var excludedOverrideSamples: Int
     var displayUnit: String
+    var disclaimer: String
     var settingsChanges: [String]
     var categoryCounts: [String: Int]
     var sensitivity: Parameter
@@ -62,8 +65,11 @@ struct RecommendationDTO: Encodable {
 
     init(_ recommendation: TuningRecommendation, displayUnit: GlucoseUnit, basalIncrement: Double) {
         daysAnalyzed = recommendation.daysAnalyzed
+        daysTuned = recommendation.daysTuned
         totalSamples = recommendation.totalSamples
+        excludedOverrideSamples = recommendation.excludedOverrideSamples
         self.displayUnit = displayUnit.shortLabel
+        disclaimer = TuningReport.disclaimer
         let dayFormatter = ISO8601DateFormatter()
         dayFormatter.formatOptions = [.withInternetDateTime]
         settingsChanges = recommendation.settingsChanges.map { dayFormatter.string(from: $0) }

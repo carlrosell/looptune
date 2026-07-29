@@ -3,7 +3,9 @@ import Foundation
 /// User-facing options for a tuning run.
 public struct TuningConfiguration: Sendable {
     /// Days of history to analyze (clamped to 1…30).
-    public var days: Int
+    public var days: Int {
+        didSet { days = min(30, max(1, days)) }
+    }
     /// Insulin type Loop is configured with (NS profiles don't carry it).
     public var insulinType: InsulinType
     /// Treat unannounced-meal data as basal (Loop has no UAM).
@@ -27,6 +29,9 @@ public struct TuningInputs: Sendable {
     public var glucose: [GlucoseSample]
     public var doses: [DoseRecord]
     public var carbs: [CarbRecord]
+    /// Insulin-needs overrides are excluded from attribution unless they only
+    /// change the correction target.
+    public var overrides: [OverridePeriod]
     public var analysisStart: Date
     public var analysisEnd: Date
 
@@ -36,6 +41,7 @@ public struct TuningInputs: Sendable {
         glucose: [GlucoseSample],
         doses: [DoseRecord],
         carbs: [CarbRecord],
+        overrides: [OverridePeriod] = [],
         analysisStart: Date,
         analysisEnd: Date
     ) {
@@ -44,8 +50,24 @@ public struct TuningInputs: Sendable {
         self.glucose = glucose
         self.doses = doses
         self.carbs = carbs
+        self.overrides = overrides
         self.analysisStart = analysisStart
         self.analysisEnd = analysisEnd
+    }
+
+    /// Whether an instant is inside an override that changes insulin needs.
+    public func isExcludedFromTuning(_ date: Date) -> Bool {
+        overrides.contains { $0.affectsInsulinNeeds && $0.contains(date) }
+    }
+
+    func eligibleDeviations(_ samples: [DeviationSample]) -> [DeviationSample] {
+        samples.filter { !isExcludedFromTuning($0.date) }
+    }
+
+    func eligibleCarbs(from start: Date, to end: Date) -> [CarbRecord] {
+        carbs.filter {
+            $0.date >= start && $0.date < end && !isExcludedFromTuning($0.date)
+        }
     }
 }
 
@@ -56,7 +78,14 @@ public struct TuningPipeline: Sendable {
     public enum PipelineError: Error, Equatable {
         case noProfile
         case noGlucose
+        case invalidAnalysisWindow
+        case insufficientUsableData(minimum: Int, actual: Int)
+        case invalidInput(String)
     }
+
+    /// One hour of five-minute intervals: the smallest evidence set allowed to
+    /// produce a user-facing recommendation.
+    public static let minimumUsableSamples = 12
 
     /// Run tuning against already-assembled inputs (offline path).
     ///
@@ -64,31 +93,46 @@ public struct TuningPipeline: Sendable {
     /// day's tuned profile seeds the next day's replay while the pump profile
     /// stays fixed as the safety-cap baseline (oref0's model).
     public func run(inputs: TuningInputs, configuration: TuningConfiguration) throws -> TuningRecommendation {
-        guard inputs.glucose.count >= 2 else { throw PipelineError.noGlucose }
-
-        var profile = inputs.profile
-        if profile.insulinType == nil {
-            profile.insulinType = configuration.insulinType
+        try Self.validate(inputs)
+        guard inputs.analysisStart < inputs.analysisEnd else {
+            throw PipelineError.invalidAnalysisWindow
         }
-        var chainInputs = inputs
-        chainInputs.profile = profile
+        let glucoseInWindow = inputs.glucose.filter {
+            $0.date >= inputs.analysisStart && $0.date <= inputs.analysisEnd
+        }
+        guard glucoseInWindow.count >= 2 else { throw PipelineError.noGlucose }
+
+        let chainInputs = Self.applyingConfiguration(configuration, to: inputs)
+        let profile = chainInputs.profile
 
         let options = CategorizerOptions(categorizeUAMAsBasal: configuration.categorizeUAMAsBasal)
-        let days = max(1, Int((inputs.analysisEnd.timeIntervalSince(inputs.analysisStart) / 86_400).rounded()))
+        let days = max(1, Int(ceil(inputs.analysisEnd.timeIntervalSince(inputs.analysisStart) / 86_400)))
+        let fullWindow = DateInterval(start: inputs.analysisStart, end: inputs.analysisEnd)
+        let hasTherapyChangeInsideWindow = ChainedTuner.profileSegments(
+            for: fullWindow,
+            history: chainInputs.profileHistory
+        ).count > 1
 
-        if days > 1 {
+        if days > 1 || hasTherapyChangeInsideWindow {
             let result = try ChainedTuner(options: options).run(inputs: chainInputs)
+            guard result.output.totalSamples >= Self.minimumUsableSamples else {
+                throw PipelineError.insufficientUsableData(
+                    minimum: Self.minimumUsableSamples,
+                    actual: result.output.totalSamples
+                )
+            }
             return TuningRecommendation(
                 from: result.output,
                 daysAnalyzed: days,
                 profileGlucoseUnit: profile.glucoseUnit,
                 daysMissingByHour: result.daysMissingByHour,
                 daysTuned: result.daysTuned,
-                settingsChanges: result.settingsChanges
+                settingsChanges: result.settingsChanges,
+                excludedOverrideSamples: result.excludedOverrideSamples
             )
         }
 
-        let deviations = try ReplayEngine().computeDeviations(
+        let allDeviations = try ReplayEngine().computeDeviations(
             glucose: inputs.glucose,
             doses: inputs.doses,
             carbs: inputs.carbs,
@@ -96,18 +140,117 @@ public struct TuningPipeline: Sendable {
             analysisStart: inputs.analysisStart,
             analysisEnd: inputs.analysisEnd
         )
+        let deviations = inputs.eligibleDeviations(allDeviations)
+        guard deviations.count >= Self.minimumUsableSamples else {
+            throw PipelineError.insufficientUsableData(
+                minimum: Self.minimumUsableSamples,
+                actual: deviations.count
+            )
+        }
 
         let tuner = LoopTuner(options: options)
         let output = tuner.tune(
             deviations: deviations,
-            carbs: inputs.carbs,
+            carbs: inputs.eligibleCarbs(from: inputs.analysisStart, to: inputs.analysisEnd),
             currentProfile: profile,
             pumpProfile: profile,
             analysisStart: inputs.analysisStart,
             analysisEnd: inputs.analysisEnd
         )
 
-        return TuningRecommendation(from: output, daysAnalyzed: days, profileGlucoseUnit: profile.glucoseUnit)
+        return TuningRecommendation(
+            from: output,
+            daysAnalyzed: days,
+            profileGlucoseUnit: profile.glucoseUnit,
+            excludedOverrideSamples: allDeviations.count - deviations.count
+        )
+    }
+
+    /// Validate the public offline input boundary before any values reach
+    /// LoopAlgorithm, whose lower-level APIs reasonably assume finite,
+    /// physiological data and may precondition-fail on corrupt values.
+    private static func validate(_ inputs: TuningInputs) throws {
+        func finite(_ date: Date) -> Bool {
+            date.timeIntervalSinceReferenceDate.isFinite
+        }
+        func validate(profile: TherapyProfile) throws {
+            guard profile.basalSchedule.entries.allSatisfy({
+                $0.value.isFinite && $0.value >= 0
+            }) else { throw PipelineError.invalidInput("basal schedule") }
+            guard profile.sensitivitySchedule.entries.allSatisfy({
+                $0.value.isFinite && $0.value > 0
+            }) else { throw PipelineError.invalidInput("sensitivity schedule") }
+            guard profile.carbRatioSchedule.entries.allSatisfy({
+                $0.value.isFinite && $0.value > 0
+            }) else { throw PipelineError.invalidInput("carb-ratio schedule") }
+            guard profile.targetSchedule.entries.allSatisfy({
+                $0.value.lowerBound.isFinite
+                    && $0.value.upperBound.isFinite
+                    && $0.value.lowerBound > 0
+            }) else { throw PipelineError.invalidInput("target schedule") }
+            if let activeFrom = profile.activeFrom, !finite(activeFrom) {
+                throw PipelineError.invalidInput("profile activation date")
+            }
+            let positiveLimits = [
+                profile.suspendThresholdMilligramsPerDeciliter,
+                profile.maximumBasalRatePerHour,
+            ].compactMap { $0 }
+            let validMaximumBolus = profile.maximumBolus.map {
+                $0.isFinite && $0 >= 0
+            } ?? true
+            guard positiveLimits.allSatisfy({ $0.isFinite && $0 > 0 }),
+                  validMaximumBolus else {
+                throw PipelineError.invalidInput("profile limits")
+            }
+        }
+
+        guard finite(inputs.analysisStart), finite(inputs.analysisEnd) else {
+            throw PipelineError.invalidInput("analysis dates")
+        }
+        try validate(profile: inputs.profile)
+        if let history = inputs.profileHistory {
+            try validate(profile: history.current)
+            for profile in history.timeline {
+                try validate(profile: profile)
+            }
+        }
+        guard inputs.glucose.allSatisfy({
+            finite($0.date)
+                && $0.milligramsPerDeciliter.isFinite
+                && $0.milligramsPerDeciliter >= GlucoseSample.minimumValidValue
+        }) else { throw PipelineError.invalidInput("glucose") }
+        guard inputs.doses.allSatisfy({ dose in
+            guard finite(dose.startDate), finite(dose.endDate), dose.endDate >= dose.startDate else {
+                return false
+            }
+            switch dose.kind {
+            case .bolus(let units):
+                return units.isFinite && units >= 0
+            case .tempBasal(let unitsPerHour):
+                return unitsPerHour.isFinite && unitsPerHour >= 0 && dose.endDate > dose.startDate
+            case .suspend:
+                return dose.endDate > dose.startDate
+            }
+        }) else { throw PipelineError.invalidInput("doses") }
+        guard inputs.carbs.allSatisfy({
+            finite($0.date)
+                && $0.grams.isFinite && $0.grams > 0
+                && $0.absorptionTime.isFinite && $0.absorptionTime > 0
+        }) else { throw PipelineError.invalidInput("carbs") }
+        guard inputs.overrides.allSatisfy({ period in
+            let validEnd = period.endDate.map {
+                finite($0) && $0 > period.startDate
+            } ?? true
+            let validScale = period.insulinNeedsScaleFactor.map {
+                $0.isFinite && $0 > 0
+            } ?? true
+            let validRange = period.correctionRangeMilligramsPerDeciliter.map {
+                $0.lowerBound.isFinite
+                    && $0.upperBound.isFinite
+                    && $0.lowerBound > 0
+            } ?? true
+            return finite(period.startDate) && validEnd && validScale && validRange
+        }) else { throw PipelineError.invalidInput("overrides") }
     }
 
     /// Fetch from a Nightscout site and run tuning. When a `cache` is supplied,
@@ -132,9 +275,26 @@ public struct TuningPipeline: Sendable {
         cache: DayCache? = nil
     ) async throws -> (recommendation: TuningRecommendation, diagnostics: RunDiagnostics, host: String) {
         let inputs = try await fetchInputs(client: client, configuration: configuration, endingAt: end, cache: cache)
-        let recommendation = try run(inputs: inputs, configuration: configuration)
-        let diagnostics = await DiagnosticsBuilder().build(inputs: inputs, recommendation: recommendation)
+        let configuredInputs = Self.applyingConfiguration(configuration, to: inputs)
+        let recommendation = try run(inputs: configuredInputs, configuration: configuration)
+        let diagnostics = await DiagnosticsBuilder().build(
+            inputs: configuredInputs,
+            recommendation: recommendation
+        )
         return (recommendation, diagnostics, client.baseURL.host ?? "unknown")
+    }
+
+    private static func applyingConfiguration(
+        _ configuration: TuningConfiguration,
+        to inputs: TuningInputs
+    ) -> TuningInputs {
+        var configured = inputs
+        if configured.profile.insulinType == nil {
+            configured.profile.insulinType = configuration.insulinType
+        }
+        configured.profileHistory = configured.profileHistory?
+            .applyingDefaultInsulinType(configuration.insulinType)
+        return configured
     }
 
     /// Fetch and assemble inputs from Nightscout, day-bucket by day-bucket.
@@ -199,6 +359,7 @@ public struct TuningPipeline: Sendable {
             glucose: glucose,
             doses: ingested.doses,
             carbs: ingested.carbs,
+            overrides: ingested.overrides,
             analysisStart: analysisStart,
             analysisEnd: end
         )
@@ -211,13 +372,21 @@ public struct TuningPipeline: Sendable {
         var seen = Set<String>()
         var result: [NSTreatment] = []
         for treatment in treatments {
-            let time: String = String(treatment.createdAt.timeIntervalSince1970)
-            let type: String = treatment.eventType ?? ""
-            let insulin: String = treatment.insulin.map { String($0) } ?? ""
-            let carbs: String = treatment.carbs.map { String($0) } ?? ""
-            let rate: String = treatment.rate.map { String($0) } ?? ""
-            let duration: String = treatment.duration.map { String($0) } ?? ""
-            let key = "\(time)|\(type)|\(insulin)|\(carbs)|\(rate)|\(duration)"
+            let key: String
+            if let syncIdentifier = treatment.syncIdentifier, !syncIdentifier.isEmpty {
+                key = "sync:\(syncIdentifier)"
+            } else if let identifier = treatment.identifier, !identifier.isEmpty {
+                key = "id:\(identifier)"
+            } else {
+                // Some Nightscout versions omit stable IDs. In that case use
+                // every decoded field, not a medically incomplete subset:
+                // `amount`, `absolute`, override scale/range, and insulin type
+                // can all distinguish treatments that share a timestamp.
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                let data = (try? encoder.encode(treatment)) ?? Data()
+                key = "document:\(data.base64EncodedString())"
+            }
             if seen.insert(key).inserted {
                 result.append(treatment)
             }

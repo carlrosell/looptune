@@ -17,23 +17,31 @@ public struct SensitivityTuner: Sendable {
     ///   - currentISF: current (possibly already-tuned) ISF, mg/dL/U.
     ///   - pumpISF: fixed pump ISF baseline, mg/dL/U.
     public func tune(samples: [CategorizedSample], currentISF: Double, pumpISF: Double) -> Double {
+        guard currentISF.isFinite, currentISF > 0, pumpISF.isFinite, pumpISF > 0 else {
+            return currentISF
+        }
         let isfSamples = samples.filter { $0.category == .isf }
-        guard isfSamples.count >= Self.minimumDataPoints else { return currentISF }
 
         // Per-datum autosens-style ratio: 1 + deviation/BGI (BGI is negative when
         // insulin is active; positive deviations pull the ratio below 1).
         var ratios: [Double] = []
         for entry in isfSamples {
             let bgi = entry.sample.insulinEffect
-            guard bgi != 0 else { continue }
-            ratios.append(1 + entry.sample.deviation / bgi)
+            guard bgi.isFinite, bgi != 0, entry.sample.deviation.isFinite else { continue }
+            let ratio = 1 + entry.sample.deviation / bgi
+            if ratio.isFinite {
+                ratios.append(ratio)
+            }
         }
-        guard !ratios.isEmpty else { return currentISF }
+        // The minimum applies to usable ratios, not merely samples carrying the
+        // `.isf` label. Otherwise one valid datum plus nine zero/invalid BGIs can
+        // move a medical setting.
+        guard ratios.count >= Self.minimumDataPoints else { return currentISF }
 
         // oref0 rounds p50ratios to 3 dp before multiplying (autotune/index.js).
         let medianRatio = (TuningMath.median(ratios) * 1000).rounded() / 1000
         let fullNewISF = currentISF * medianRatio
-        guard fullNewISF > 0 else { return currentISF }
+        guard fullNewISF.isFinite, fullNewISF > 0 else { return currentISF }
 
         // Optional blend toward pump ISF.
         let adjustedISF = caps.isfAdjustmentFraction * fullNewISF + (1 - caps.isfAdjustmentFraction) * pumpISF

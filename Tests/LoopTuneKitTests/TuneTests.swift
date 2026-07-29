@@ -102,6 +102,26 @@ struct TunerTests {
         #expect(tuner.tune(samples: samples, currentISF: 50, pumpISF: 50) == 50)
     }
 
+    @Test("ISF minimum counts only finite samples with a nonzero insulin effect")
+    func isfMinimumUsesUsableRatios() {
+        let tuner = SensitivityTuner()
+        var samples = (0..<9).map {
+            CategorizedSample(
+                sample: sample(Double($0) * 5, deviation: 1, bgi: 0),
+                category: .isf,
+                scheduledBasal: 1,
+                scheduledISF: 50
+            )
+        }
+        samples.append(CategorizedSample(
+            sample: sample(45, deviation: 1, bgi: -4),
+            category: .isf,
+            scheduledBasal: 1,
+            scheduledISF: 50
+        ))
+        #expect(tuner.tune(samples: samples, currentISF: 50, pumpISF: 50) == 50)
+    }
+
     @Test("basal tuner raises prior hours when deviations are positive")
     func basalRaisesPriorHours() {
         // All deviations at hour 12 (UTC), positive → basal at hours 9,10,11 rise.
@@ -120,6 +140,25 @@ struct TunerTests {
         #expect(result.hourlyRates[9] > 1.0)
         // Capped at pump * 1.2.
         #expect(result.hourlyRates.allSatisfy { $0 <= 1.2 + 1e-9 })
+        // Noon evidence adjusts the three preceding basal hours, so coverage
+        // must be attached to those hours rather than to 12:00.
+        #expect(result.sampleCounts[9] == 6)
+        #expect(result.sampleCounts[10] == 6)
+        #expect(result.sampleCounts[11] == 6)
+        #expect(result.sampleCounts[12] == 0)
+    }
+
+    @Test("basal smoothing cannot restore rates outside current pump-relative caps")
+    func basalCapsAfterSmoothing() {
+        let tuner = BasalTuner(timeZone: TimeZone(identifier: "UTC")!)
+        let result = tuner.tune(
+            samples: [],
+            currentHourly: Array(repeating: 10.0, count: 24),
+            pumpHourly: Array(repeating: 1.0, count: 24),
+            isf: 50
+        )
+        #expect(result.hourlyRates.allSatisfy { $0 == 1.2 })
+        #expect(result.untuned.allSatisfy { $0 })
     }
 
     @Test("carb ratio tuner lowers CR when carbs raise BG more than modeled")

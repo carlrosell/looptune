@@ -28,6 +28,9 @@ public enum TuningReport {
             let dates = recommendation.settingsChanges.map { Self.dayFormatter.string(from: $0) }.joined(separator: ", ")
             lines.append("Settings changed during the window (\(dates)); the analysis restarted from your applied settings at each change.")
         }
+        if recommendation.excludedOverrideSamples > 0 {
+            lines.append("\(recommendation.excludedOverrideSamples) samples during insulin-needs overrides were excluded from tuning.")
+        }
         lines.append("")
 
         lines.append(pad("Parameter", 22) + pad("Pump", 14) + pad("LoopTune", 14) + "Change")
