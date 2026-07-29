@@ -46,7 +46,9 @@ model): each day's tuned profile seeds the next day's replay, while your pump
 profile stays fixed as the safety-cap baseline, so recommendations can never
 drift beyond ±20–30% of your actual settings no matter how many days are
 analyzed. Per-hour **"days missing"** counts show how much real data sits
-behind each basal hour.
+behind each basal hour. Profile changes take effect at their exact timestamps,
+and periods where an override changes insulin needs are excluded and reported.
+A recommendation requires at least 12 usable five-minute samples.
 
 ## Validation status
 
@@ -64,8 +66,10 @@ engineering guarantee, not a medical one.
 
 ```sh
 swift build
-.build/debug/looptune tune https://your-site.example.com --days 7 --insulin novolog
-# --token <access-token> for private sites
+LOOPTUNE_TOKEN='<access-token>' \
+  .build/debug/looptune tune https://your-site.example.com --days 7 --insulin novolog
+# --token also works, but an environment variable avoids exposing the token
+# in process arguments.
 # --units mmol   (or mgdl; default "auto" uses your site's own unit)
 # --json         for machine-readable output
 ```
@@ -77,7 +81,8 @@ Fetched days are cached locally (`~/Library/Application Support/LoopTune/DayCach
 one JSON file per site and UTC day). A day is cached once it has been over for
 24 hours — Loop edits treatments retroactively for about a day — and cached
 days older than 30 days are deleted automatically. Pass `--no-cache` to bypass
-the cache; delete the directory to reset it.
+the cache; delete the directory to reset it. Cache and run-history directories
+are owner-only (`0700`), and their health-data JSON files are `0600`.
 
 ### App
 
@@ -89,19 +94,23 @@ Enter your Nightscout URL, choose a window and insulin type, and click Analyze.
 The results view shows ISF/CR cards, a pump-vs-tuned basal chart, a per-hour
 data-coverage chart, and the full basal table with days-missing confidence,
 plus an mg/dL ↔ mmol/L toggle (defaults to your site's unit). Your access token
-is stored in the login Keychain; the URL and options are remembered between
-launches.
+is stored per host and port in the login Keychain; paths, fragments, and pasted
+query tokens are stripped before the URL is remembered.
 
 ## Development
 
-- `swift build` / `swift test` (120+ tests)
+- `swift build` / `swift test` (150 tests across 30 suites)
 - `scripts/dev.sh` — watch mode: rebuilds and relaunches the app on every
   save (the app restores its state on launch, so a relaunch is nearly free);
   pass `release` for an optimized build
 - For real workloads build with optimizations: `swift run -c release LoopTuneApp`
   (debug builds are 5–10× slower on the replay math)
 - Depends on `LoopKit/LoopAlgorithm` (pinned by revision — the repo has no tags)
+- Dependency resolution is committed in `Package.resolved`; ArgumentParser is
+  pinned exactly.
 - Reference repos and research notes live under `references/` (gitignored)
+- [CODE_REVIEW.html](CODE_REVIEW.html) is the file-by-file whole-application
+  review ledger and verification record.
 
 ## License
 

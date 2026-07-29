@@ -81,7 +81,7 @@ valid to enter into Loop's therapy settings.
 │  Ingest/        NS DTO → domain model; profile schedule expansion │
 │                 (timezone/DST) into AbsoluteScheduleValue; temp-  │
 │                 basal→dose volume; suspend materialization; carb  │
-│                 dedupe/overlap-trim; override application          │
+│                 dedupe/overlap-trim; override exclusion            │
 │      │                                                            │
 │      ▼                                                            │
 │  Replay/        For each 5-min datum: build LoopAlgorithm windows │
@@ -106,11 +106,11 @@ valid to enter into Loop's therapy settings.
                        apple/swift-argument-parser (CLI)
 ```
 
-**Dependency:** `LoopAlgorithm` is pinned by commit `2f5c630…` (the repo
-publishes no version tags, and this checkout has back-testing additions —
-`PrecomputedInsulinInput`, parallel mid-absorption ISF — that we rely on for
-fast candidate sweeps). Platform floor is **macOS 14** (LoopAlgorithm requires
-13; we take 14 for modern SwiftUI/Observation).
+**Dependencies:** `LoopAlgorithm` is pinned by commit `2f5c630…` because the
+repository publishes no version tags. Swift Argument Parser is pinned to 1.8.2,
+and both resolutions are committed in `Package.resolved`. Platform floor is
+**macOS 14** (LoopAlgorithm requires 13; we take 14 for modern
+SwiftUI/Observation).
 
 ---
 
@@ -187,12 +187,13 @@ deviations when BG < 80 (post-hypo rebound guard).
   > Loop supports an ISF *schedule* (up to 48 entries). v1 tunes a single ISF
   > (parity with autotune, simpler, well-validated). Per-slot ISF is a stretch
   > goal (OQ-4).
-- **Carb Ratio (single value):** per meal period (COB>0 start; ends when COB=0
-  and IOB<basal/2; min 60 min): `CRInsulinTotal = CRInitialIOB + insulinDosed +
-  (CREndBG−CRInitialBG)/ISF`; `totalCR = ΣCarbs / ΣInsulin` (only periods with
-  CRInsulinTotal>0); `newCR = 0.8×CR + 0.2×clamp(totalCR, [max(4,pumpCR×0.7),
-  min(28,pumpCR×1.2)])`. **Absolute CR bounds use Loop guardrails (4–28
-  recommended, 2–150 absolute), not oref0's 3–150.**
+- **Carb Ratio (single value):** LoopTune's replay has already subtracted the
+  modeled carb effect, so meal deviations are residuals rather than raw carb
+  impact. It computes
+  `CSF_true = replayISF/currentCR + ΣmealResidual/ΣloggedCarbs`, then
+  `fullNewCR = tunedISF/CSF_true`, applies the pump-relative 0.7×–1.2× cap,
+  and moves 20% toward that value. **Absolute CR bounds use Loop guardrails
+  (4–28 recommended, 2–150 absolute), not oref0's 3–150.**
 
 ### 3.4 Day chaining & weighting
 
@@ -271,11 +272,11 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 | 2 | Nightscout client (auth, endpoints, windowed fetch) | ✅ |
 | 3 | Ingest: NS → domain (profile expansion, doses, carbs, TZ) | ✅ |
 | 4 | Replay: deviation computation via LoopAlgorithm | ✅ |
-| 5 | Tune: categorization + basal/ISF/CR tuning + chaining | ✅ (single-run) |
+| 5 | Tune: categorization + basal/ISF/CR tuning + chaining | ✅ |
 | 6 | Recommendations: guardrails, tiers, confidence | ✅ |
-| 7 | CLI end-to-end (`fetch` / `tune` / `report`) | ✅ |
-| 8 | SwiftUI app (wizard + results + charts) | ✅ (core) |
-| 9 | Hardening: golden fixtures, edge cases, docs, coderabbit | ✅ (core) |
+| 7 | CLI end-to-end (`fetch` / `tune`) | ✅ |
+| 8 | SwiftUI app (wizard + results + charts) | ✅ |
+| 9 | Hardening: golden fixtures, edge cases, security, docs | ✅ |
 
 ### Phase 0 — Scaffold ✅
 - [x] Git repo, MIT license, README, .gitignore
@@ -303,7 +304,7 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 - [x] Lenient DTOs (string numbers, bools, fractional-second + epoch dates)
 - [x] Injectable `NightscoutTransport` + stub-based tests (39 tests green)
 - [ ] devicestatus endpoint + JWT (deferred — not needed for core tuning)
-- [ ] Per-day fetch orchestration with oref0 padding (moves to Phase 3 ingest)
+- [x] Per-day fetch orchestration with dose/carb/glucose lookback padding (implemented in pipeline/cache)
 
 ### Phase 3 — Ingest ✅ (core)
 - [x] Profile doc → `TherapyProfile` (store[defaultProfile], TZ incl. ETC/GMT sign inversion, mmol→mg/dL for ISF/targets/suspend threshold)
@@ -314,8 +315,8 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 - [x] Override periods → scale factor + correction range; indefinite closed at next override
 - [x] Glucose entries → samples (filter <39, sort, dedupe)
 - [x] Tests: mmol conversion, overlap trim, suspend, dedupe, indefinite override (53 tests green)
-- [ ] Profile-history alignment (pick active profile per day by `startDate`) — moves to Phase 4 windowing
-- [ ] Fill scheduled-basal gaps so LoopAlgorithm basal timeline starts ≤ first dose — Phase 4
+- [x] Profile-history alignment at exact `startDate` changes
+- [x] Fill scheduled-basal gaps for LoopAlgorithm annotation
 
 ### Phase 4 — Replay ✅ (core)
 - [x] Coverage-safe schedule timelines spanning all inputs + insulin tail (avoids `preconditionFailure`)
@@ -326,9 +327,9 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 - [x] `CumulativeEffectLookup` (interpolated, off-grid CGM timestamps)
 - [x] Guards: skip BG<40, long CGM gaps (>20min), post-hypo rebound zeroing
 - [x] Tests: no-insulin (deviation = ΔBG), bolus (10-min delay then negative effect), carb absorption, gap skipping (63 tests green)
-- [ ] `PrecomputedInsulinInput` fast path for candidate sweeps — deferred to Phase 5 (needed when sweeping ISF candidates)
+- [ ] `PrecomputedInsulinInput` fast path — optional future optimization; the current tuner does not sweep candidates
 
-### Phase 5 — Tune ✅ (single-run) / 🟡 (chaining)
+### Phase 5 — Tune ✅
 - [x] Categorizer (CSF/UAM/basal/ISF) with post-hypo + gap clamps
 - [x] UAM reassignment policy (default UAM→basal for Loop)
 - [x] Basal per-hour tuner (h−3…h−1 distribution) + unused-hour smoothing + pump-relative caps
@@ -336,8 +337,8 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 - [x] CR tuner in **carb-sensitivity space** (Loop-native residual, not oref0 raw impact — see design note below)
 - [x] `LoopTuner` orchestrator + `TuningOutput`; oref0-faithful percentile
 - [x] Tests: math primitives, categorizer, all three tuners with sign checks (78 tests green)
-- [ ] Day-chaining harness (`runDayChained`: per-day windows, evolving profile, fixed pump cap baseline)
-- [ ] oref0 parity tests on ported prep→core fixtures
+- [x] Day-chaining harness (04:00 windows, exact profile-change splits, evolving profile, fixed pump cap baseline)
+- [x] oref0 parity tests on ported prep→core fixtures
 - [ ] Full CRData meal-period tuner (alternative to CSF method) — future
 
 > **Design note (CR tuning).** oref0's CR method treats the meal-interval
@@ -355,7 +356,7 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 - [x] `TuningRecommendation` model + autotune-style text report with disclaimer
 - [x] JSON serialization (`RecommendationJSON`)
 - [x] Tests: guardrail clamp, tiers, end-to-end pipeline render (84 tests green)
-- [ ] Richer per-hour day-count confidence strip (needs day-chaining coverage data)
+- [x] Per-hour day-count confidence and evidence counts
 
 ### Phase 7 — CLI ✅
 - [x] `looptune tune <url>` (full pipeline → table or `--json`)
@@ -371,12 +372,13 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 - [x] Results: ISF/CR cards + basal table with pump vs tuned + tier coloring + "no data" flags
 - [x] Prominent medical disclaimer banner
 - [x] Builds and launches as a native macOS app (verified process starts)
-- [ ] Charts (basal curve, per-hour deviation coverage) — see `/dataviz` (future)
-- [ ] Keychain storage for URL/token; profile picker; snapshot tests (future)
+- [x] Charts (basal curve and per-hour deviation coverage)
+- [x] Keychain token storage per host/port; persisted URL sanitization
+- [ ] Profile picker and snapshot/UI automation tests (future)
 
 ### Phase 9 — Hardening ✅ (core)
 - [x] Two `coderabbit` CLI passes; all findings addressed (or documented as intentional)
-- [x] Lenient array decoding fuzz-resilience; DST spring-forward test; ETC/GMT cases
+- [x] Element-level array decoding with visible partial-corruption failure; DST spring-forward test; ETC/GMT cases
 - [x] README usage docs; medical disclaimer everywhere output is produced
 - [x] COB precompute perf fix (O(intervals) not O(intervals×carbs))
 - [x] **Multi-day chained tuning** (`ChainedTuner`): 4am-local day windows, evolving
@@ -410,15 +412,25 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   nighttune defaults `uam_as_basal = true`. Likely keep as an advanced toggle.
 - **OQ-4.** Tune a full ISF *schedule* (Loop supports 48 entries) vs a single
   ISF (autotune parity)? v1 = single; schedule is a stretch goal.
-- **OQ-5.** Overrides during a window: exclude those intervals from tuning, or
-  model the scale factor? Leaning: exclude override intervals from
-  basal/ISF/CR attribution in v1 (cleaner), flag coverage loss.
+- **OQ-5 (settled for v1).** Exclude intervals whose override changes insulin
+  needs from basal/ISF/CR attribution and report the excluded sample count.
 - **OQ-6.** Write-back to Nightscout as a new profile (nighttune has it). Out of
   v1 scope; if added, gate behind explicit confirmation + `api:profile:*` roles.
 
 ---
 
 ## 8. Status log (append-only)
+
+- **2026-07-25** — Whole-application adversarial review completed. Every
+  first-party file was read and tracked in `CODE_REVIEW.html`. Fixed 15 findings
+  spanning override attribution, exact profile-change timing, historical
+  insulin models, minimum evidence, basal cap enforcement, irregular CGM
+  normalization, strict Nightscout/profile validation, TLS and stale-token
+  handling, dependency locking, complete treatment deduplication, private and
+  traversal-safe persistence, diagnostic claims, disclaimers, UI failure
+  visibility, and stale documentation. The suite now covers app URL handling,
+  malformed/partial data, calculation boundaries, persistence permissions,
+  backward-compatible saved runs, and recommendation safety.
 
 - **2026-07-12** — Performance: chained tuning was quadratic (each day window
   replayed the entire multi-day dataset) and diagnostics added two more

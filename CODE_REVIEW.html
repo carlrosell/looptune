@@ -1,0 +1,879 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LoopTune — Whole-Application Code Review</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f4f7f5;
+      --panel: #ffffff;
+      --text: #16211b;
+      --muted: #5e6d64;
+      --line: #d8e1db;
+      --accent: #176b4d;
+      --accent-soft: #def3e9;
+      --queued: #746a52;
+      --queued-soft: #f5eedb;
+      --active: #175ea8;
+      --active-soft: #e2f0ff;
+      --pass: #176b4d;
+      --pass-soft: #def3e9;
+      --warn: #895b00;
+      --warn-soft: #fff0c2;
+      --fail: #a12b2b;
+      --fail-soft: #ffe0e0;
+      --shadow: 0 12px 30px rgba(19, 45, 31, 0.08);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f1512;
+        --panel: #17201b;
+        --text: #edf5f0;
+        --muted: #aab9b0;
+        --line: #334039;
+        --accent: #6dd3aa;
+        --accent-soft: #183e30;
+        --queued: #e0c987;
+        --queued-soft: #41391f;
+        --active: #8bc3ff;
+        --active-soft: #173b61;
+        --pass: #74d9af;
+        --pass-soft: #193f31;
+        --warn: #ffd36d;
+        --warn-soft: #4c3914;
+        --fail: #ff9999;
+        --fail-soft: #512323;
+        --shadow: none;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.55 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { width: min(1180px, calc(100% - 32px)); margin: 0 auto 72px; }
+    header {
+      padding: 56px max(16px, calc((100vw - 1148px) / 2)) 40px;
+      background: linear-gradient(135deg, #103e2d, #176b4d 58%, #248561);
+      color: white;
+    }
+    header p { max-width: 820px; margin: 10px 0 0; color: #d8f1e6; font-size: 17px; }
+    h1 { margin: 0; font-size: clamp(32px, 5vw, 54px); line-height: 1.08; letter-spacing: -0.035em; }
+    h2 { margin: 0 0 16px; font-size: 24px; letter-spacing: -0.018em; }
+    h3 { margin: 22px 0 8px; font-size: 17px; }
+    a { color: var(--accent); }
+    code { font: 0.92em ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 20px; margin-top: 24px; font-size: 14px; }
+    .meta span { padding: 6px 10px; border: 1px solid rgba(255,255,255,.28); border-radius: 999px; }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      overflow-x: auto;
+      white-space: nowrap;
+      padding: 10px max(16px, calc((100vw - 1148px) / 2));
+      background: color-mix(in srgb, var(--panel) 94%, transparent);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(12px);
+    }
+    nav a { display: inline-block; margin-right: 18px; color: var(--text); text-decoration: none; font-size: 14px; }
+    section {
+      margin-top: 28px;
+      padding: 26px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+    }
+    .callout { padding: 15px 17px; border-left: 4px solid var(--accent); border-radius: 8px; background: var(--accent-soft); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
+    .metric { padding: 17px; border: 1px solid var(--line); border-radius: 12px; }
+    .metric strong { display: block; font-size: 27px; line-height: 1.2; }
+    .metric span { color: var(--muted); }
+    .progress-track { height: 12px; margin-top: 16px; overflow: hidden; border-radius: 99px; background: var(--queued-soft); }
+    .progress-bar { width: 0; height: 100%; background: var(--accent); transition: width .2s ease; }
+    .phase-list { margin: 0; padding: 0; list-style: none; counter-reset: phase; }
+    .phase-list li {
+      position: relative;
+      margin: 0;
+      padding: 0 0 22px 50px;
+      border-left: 2px solid var(--line);
+      counter-increment: phase;
+    }
+    .phase-list li:last-child { padding-bottom: 0; border-left-color: transparent; }
+    .phase-list li::before {
+      position: absolute;
+      left: -18px;
+      top: -2px;
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--queued-soft);
+      color: var(--queued);
+      font-weight: 700;
+      content: counter(phase);
+    }
+    .phase-list strong { display: block; margin-bottom: 3px; }
+    .phase-list span { color: var(--muted); }
+    .phase-list .active::before { background: var(--active-soft); color: var(--active); }
+    .phase-list .done::before { content: "✓"; background: var(--pass-soft); color: var(--pass); }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 12px; }
+    input, select {
+      min-height: 38px;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      font: inherit;
+    }
+    input { flex: 1 1 280px; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { position: sticky; top: 0; background: var(--bg); color: var(--muted); font-weight: 650; }
+    tr:last-child td { border-bottom: 0; }
+    .path { min-width: 330px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      white-space: nowrap;
+      font-weight: 650;
+      font-size: 12px;
+    }
+    .queued { color: var(--queued); background: var(--queued-soft); }
+    .reviewing { color: var(--active); background: var(--active-soft); }
+    .reviewed, .passed, .fixed { color: var(--pass); background: var(--pass-soft); }
+    .warning { color: var(--warn); background: var(--warn-soft); }
+    .failed, .open { color: var(--fail); background: var(--fail-soft); }
+    .muted { color: var(--muted); }
+    .finding { padding: 16px 18px; border: 1px solid var(--line); border-radius: 10px; }
+    .finding + .finding { margin-top: 12px; }
+    .finding h3 { margin-top: 0; }
+    .empty { color: var(--muted); font-style: italic; }
+    details { margin-top: 12px; }
+    summary { cursor: pointer; font-weight: 650; }
+    ol, ul { padding-left: 22px; }
+    footer { margin-top: 24px; color: var(--muted); text-align: center; font-size: 13px; }
+    @media (max-width: 650px) {
+      header { padding-top: 40px; }
+      section { padding: 20px 16px; border-radius: 12px; }
+      .path { min-width: 250px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>LoopTune whole-application review</h1>
+    <p>
+      A living, file-by-file audit of an AI-authored macOS medical-analysis application.
+      This document is the review plan, coverage ledger, findings register, and final verification record.
+    </p>
+    <div class="meta">
+      <span>Started: 2026-07-25</span>
+      <span>Baseline branch: main</span>
+      <span>Baseline worktree: clean</span>
+      <span>Reviewer: Codex</span>
+    </div>
+  </header>
+
+  <nav aria-label="Report sections">
+    <a href="#status">Status</a>
+    <a href="#scope">Scope</a>
+    <a href="#method">Method</a>
+    <a href="#plan">Plan</a>
+    <a href="#findings">Findings</a>
+    <a href="#verification">Verification</a>
+    <a href="#inventory">File ledger</a>
+    <a href="#log">Review log</a>
+  </nav>
+
+  <main>
+    <section id="status">
+      <h2>Current status</h2>
+      <div class="grid">
+        <div class="metric"><strong id="total-count">81</strong><span>auditable files</span></div>
+        <div class="metric"><strong id="reviewed-count">0</strong><span>file reviews complete</span></div>
+        <div class="metric"><strong id="open-count">0</strong><span>open findings</span></div>
+        <div class="metric"><strong id="test-count">0 / 0</strong><span>verification checks passed</span></div>
+      </div>
+      <div class="progress-track" role="progressbar" aria-label="File review coverage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+      <p id="progress-label" class="muted">Review, fixes, and final verification are complete.</p>
+    </section>
+
+    <section id="scope">
+      <h2>Scope and completeness contract</h2>
+      <div class="callout">
+        The review cannot be declared complete until every row in the file ledger has an explicit
+        terminal status, every finding has a disposition, and all feasible verification checks have
+        a recorded result. New first-party files discovered or created during the work must be added
+        to the ledger and reviewed too.
+      </div>
+
+      <h3>Auditable first-party scope</h3>
+      <ul>
+        <li>All 78 files tracked by Git at the baseline, totaling 9,518 lines.</li>
+        <li><code>Package.resolved</code>, an ignored but locally present dependency lockfile used by the build.</li>
+        <li>This living report, <code>CODE_REVIEW.html</code>.</li>
+        <li>
+          <code>Tests/LoopTuneAppTests/CredentialStoreTests.swift</code>, added during the review
+          to cover credential-account isolation and URL sanitization.
+        </li>
+        <li>Any other first-party file added or changed while fixing findings.</li>
+      </ul>
+
+      <h3>Recorded non-source trees</h3>
+      <p>
+        These trees are not silently skipped. They are classified by provenance and verified at the
+        boundary appropriate to their role:
+      </p>
+      <ul>
+        <li>
+          <code>references/</code>: 4,181 local files / 679 MB of cloned prior-art repositories,
+          research notes, and fixtures; intentionally Git-ignored and not part of the application.
+          Boundary check: confirm the package, products, scripts, and tests do not compile, bundle,
+          execute, or otherwise depend on mutable files from this tree.
+        </li>
+        <li>
+          <code>.build/</code>: baseline snapshot 9,819 local files / 935 MB of SwiftPM-generated
+          dependency checkouts, intermediates, and binaries; regenerated during final verification.
+          These are not authored source. Boundary check: regenerate via
+          clean dependency resolution/build/test, verify the pinned dependencies, and inspect emitted
+          warnings/errors rather than treating object files as reviewable source.
+        </li>
+        <li>
+          <code>.git/</code>: repository metadata, excluded from application behavior.
+          Boundary check: record branch, worktree state, tracked-file inventory, and final diff.
+        </li>
+      </ul>
+    </section>
+
+    <section id="method">
+      <h2>Review method</h2>
+      <p>
+        Every first-party file receives a deliberate read. AI-generated code is treated as untrusted:
+        names, comments, tests, and apparently standard formulas are checked against actual behavior
+        rather than accepted as evidence of correctness.
+      </p>
+      <p>
+        Test growth is intentionally uncapped. Missing behavior, boundary, malformed-input, safety,
+        time-zone, unit, calculation, and recommendation coverage will be added as focused regression,
+        table-driven, golden-reference, or property-style tests. Tests must be capable of detecting a
+        plausible implementation error; agreement between an AI-written test and AI-written production
+        code is not sufficient evidence by itself.
+      </p>
+      <div class="grid">
+        <div>
+          <h3>Correctness</h3>
+          <p>Inputs, outputs, invariants, off-by-one boundaries, rounding, optionals, error paths, and state transitions.</p>
+        </div>
+        <div>
+          <h3>Safety</h3>
+          <p>Medical guardrails, unit conversions, time zones/DST, stale or incomplete data, unsafe defaults, and failure visibility.</p>
+        </div>
+        <div>
+          <h3>Concurrency</h3>
+          <p>Swift 6 isolation, cancellation, task lifetime, shared mutable state, UI-thread work, and deterministic ordering.</p>
+        </div>
+        <div>
+          <h3>Security &amp; privacy</h3>
+          <p>Credential storage and redaction, URL/token handling, TLS assumptions, persistence, cache isolation, and sensitive logging.</p>
+        </div>
+        <div>
+          <h3>Resilience</h3>
+          <p>Malformed Nightscout payloads, partial responses, pagination, redirects, network errors, corrupt cache/history, and recovery.</p>
+        </div>
+        <div>
+          <h3>Product behavior</h3>
+          <p>CLI contracts, SwiftUI flows, accessibility, diagnostics, progress/cancellation, export, documentation, packaging, and CI.</p>
+        </div>
+      </div>
+
+      <h3>Finding severity</h3>
+      <ul>
+        <li><strong>Critical:</strong> credible risk of materially unsafe medical output, credential exposure, or destructive loss.</li>
+        <li><strong>High:</strong> core workflow is wrong or fails for ordinary valid input; major security/privacy defect.</li>
+        <li><strong>Medium:</strong> edge-case correctness, reliability, or UX defect with meaningful impact.</li>
+        <li><strong>Low:</strong> maintainability, documentation, accessibility, or minor behavior issue.</li>
+      </ul>
+    </section>
+
+    <section id="plan">
+      <h2>Execution plan</h2>
+      <ol class="phase-list">
+        <li class="done">
+          <strong>1. Establish the baseline and coverage ledger</strong>
+          <span>Capture Git state, enumerate tracked and relevant ignored files, classify provenance, and create this report.</span>
+        </li>
+        <li class="done">
+          <strong>2. Understand declared behavior and the build graph</strong>
+          <span>Review README, design plan, license, manifest, lockfile, CI, ignores, and development script; map products and dependencies.</span>
+        </li>
+        <li class="done">
+          <strong>3. Audit domain models and support primitives</strong>
+          <span>Check units, schedules, time zones/DST, insulin types, records, Codable contracts, validation, and boundary invariants.</span>
+        </li>
+        <li class="done">
+          <strong>4. Audit external-data and persistence boundaries</strong>
+          <span>Trace credentials, Nightscout requests/DTOs/decoding, day cache, ingest normalization, saved runs, diagnostics, and corrupt-data behavior.</span>
+        </li>
+        <li class="done">
+          <strong>5. Audit the replay, tuning, and recommendation pipeline</strong>
+          <span>Re-derive formulas, trace units and time windows, check categorization/chaining/caps/guardrails, verify determinism and failure modes.</span>
+        </li>
+        <li class="done">
+          <strong>6. Audit the CLI and macOS app end to end</strong>
+          <span>Review argument validation, view-model state, cancellation, Keychain use, every SwiftUI screen, empty/error/loading states, export, and accessibility.</span>
+        </li>
+        <li class="done">
+          <strong>7. Audit every test and fixture</strong>
+          <span>Ensure assertions test behavior rather than implementation, fixtures are valid, failure paths and boundaries are represented, and add as many regression, table-driven, golden, and property-style tests as needed to close calculation and recommendation gaps.</span>
+        </li>
+        <li class="done">
+          <strong>8. Execute static and dynamic verification</strong>
+          <span>Resolve dependencies, clean-build all products, run all tests repeatedly, inspect warnings, exercise CLI paths, and smoke-test the native app.</span>
+        </li>
+        <li class="done">
+          <strong>9. Fix confirmed defects and prove the fixes</strong>
+          <span>Make scoped changes, add regression coverage, rerun affected and full checks, and review every changed line again.</span>
+        </li>
+        <li class="done">
+          <strong>10. Reconcile coverage and deliver</strong>
+          <span>Compare the final filesystem and diff to this ledger, close or explicitly defer findings, record residual risks, and require 100% file coverage.</span>
+        </li>
+      </ol>
+
+      <h3>Exit criteria</h3>
+      <ul>
+        <li>Every auditable file is marked <em>Reviewed</em>, <em>Fixed + reviewed</em>, or <em>Reviewed with finding</em>; none remain queued.</li>
+        <li>Every source-to-sink path for medical data, credentials, persistence, CLI, and UI has been traced.</li>
+        <li>All confirmed Critical/High defects are fixed; any lower-severity deferral includes rationale and impact.</li>
+        <li>All feasible clean builds, tests, and smoke checks pass, with command and result recorded below.</li>
+        <li>Documentation claims and test counts match the final implementation.</li>
+        <li>The final Git diff contains no unreviewed or accidental change.</li>
+      </ul>
+    </section>
+
+    <section id="findings">
+      <h2>Findings register</h2>
+      <div id="finding-list">
+        <article class="finding">
+          <h3>F-001 · High · Insulin-affecting overrides are discarded before tuning</h3>
+          <p><span class="badge fixed">Fixed + verified</span></p>
+          <p>
+            <code>TreatmentIngest</code> builds <code>OverridePeriod</code> values, but
+            <code>TuningPipeline.fetchInputs</code> drops them and <code>TuningInputs</code> has no override field.
+            Glucose behavior during a 70%/120% insulin-needs override is therefore attributed to the ordinary
+            basal, ISF, and carb ratio. The design document explicitly says these intervals should be excluded.
+          </p>
+          <p><strong>Resolution:</strong> Overrides now flow through <code>TuningInputs</code>, exclude replay
+            samples and affected carb records, and report the excluded count in UI, text, JSON, and persistence.
+            Regression coverage proves both selective exclusion and refusal when every usable sample is excluded.</p>
+        </article>
+        <article class="finding">
+          <h3>F-002 · High · Settings changes take effect only at the next 04:00 tuning boundary</h3>
+          <p><span class="badge fixed">Fixed + verified</span></p>
+          <p>
+            <code>ChainedTuner</code> checks profile history only at the start of each 04:00-to-04:00 window.
+            A change at noon can replay and tune the following 16 hours with the old profile. The existing
+            “mid-window” test checks eventual detection, not application at the actual timestamp.
+          </p>
+          <p><strong>Resolution:</strong> Tuning and diagnostics now split at exact therapy-change timestamps,
+            including changes within a one-day analysis. Target-only uploads are deliberately ignored so they
+            do not fragment replay. Tests cover noon changes, one-day changes, and non-therapy uploads.</p>
+        </article>
+        <article class="finding">
+          <h3>F-003 · High · Selected insulin type is not applied to historical profiles</h3>
+          <p><span class="badge fixed">Fixed + verified</span></p>
+          <p>
+            The configured insulin model is added to the current profile only. Multi-day chaining immediately
+            replaces that profile with an entry from <code>ProfileHistory</code>, whose insulin type remains nil.
+            Doses without their own <code>insulinType</code> can therefore use the wrong/default effect curve.
+          </p>
+          <p><strong>Resolution:</strong> The configured insulin model is applied to every historical profile
+            that lacks an explicit model, while preserving explicit per-profile and per-dose values. Dedicated
+            history tests verify both behaviors.</p>
+        </article>
+        <article class="finding">
+          <h3>F-004 · High · A run can succeed with no usable samples</h3>
+          <p><span class="badge fixed">Fixed + verified</span></p>
+          <p>
+            The pipeline checks only that two glucose records exist anywhere in the supplied input. Records can
+            all be outside the analysis window or separated by unusable gaps; chained tuning then returns an
+            unchanged “recommendation” with zero samples instead of failing visibly.
+          </p>
+          <p><strong>Resolution:</strong> The public offline path validates its window and physiological values,
+            limits glucose evidence to that window, and requires at least 12 usable post-exclusion deviation
+            samples. Clear errors replace plausible-looking zero-evidence recommendations.</p>
+        </article>
+        <article class="finding">
+          <h3>F-005 · High · Untuned-hour smoothing can bypass pump-relative basal caps</h3>
+          <p><span class="badge fixed">Fixed + verified</span></p>
+          <p>
+            <code>BasalTuner</code> applies caps and then smooths untouched hours using the uncapped historical
+            profile. When historical and current profiles differ, smoothing can move a value back outside
+            the promised 0.7×–1.2× current-pump range.
+          </p>
+          <p><strong>Resolution:</strong> Basal values are capped again after smoothing, and evidence counts are
+            assigned to the prior hours actually adjusted by a deviation. A regression test uses divergent
+            historical/current rates to prove all final values stay inside pump-relative caps.</p>
+        </article>
+        <article class="finding">
+          <h3>F-006 · High · A token can be sent to a different host; remote HTTP is accepted</h3>
+          <p><span class="badge fixed">Fixed + verified</span></p>
+          <p>
+            Editing the URL does not clear or reload the token field, so a token restored for site A can be
+            transmitted to site B. The client also accepts non-loopback <code>http://</code> URLs, exposing
+            query-token or API-secret credentials and medical data in transit.
+          </p>
+          <p><strong>Resolution:</strong> URL changes reload or clear credentials for the normalized host and
+            port; saved URLs strip paths, queries, fragments, and pasted tokens. Non-HTTPS transport is rejected
+            except for loopback development hosts. App and client tests cover port isolation, sanitization,
+            host switching, and remote HTTP rejection.</p>
+        </article>
+        <article class="finding">
+          <h3>F-007 · Medium · Non-five-minute CGM intervals are treated as five-minute deviations</h3>
+          <p><span class="badge fixed">Fixed + verified</span></p>
+          <p>
+            Intervals up to 20 minutes are accepted, but observed, insulin, and carb deltas are not normalized
+            to the five-minute units assumed by categorization thresholds and tuning formulas. A 15-minute
+            rise can be counted at roughly three times the intended magnitude.
+          </p>
+          <p><strong>Resolution:</strong> Accepted 5–20 minute intervals now normalize observed glucose change,
+            insulin effect, carb effect, and average delta to five-minute equivalents before categorization.
+            An irregular-interval regression test verifies the scale.</p>
+        </article>
+        <article class="finding">
+          <h3>F-008 · Medium · Malformed profile/treatment data can default silently, disappear, or trap</h3>
+          <p><span class="badge fixed">Fixed + verified</span></p>
+          <p>
+            Examples include a missing schedule value becoming zero, invalid units/time zones becoming mg/dL/UTC,
+            out-of-range finite doubles trapping during integer conversion, non-finite doses passing ingestion,
+            and lenient array decoding dropping records without telling the caller. For a medical-analysis input
+            boundary these conditions need validation and visible failure.
+          </p>
+          <p><strong>Resolution:</strong> DTO and ingest validation now rejects non-finite, overflowing,
+            nonphysical, unknown-unit, invalid-timezone, malformed-schedule, and malformed-history inputs.
+            Element-wise decoding still identifies corrupt records but the client fails the request with the
+            skipped count instead of silently tuning incomplete evidence.</p>
+        </article>
+        <article class="finding">
+          <h3>F-009 · Medium · Diagnostics overstate what the in-sample replay proves</h3>
+          <p><span class="badge fixed">Fixed + verified</span></p>
+          <p>
+            The UI calls a fit against the same historical data “more accurate,” which reads like outcome
+            validation. If the recommendation makes mean deviation materially worse, the message incorrectly
+            says it “barely changes the fit.” Diagnostics also ignore override exclusions and historical profiles.
+          </p>
+          <p><strong>Resolution:</strong> The UI now labels this explicitly as an in-sample historical fit,
+            reports worsening honestly, carries the medical disclaimer, excludes override intervals, and replays
+            “before” against the profile recorded as active for each segment rather than the current profile.</p>
+        </article>
+        <article class="finding">
+          <h3>F-010 · Medium · Dependency resolution is not reproducible from a clean clone</h3>
+          <p><span class="badge fixed">Fixed + verified</span></p>
+          <p>
+            <code>Package.resolved</code> exists locally but is ignored. ArgumentParser is declared with a
+            version range, so a clean checkout or CI run may build different dependency code than the reviewed
+            revision.
+          </p>
+          <p><strong>Resolution:</strong> <code>Package.resolved</code> is no longer ignored, ArgumentParser is
+            exact-pinned to 1.8.2, and LoopAlgorithm remains pinned to revision
+            <code>2f5c630084aa0d72b8d14999e1e0f7c836b0c341</code>. A clean resolve/build/test used those values.</p>
+        </article>
+        <article class="finding">
+          <h3>F-011 · Medium · Machine-readable recommendations omit the medical disclaimer</h3>
+          <p><span class="badge fixed">Fixed + verified</span></p>
+          <p>
+            The text report includes the mandatory warning, but <code>--json</code> does not. This contradicts
+            the implementation plan’s “disclaimer everywhere output is produced” requirement and is especially
+            risky because JSON is the format most likely to be forwarded or automated.
+          </p>
+          <p><strong>Resolution:</strong> Recommendation JSON now includes the same mandatory disclaimer plus
+            days tuned and override-exclusion context. Unit tests and the live CLI mock assert the warning is
+            present in machine-readable output.</p>
+        </article>
+        <article class="finding">
+          <h3>F-012 · Medium · Boundary deduplication fingerprints omit medically relevant fields</h3>
+          <p><span class="badge fixed">Fixed + verified</span></p>
+          <p>
+            Treatment deduplication ignores delivered amount, absolute rate, override factor/range, reason,
+            automatic status, and stable Nightscout identifiers. Distinct reconciled records can collide, while
+            the DTO currently throws away <code>_id</code>/<code>syncIdentifier</code>.
+          </p>
+          <p><strong>Resolution:</strong> Nightscout stable identifiers are retained and preferred. When absent,
+            a deterministic sorted-key encoding of every decoded treatment field is used. Tests prove that
+            boundary copies deduplicate while same-time records with distinct delivered amounts survive.</p>
+        </article>
+        <article class="finding">
+          <h3>F-013 · Medium · Persisted-data APIs accept unsafe IDs and hide failures</h3>
+          <p><span class="badge fixed">Fixed + verified</span></p>
+          <p>
+            <code>RunStore</code> constructs paths directly from a public run ID, allowing traversal outside
+            the run directory, and negative limits can form invalid slices. Save/Keychain errors are ignored,
+            so the UI can claim a run or credential was persisted when it was not.
+          </p>
+          <p><strong>Resolution:</strong> Run IDs and cache day keys use strict filename validation, limits clamp
+            safely, and health-data directories/files use owner-only 0700/0600 permissions. Save, delete, and
+            Keychain operations return success and produce a visible UI notice when persistence fails.</p>
+        </article>
+        <article class="finding">
+          <h3>F-014 · Low · The active sidebar omits the planned warning and failed runs hide history</h3>
+          <p><span class="badge fixed">Fixed + verified</span></p>
+          <p>
+            The unused <code>ConnectionForm</code> has a disclaimer, but the actual <code>SidebarView</code>
+            does not. After any failed analysis, <code>DetailPane</code> prioritizes the failure forever, so
+            selecting an existing saved run cannot reopen it.
+          </p>
+          <p><strong>Resolution:</strong> The active sidebar displays the medical warning and notices. Detail
+            selection now takes precedence over the most recent failure, so saved runs remain accessible after
+            an unsuccessful analysis.</p>
+        </article>
+        <article class="finding">
+          <h3>F-015 · Low · Project documentation contains stale and contradictory status claims</h3>
+          <p><span class="badge fixed">Fixed + verified</span></p>
+          <p>
+            <code>PLAN.md</code> simultaneously marks chaining/charts/Keychain work pending and completed,
+            labels a nonexistent CLI <code>report</code> subcommand as done, and several test titles claim
+            behavior their assertions do not prove.
+          </p>
+          <p><strong>Resolution:</strong> README and PLAN now match the implemented commands, exact settings
+            segmentation, override behavior, evidence minimum, security model, dependency pins, and test suite.
+            The DST test was renamed and strengthened to assert the nonexistent-time result it claims.</p>
+        </article>
+      </div>
+
+      <h3>Disposition summary</h3>
+      <p class="callout">
+        15 confirmed findings were fixed and regression-tested: 6 High, 7 Medium, and 2 Low.
+        No finding is open or deferred. No Critical issue was identified.
+      </p>
+
+      <h3>Residual validation limits</h3>
+      <ul>
+        <li>This is an engineering code review and historical-model test suite, not clinical validation or medical advice.</li>
+        <li>The final integration used a deterministic local Nightscout mock; no private real-world account or personal dataset was available to the reviewer.</li>
+        <li>The native app received a launch/liveness smoke check and its state logic was reviewed and tested, but no fully automated macOS click-through was available.</li>
+        <li>Golden oref0 parity independently anchors basal and ISF math. Carb-ratio behavior has focused sign, bounds, empty-data, and integration tests but no external clinical oracle.</li>
+      </ul>
+    </section>
+
+    <section id="verification">
+      <h2>Verification matrix</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Check</th><th>Status</th><th>Command / evidence</th><th>Result</th></tr>
+          </thead>
+          <tbody id="verification-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="inventory">
+      <h2>File-by-file coverage ledger</h2>
+      <p>
+        The status is maintained in this document as the review proceeds. “Reviewed” means the file
+        was read in full in context, not merely compiled or mentioned by a test.
+      </p>
+      <div class="toolbar">
+        <input id="file-search" type="search" placeholder="Filter by path or note…" aria-label="Filter file ledger">
+        <select id="status-filter" aria-label="Filter by review status">
+          <option value="">All statuses</option>
+          <option>Queued</option>
+          <option>Reviewing</option>
+          <option>Reviewed</option>
+          <option>Reviewed with finding</option>
+          <option>Fixed + reviewed</option>
+        </select>
+        <select id="kind-filter" aria-label="Filter by file kind">
+          <option value="">All kinds</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Path</th><th>Kind</th><th>Status</th><th>Review note / finding IDs</th></tr>
+          </thead>
+          <tbody id="file-body"></tbody>
+        </table>
+      </div>
+      <p id="visible-count" class="muted"></p>
+    </section>
+
+    <section id="log">
+      <h2>Review log</h2>
+      <ul id="review-log">
+        <li><strong>2026-07-25 — Baseline:</strong> clean <code>main</code> worktree; 78 tracked files / 9,518 lines; Swift 6.3.3 on arm64 macOS.</li>
+        <li><strong>2026-07-25 — Inventory:</strong> classified local ignored <code>references/</code>, <code>.build/</code>, and <code>Package.resolved</code>; created the living review plan and ledger.</li>
+        <li><strong>2026-07-25 — Test mandate:</strong> user authorized an unrestricted expansion of the suite; added explicit mutation-sensitive, boundary, golden, table-driven, and property-style coverage criteria.</li>
+        <li><strong>2026-07-25 — Baseline verification:</strong> <code>swift test</code> passed 122 tests in 29 suites; all tracked JSON parsed, every Swift file passed a standalone parser check, and the development shell script passed <code>bash -n</code>.</li>
+        <li><strong>2026-07-25 — First full read:</strong> reviewed all 80 ledger files, including every production/test line and all golden fixtures; recorded 15 findings and identified several tests whose assertions were weaker than their titles.</li>
+        <li><strong>2026-07-25 — Fix pass:</strong> corrected all 15 findings across replay, tuning, ingest, network, persistence, credentials, diagnostics, CLI, UI, dependencies, tests, and documentation; reread every changed line.</li>
+        <li><strong>2026-07-25 — Expanded coverage:</strong> grew the suite from 122 to 150 tests and from 29 to 30 suites, adding malformed-input, evidence-minimum, override, profile-history, interval-normalization, cap, deduplication, persistence-permission, URL, and disclaimer regressions.</li>
+        <li><strong>2026-07-25 — Final verification:</strong> clean debug and release builds passed without warnings; all 150 tests passed twice; CLI validation, deterministic Nightscout fetch/tune, native launch, syntax/data checks, dependency provenance, and final inventory reconciliation passed.</li>
+        <li><strong>2026-07-25 — Completion:</strong> 81 of 81 auditable first-party files reviewed, 15 of 15 findings fixed, 11 of 11 verification checks passed, and no unreviewed file or unresolved finding remains.</li>
+      </ul>
+    </section>
+
+    <footer>
+      LoopTune code review ledger · update this file whenever coverage, findings, fixes, or verification results change.
+    </footer>
+  </main>
+
+  <script>
+    const FILE_PATHS = [
+      ".github/workflows/ci.yml",
+      ".gitignore",
+      "LICENSE",
+      "Package.swift",
+      "PLAN.md",
+      "README.md",
+      "scripts/dev.sh",
+      "Sources/LoopTuneApp/ChartViews.swift",
+      "Sources/LoopTuneApp/ConnectionForm.swift",
+      "Sources/LoopTuneApp/CredentialStore.swift",
+      "Sources/LoopTuneApp/DiagnosticsView.swift",
+      "Sources/LoopTuneApp/LoopScheduleCard.swift",
+      "Sources/LoopTuneApp/LoopTuneApp.swift",
+      "Sources/LoopTuneApp/ResultsPane.swift",
+      "Sources/LoopTuneApp/SidebarView.swift",
+      "Sources/LoopTuneApp/TableCard.swift",
+      "Sources/LoopTuneApp/TuningViewModel.swift",
+      "Sources/LoopTuneCLI/LoopTuneCLI.swift",
+      "Sources/LoopTuneKit/Diagnostics/DiagnosticsBuilder.swift",
+      "Sources/LoopTuneKit/Diagnostics/RunDiagnostics.swift",
+      "Sources/LoopTuneKit/Ingest/GlucoseIngest.swift",
+      "Sources/LoopTuneKit/Ingest/ProfileIngest.swift",
+      "Sources/LoopTuneKit/Ingest/TreatmentIngest.swift",
+      "Sources/LoopTuneKit/LoopTuneKit.swift",
+      "Sources/LoopTuneKit/Model/CarbRecord.swift",
+      "Sources/LoopTuneKit/Model/DailySchedule.swift",
+      "Sources/LoopTuneKit/Model/DoseRecord.swift",
+      "Sources/LoopTuneKit/Model/GlucoseSample.swift",
+      "Sources/LoopTuneKit/Model/InsulinType.swift",
+      "Sources/LoopTuneKit/Model/OverridePeriod.swift",
+      "Sources/LoopTuneKit/Model/TherapyProfile.swift",
+      "Sources/LoopTuneKit/Nightscout/DayCache.swift",
+      "Sources/LoopTuneKit/Nightscout/LenientArray.swift",
+      "Sources/LoopTuneKit/Nightscout/LenientDecoding.swift",
+      "Sources/LoopTuneKit/Nightscout/NightscoutClient.swift",
+      "Sources/LoopTuneKit/Nightscout/NightscoutCredentials.swift",
+      "Sources/LoopTuneKit/Nightscout/NightscoutDTOs.swift",
+      "Sources/LoopTuneKit/Persistence/RunStore.swift",
+      "Sources/LoopTuneKit/Persistence/SavedRun.swift",
+      "Sources/LoopTuneKit/Pipeline/TuningPipeline.swift",
+      "Sources/LoopTuneKit/Recommend/LoopBasalEntry.swift",
+      "Sources/LoopTuneKit/Recommend/LoopGuardrails.swift",
+      "Sources/LoopTuneKit/Recommend/Recommendation+Codable.swift",
+      "Sources/LoopTuneKit/Recommend/Recommendation.swift",
+      "Sources/LoopTuneKit/Recommend/RecommendationJSON.swift",
+      "Sources/LoopTuneKit/Recommend/TuningReport.swift",
+      "Sources/LoopTuneKit/Replay/DeviationSample.swift",
+      "Sources/LoopTuneKit/Replay/ReplayEngine.swift",
+      "Sources/LoopTuneKit/Support/GlucoseUnit.swift",
+      "Sources/LoopTuneKit/Support/NightscoutTimeZone.swift",
+      "Sources/LoopTuneKit/Tune/BasalTuner.swift",
+      "Sources/LoopTuneKit/Tune/CarbRatioTuner.swift",
+      "Sources/LoopTuneKit/Tune/Categorizer.swift",
+      "Sources/LoopTuneKit/Tune/ChainedTuner.swift",
+      "Sources/LoopTuneKit/Tune/DeviationCategory.swift",
+      "Sources/LoopTuneKit/Tune/LoopTuner.swift",
+      "Sources/LoopTuneKit/Tune/SensitivityTuner.swift",
+      "Sources/LoopTuneKit/Tune/TuningCaps.swift",
+      "Tests/LoopTuneKitTests/ChainedTunerTests.swift",
+      "Tests/LoopTuneKitTests/DailyScheduleTests.swift",
+      "Tests/LoopTuneKitTests/DayCacheTests.swift",
+      "Tests/LoopTuneKitTests/DomainAdapterTests.swift",
+      "Tests/LoopTuneKitTests/Fixtures/oref0/basal_positive.json",
+      "Tests/LoopTuneKitTests/Fixtures/oref0/isf_positive.json",
+      "Tests/LoopTuneKitTests/Fixtures/oref0/mixed.json",
+      "Tests/LoopTuneKitTests/Fixtures/oref0/README.md",
+      "Tests/LoopTuneKitTests/Fixtures/README.json",
+      "Tests/LoopTuneKitTests/IngestTests.swift",
+      "Tests/LoopTuneKitTests/LenientArrayTests.swift",
+      "Tests/LoopTuneKitTests/LoopTuneKitTests.swift",
+      "Tests/LoopTuneKitTests/NightscoutClientTests.swift",
+      "Tests/LoopTuneKitTests/Oref0ParityTests.swift",
+      "Tests/LoopTuneKitTests/ProfileHistoryTests.swift",
+      "Tests/LoopTuneKitTests/RecommendationTests.swift",
+      "Tests/LoopTuneKitTests/ReplayEngineTests.swift",
+      "Tests/LoopTuneKitTests/RunStoreDiagnosticsTests.swift",
+      "Tests/LoopTuneKitTests/TuneTests.swift",
+      "Tests/LoopTuneKitTests/UnitsAndTimeZoneTests.swift",
+      "Tests/LoopTuneAppTests/CredentialStoreTests.swift",
+      "Package.resolved",
+      "CODE_REVIEW.html"
+    ];
+
+    const FINDING_FILES = {
+      ".gitignore": "F-010",
+      "Package.resolved": "F-010",
+      "PLAN.md": "F-001, F-002, F-015",
+      "Sources/LoopTuneApp/ConnectionForm.swift": "F-014",
+      "Sources/LoopTuneApp/CredentialStore.swift": "F-006, F-013",
+      "Sources/LoopTuneApp/DiagnosticsView.swift": "F-009",
+      "Sources/LoopTuneApp/ResultsPane.swift": "F-014",
+      "Sources/LoopTuneApp/SidebarView.swift": "F-014",
+      "Sources/LoopTuneApp/TuningViewModel.swift": "F-006, F-013, F-014",
+      "Sources/LoopTuneCLI/LoopTuneCLI.swift": "F-006, F-011",
+      "Sources/LoopTuneKit/Diagnostics/DiagnosticsBuilder.swift": "F-001, F-002, F-009",
+      "Sources/LoopTuneKit/Ingest/ProfileIngest.swift": "F-008",
+      "Sources/LoopTuneKit/Ingest/TreatmentIngest.swift": "F-008, F-012",
+      "Sources/LoopTuneKit/Nightscout/LenientArray.swift": "F-008",
+      "Sources/LoopTuneKit/Nightscout/LenientDecoding.swift": "F-008",
+      "Sources/LoopTuneKit/Nightscout/NightscoutClient.swift": "F-006, F-008",
+      "Sources/LoopTuneKit/Nightscout/NightscoutDTOs.swift": "F-008, F-012",
+      "Sources/LoopTuneKit/Persistence/RunStore.swift": "F-013",
+      "Sources/LoopTuneKit/Pipeline/TuningPipeline.swift": "F-001, F-003, F-004, F-012",
+      "Sources/LoopTuneKit/Recommend/RecommendationJSON.swift": "F-011",
+      "Sources/LoopTuneKit/Replay/ReplayEngine.swift": "F-007",
+      "Sources/LoopTuneKit/Tune/BasalTuner.swift": "F-005",
+      "Sources/LoopTuneKit/Tune/ChainedTuner.swift": "F-001, F-002, F-003, F-004",
+      "Tests/LoopTuneAppTests/CredentialStoreTests.swift": "F-006, F-013",
+      "Tests/LoopTuneKitTests/DailyScheduleTests.swift": "F-015",
+      "Tests/LoopTuneKitTests/ProfileHistoryTests.swift": "F-002, F-015"
+    };
+
+    const REVIEW_OVERRIDES = {
+      "CODE_REVIEW.html": {
+        status: "Fixed + reviewed",
+        note: "Living plan and final review ledger; final HTML, script, finding, verification, and inventory reconciliation passed."
+      }
+    };
+
+    const VERIFICATION = [
+      { check: "Dependency lock/provenance", status: "Passed", evidence: "Package.swift + Package.resolved; clean SwiftPM resolution", result: "ArgumentParser 1.8.2 exact; LoopAlgorithm 2f5c630084aa0d72b8d14999e1e0f7c836b0c341; lockfile retained" },
+      { check: "Clean debug build — all products", status: "Passed", evidence: "swift package clean && swift build", result: "LoopTuneKit, looptune, and LoopTuneApp built successfully" },
+      { check: "Release build — all products", status: "Passed", evidence: "swift build -c release", result: "Production build completed successfully" },
+      { check: "Full automated test suite", status: "Passed", evidence: "swift test --no-parallel", result: "150 tests in 30 suites passed after the clean build" },
+      { check: "Repeatability / order dependence", status: "Passed", evidence: "swift test --no-parallel (immediate second run)", result: "The same 150 tests in 30 suites passed again" },
+      { check: "Compiler + static/data diagnostics", status: "Passed", evidence: "Clean build output; swiftc -frontend -parse; jq; bash -n; report structure/JavaScript checks; git diff --check", result: "No compiler warnings; all Swift, JSON, YAML, shell, balanced report HTML structure, embedded JavaScript, and patch-whitespace checks passed" },
+      { check: "CLI help and invalid-input paths", status: "Passed", evidence: ".build/debug/looptune help plus days/auth/TLS/NaN/script validation cases", result: "Help is accurate; invalid ranges, conflicting credentials, remote HTTP, non-finite increment, and invalid script modes fail visibly" },
+      { check: "CLI controlled Nightscout integration", status: "Passed", evidence: "looptune fetch/tune against deterministic 127.0.0.1 HTTP mock", result: "Authorized fetch returned 313 CGM records; tuning used 288 samples and emitted valid JSON with the disclaimer" },
+      { check: "Native app launch smoke", status: "Passed", evidence: ".build/debug/LoopTuneApp", result: "App launched and remained alive until deliberately terminated; view-model/UI paths were also reviewed in full" },
+      { check: "External/generated tree boundaries", status: "Passed", evidence: "Manifest/source/test/script dependency search plus clean regeneration", result: "references/ is provenance-only and not executed or bundled; .build/ regenerated from pinned inputs" },
+      { check: "Final inventory and diff reconciliation", status: "Passed", evidence: "git ls-files + untracked inventory vs FILE_PATHS; duplicate check; git diff --check", result: "81 actual files equal 81 unique ledger entries; no missing/extra path and no unreviewed status" }
+    ];
+
+    function kindFor(path) {
+      if (path === "CODE_REVIEW.html") return "Review report";
+      if (path === "Package.swift" || path === "Package.resolved") return "Build manifest";
+      if (path.endsWith(".swift") && path.startsWith("Tests/")) return "Test source";
+      if (path.endsWith(".swift")) return "Application source";
+      if (path.includes("/Fixtures/") && path.endsWith(".json")) return "Test fixture";
+      if (path.includes("/Fixtures/")) return "Fixture documentation";
+      if (path.endsWith(".yml") || path.endsWith(".yaml")) return "CI configuration";
+      if (path.endsWith(".sh")) return "Development script";
+      if (path === ".gitignore") return "Repository configuration";
+      if (path === "LICENSE") return "License";
+      if (path.endsWith(".md")) return "Documentation";
+      return "Project file";
+    }
+
+    const FILES = FILE_PATHS.map(path => ({
+      path,
+      kind: kindFor(path),
+      status: REVIEW_OVERRIDES[path]?.status ?? (FINDING_FILES[path] ? "Fixed + reviewed" : "Reviewed"),
+      note: REVIEW_OVERRIDES[path]?.note ?? (
+        FINDING_FILES[path]
+          ? `Related finding(s) fixed and changed lines re-reviewed: ${FINDING_FILES[path]}.`
+          : "Full contextual read complete; no file-local defect confirmed."
+      )
+    }));
+
+    function badgeClass(status) {
+      const value = status.toLowerCase();
+      if (value.includes("finding")) return "warning";
+      if (value.includes("fixed")) return "fixed";
+      if (value === "reviewed" || value === "passed") return "reviewed";
+      if (value === "reviewing") return "reviewing";
+      if (value === "failed" || value === "open") return "failed";
+      return "queued";
+    }
+
+    function renderFiles() {
+      const query = document.querySelector("#file-search").value.trim().toLowerCase();
+      const status = document.querySelector("#status-filter").value;
+      const kind = document.querySelector("#kind-filter").value;
+      const visible = FILES.filter(file =>
+        (!query || `${file.path} ${file.note}`.toLowerCase().includes(query)) &&
+        (!status || file.status === status) &&
+        (!kind || file.kind === kind)
+      );
+      document.querySelector("#file-body").innerHTML = visible.map(file => `
+        <tr>
+          <td class="path">${escapeHTML(file.path)}</td>
+          <td>${escapeHTML(file.kind)}</td>
+          <td><span class="badge ${badgeClass(file.status)}">${escapeHTML(file.status)}</span></td>
+          <td>${escapeHTML(file.note)}</td>
+        </tr>
+      `).join("");
+      document.querySelector("#visible-count").textContent = `Showing ${visible.length} of ${FILES.length} auditable files.`;
+    }
+
+    function renderVerification() {
+      document.querySelector("#verification-body").innerHTML = VERIFICATION.map(item => `
+        <tr>
+          <td>${escapeHTML(item.check)}</td>
+          <td><span class="badge ${badgeClass(item.status)}">${escapeHTML(item.status)}</span></td>
+          <td><code>${escapeHTML(item.evidence)}</code></td>
+          <td>${escapeHTML(item.result)}</td>
+        </tr>
+      `).join("");
+    }
+
+    function updateMetrics() {
+      const reviewed = FILES.filter(file =>
+        ["Reviewed", "Reviewed with finding", "Fixed + reviewed"].includes(file.status)
+      ).length;
+      const passed = VERIFICATION.filter(item => item.status === "Passed").length;
+      const openFindings = document.querySelectorAll("#finding-list .finding .open").length;
+      const percent = Math.round((reviewed / FILES.length) * 100);
+      document.querySelector("#total-count").textContent = FILES.length;
+      document.querySelector("#reviewed-count").textContent = reviewed;
+      document.querySelector("#open-count").textContent = openFindings;
+      document.querySelector("#test-count").textContent = `${passed} / ${VERIFICATION.length}`;
+      document.querySelector("#progress-bar").style.width = `${percent}%`;
+      document.querySelector(".progress-track").setAttribute("aria-valuenow", percent);
+      document.querySelector("#progress-label").textContent =
+        `${reviewed} of ${FILES.length} files reviewed (${percent}%).`;
+    }
+
+    function populateKinds() {
+      const select = document.querySelector("#kind-filter");
+      [...new Set(FILES.map(file => file.kind))].sort().forEach(kind => {
+        const option = document.createElement("option");
+        option.textContent = kind;
+        select.append(option);
+      });
+    }
+
+    function escapeHTML(value) {
+      return String(value).replace(/[&<>"']/g, character => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#039;"
+      })[character]);
+    }
+
+    populateKinds();
+    renderFiles();
+    renderVerification();
+    updateMetrics();
+    document.querySelector("#file-search").addEventListener("input", renderFiles);
+    document.querySelector("#status-filter").addEventListener("change", renderFiles);
+    document.querySelector("#kind-filter").addEventListener("change", renderFiles);
+  </script>
+</body>
+</html>
