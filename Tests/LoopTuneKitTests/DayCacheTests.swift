@@ -97,6 +97,31 @@ struct DayCacheTests {
         #expect(DayCache.sanitize("My-Site.Example.com") == "my-site.example.com")
         #expect(DayCache.sanitize("host:1337/path") == "host_1337_path")
     }
+
+    @Test("invalid day keys cannot traverse outside the cache")
+    func invalidDayKey() {
+        let cache = makeTempCache()
+        let invalid = CachedDay(day: "../escape", fetchedAt: Date(), entries: [], treatments: [])
+        cache.store(invalid, host: "site")
+        #expect(cache.load(host: "site", dayKey: "../escape") == nil)
+        #expect(!FileManager.default.fileExists(
+            atPath: cache.directory.appendingPathComponent("escape.json").path
+        ))
+    }
+
+    @Test("cached health-data files are owner-only")
+    func privatePermissions() throws {
+        let cache = makeTempCache()
+        let day = CachedDay(day: "2023-11-14", fetchedAt: Date(), entries: [], treatments: [])
+        cache.store(day, host: "site")
+        let file = cache.fileURL(host: "site", dayKey: day.day)
+        let directoryAttributes = try FileManager.default.attributesOfItem(
+            atPath: file.deletingLastPathComponent().path
+        )
+        let fileAttributes = try FileManager.default.attributesOfItem(atPath: file.path)
+        #expect((directoryAttributes[.posixPermissions] as? NSNumber)?.intValue == 0o700)
+        #expect((fileAttributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+    }
 }
 
 /// Routes stubbed responses by path and counts data requests.
@@ -170,5 +195,31 @@ struct PipelineCachingTests {
         // The same document returned by two adjacent inclusive range queries.
         let deduped = TuningPipeline.dedupeAcrossBuckets([treatment, treatment])
         #expect(deduped.count == 1)
+    }
+
+    @Test("fallback dedupe preserves treatments that differ in medically relevant fields")
+    func boundaryDedupeUsesCompleteDocument() throws {
+        let first = try JSONDecoder().decode(
+            NSTreatment.self,
+            from: Data(#"{"eventType":"Temp Basal","created_at":"2023-11-15T00:00:00Z","duration":30,"rate":1.0,"amount":0.5}"#.utf8)
+        )
+        let second = try JSONDecoder().decode(
+            NSTreatment.self,
+            from: Data(#"{"eventType":"Temp Basal","created_at":"2023-11-15T00:00:00Z","duration":30,"rate":1.0,"amount":0.4}"#.utf8)
+        )
+        #expect(TuningPipeline.dedupeAcrossBuckets([first, second]).count == 2)
+    }
+
+    @Test("stable treatment identifiers dedupe re-encoded boundary copies")
+    func boundaryDedupeUsesStableID() throws {
+        let original = try JSONDecoder().decode(
+            NSTreatment.self,
+            from: Data(#"{"_id":"same-id","eventType":"Correction Bolus","created_at":"2023-11-15T00:00:00Z","insulin":2}"#.utf8)
+        )
+        let changedCopy = try JSONDecoder().decode(
+            NSTreatment.self,
+            from: Data(#"{"_id":"same-id","eventType":"Correction Bolus","created_at":"2023-11-15T00:00:00Z","insulin":2.1}"#.utf8)
+        )
+        #expect(TuningPipeline.dedupeAcrossBuckets([original, changedCopy]).count == 1)
     }
 }

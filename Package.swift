@@ -45,6 +45,10 @@ let package = Package(
                 .copy("Fixtures")
             ]
         ),
+        .testTarget(
+            name: "LoopTuneAppTests",
+            dependencies: ["LoopTuneApp"]
+        ),
     ],
     swiftLanguageModes: [.v6]
 )

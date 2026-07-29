@@ -3,10 +3,10 @@ import Foundation
 /// Builds `RunDiagnostics` from a run's inputs and its recommendation.
 ///
 /// The "how it improves" numbers come from replaying the window twice: once
-/// with the user's current settings (before) and once with the recommended
-/// settings (after). Deviation is `observed − modeled` glucose change, so
-/// better-fitting settings produce deviations closer to zero — the same signal
-/// the tuner optimizes, surfaced for inspection.
+/// with the profile history recorded as active then (before) and once with the
+/// recommended settings (after). Deviation is `observed − modeled` glucose change, so
+/// a closer in-sample fit produces deviations nearer zero — the same signal the
+/// tuner optimizes, surfaced for inspection without claiming future outcomes.
 public struct DiagnosticsBuilder: Sendable {
     public init() {}
 
@@ -16,15 +16,23 @@ public struct DiagnosticsBuilder: Sendable {
 
         // Recommended profile: tuned basal schedule + tuned single ISF/CR.
         let recommendedProfile = (try? profile.replacing(
-            basalHourly: recommendation.basalHours.sorted { $0.hour < $1.hour }.map(\.recommendedRate),
+            basalHourly: recommendation.basalHours.sorted { $0.hour < $1.hour }.map { $0.roundedRate() },
             isf: recommendation.sensitivity.recommendedValue,
             carbRatio: recommendation.carbRatio.recommendedValue
         )) ?? profile
 
         // The two replays are independent CPU-bound work — run them as
         // concurrent child tasks.
-        async let beforeTask = deviations(for: profile, inputs: inputs)
-        async let afterTask = deviations(for: recommendedProfile, inputs: inputs)
+        async let beforeTask = deviations(
+            for: profile,
+            inputs: inputs,
+            useRecordedProfileHistory: true
+        )
+        async let afterTask = deviations(
+            for: recommendedProfile,
+            inputs: inputs,
+            useRecordedProfileHistory: false
+        )
         let (before, after) = await (beforeTask, afterTask)
 
         let hourly = hourlyDeviations(before: before, after: after, timeZone: timeZone)
@@ -46,7 +54,11 @@ public struct DiagnosticsBuilder: Sendable {
     /// Replay day-by-day with trimmed inputs and concatenate — the same cost
     /// shape as the chained tuner (linear in days), instead of one full-window
     /// replay whose insulin-effect computation is quadratic in window length.
-    private func deviations(for profile: TherapyProfile, inputs: TuningInputs) -> [DeviationSample] {
+    private func deviations(
+        for profile: TherapyProfile,
+        inputs: TuningInputs,
+        useRecordedProfileHistory: Bool
+    ) -> [DeviationSample] {
         let engine = ReplayEngine()
         let windows = ChainedTuner.dayWindows(
             from: inputs.analysisStart,
@@ -55,22 +67,30 @@ public struct DiagnosticsBuilder: Sendable {
         )
         var all: [DeviationSample] = []
         for window in windows {
-            let trimmed = ReplayEngine.trimmedInputs(
-                glucose: inputs.glucose,
-                doses: inputs.doses,
-                carbs: inputs.carbs,
-                analysisStart: window.start,
-                analysisEnd: window.end
-            )
-            let samples = (try? engine.computeDeviations(
-                glucose: trimmed.glucose,
-                doses: trimmed.doses,
-                carbs: trimmed.carbs,
-                profile: profile,
-                analysisStart: window.start,
-                analysisEnd: window.end
-            )) ?? []
-            all += samples
+            let segments = useRecordedProfileHistory
+                ? ChainedTuner.profileSegments(for: window, history: inputs.profileHistory)
+                : [window]
+            for segment in segments {
+                let segmentProfile = useRecordedProfileHistory
+                    ? inputs.profileHistory?.activeProfile(at: segment.start) ?? profile
+                    : profile
+                let trimmed = ReplayEngine.trimmedInputs(
+                    glucose: inputs.glucose,
+                    doses: inputs.doses,
+                    carbs: inputs.carbs,
+                    analysisStart: segment.start,
+                    analysisEnd: segment.end
+                )
+                let samples = (try? engine.computeDeviations(
+                    glucose: trimmed.glucose,
+                    doses: trimmed.doses,
+                    carbs: trimmed.carbs,
+                    profile: segmentProfile,
+                    analysisStart: segment.start,
+                    analysisEnd: segment.end
+                )) ?? []
+                all += inputs.eligibleDeviations(samples)
+            }
         }
         return all
     }

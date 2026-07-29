@@ -28,6 +28,20 @@ struct RecommendationCodableTests {
         #expect(decoded.profileGlucoseUnit == .millimolesPerLiter)
         #expect(decoded.daysTuned == 6)
     }
+
+    @Test("recommendations saved before override accounting decode compatibly")
+    func legacyDecode() throws {
+        let rec = sampleRecommendation()
+        let encoded = try JSONEncoder().encode(rec)
+        var object = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object.removeValue(forKey: "excludedOverrideSamples")
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(TuningRecommendation.self, from: legacyData)
+        #expect(decoded.excludedOverrideSamples == 0)
+        #expect(decoded.totalSamples == rec.totalSamples)
+    }
 }
 
 @Suite("RunStore")
@@ -94,6 +108,37 @@ struct RunStoreTests {
         store.delete(id: run.id)
         #expect(store.loadAll().isEmpty)
     }
+
+    @Test("rejects path-like run IDs")
+    func rejectsUnsafeID() {
+        let store = makeStore()
+        var run = makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        run.id = "../outside"
+        #expect(!store.save(run))
+        #expect(!store.delete(id: "../outside"))
+        #expect(store.loadAll().isEmpty)
+    }
+
+    @Test("a zero or negative limit retains no runs")
+    func nonPositiveLimit() {
+        for limit in [0, -5] {
+            let store = makeStore(maxRuns: limit)
+            #expect(store.save(makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))))
+            #expect(store.loadAll().isEmpty)
+        }
+    }
+
+    @Test("saved health-data files are owner-only")
+    func privatePermissions() throws {
+        let store = makeStore()
+        let run = makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        #expect(store.save(run))
+        let file = store.directory.appendingPathComponent(run.id).appendingPathExtension("json")
+        let directoryAttributes = try FileManager.default.attributesOfItem(atPath: store.directory.path)
+        let fileAttributes = try FileManager.default.attributesOfItem(atPath: file.path)
+        #expect((directoryAttributes[.posixPermissions] as? NSNumber)?.intValue == 0o700)
+        #expect((fileAttributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+    }
 }
 
 @Suite("DiagnosticsBuilder")
@@ -148,5 +193,36 @@ struct DiagnosticsBuilderTests {
         #expect(diag.glucoseCount == 288)
         #expect(diag.meanAbsDeviationBefore >= 0)
         #expect(diag.meanAbsDeviationAfter >= 0)
+    }
+
+    @Test("diagnostics exclude insulin-needs override intervals")
+    func diagnosticsExcludeOverrides() async throws {
+        let profile = try profile(basal: 1.0)
+        let glucose = (0..<40).map { index in
+            GlucoseSample(
+                date: base.addingTimeInterval(Double(index) * 300),
+                milligramsPerDeciliter: 120 + Double(index)
+            )
+        }
+        let override = OverridePeriod(
+            startDate: base,
+            endDate: base.addingTimeInterval(15 * 300),
+            insulinNeedsScaleFactor: 1.5
+        )
+        let inputs = TuningInputs(
+            profile: profile,
+            glucose: glucose,
+            doses: [],
+            carbs: [],
+            overrides: [override],
+            analysisStart: base,
+            analysisEnd: glucose.last!.date
+        )
+        let rec = try TuningPipeline().run(
+            inputs: inputs,
+            configuration: TuningConfiguration(days: 1)
+        )
+        let diagnostics = await DiagnosticsBuilder().build(inputs: inputs, recommendation: rec)
+        #expect(diagnostics.hourlyDeviation.reduce(0) { $0 + $1.sampleCount } == rec.totalSamples)
     }
 }

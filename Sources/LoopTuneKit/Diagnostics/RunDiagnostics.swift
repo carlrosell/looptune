@@ -30,13 +30,13 @@ public struct DaySummary: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-/// Per-hour glucose deviation under the current settings vs the recommended
-/// settings — the "what's wrong and how it improves" view. Deviation is
+/// Per-hour glucose deviation under the recorded settings vs the recommended
+/// settings — the "what's wrong and how it changes" view. Deviation is
 /// `observed − modeled` glucose change (mg/dL); values far from zero mean the
-/// settings don't explain what actually happened at that hour.
+/// model does not fit what actually happened at that hour.
 public struct HourDeviation: Codable, Sendable, Equatable, Identifiable {
     public var hour: Int
-    /// Mean deviation under the user's current settings (mg/dL).
+    /// Mean deviation under the settings recorded as active then (mg/dL).
     public var before: Double
     /// Mean deviation if the recommended settings had been used (mg/dL).
     public var after: Double
@@ -74,8 +74,8 @@ public struct RunDiagnostics: Codable, Sendable, Equatable {
     public var hourlyDeviation: [HourDeviation]
 
     /// Mean absolute deviation across the window (mg/dL) — the headline quality
-    /// number. Lower is better; `after < before` means the recommendation
-    /// explains the data more accurately.
+    /// number. Lower is a closer fit to this same historical replay; it is an
+    /// in-sample diagnostic, not evidence of future glucose outcomes.
     public var meanAbsDeviationBefore: Double
     public var meanAbsDeviationAfter: Double
 
@@ -84,7 +84,7 @@ public struct RunDiagnostics: Codable, Sendable, Equatable {
         return (meanAbsDeviationBefore - meanAbsDeviationAfter) / meanAbsDeviationBefore * 100
     }
 
-    /// Hours flagged as running off under current settings.
+    /// Hours flagged as running off under the settings recorded at the time.
     public var problemHours: [HourDeviation] { hourlyDeviation.filter(\.isProblem) }
 
     public init(glucoseCount: Int, doseCount: Int, carbCount: Int, windowStart: Date, windowEnd: Date, daySummaries: [DaySummary], hourlyDeviation: [HourDeviation], meanAbsDeviationBefore: Double, meanAbsDeviationAfter: Double) {

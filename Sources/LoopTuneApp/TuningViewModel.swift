@@ -16,13 +16,23 @@ final class TuningViewModel {
     }
 
     // Connection form
-    var urlString: String = ""
+    var urlString: String = "" {
+        didSet {
+            guard !isRestoring else { return }
+            let oldAccount = CredentialStore.accountKey(from: oldValue)
+            let newAccount = CredentialStore.accountKey(from: urlString)
+            if oldAccount != newAccount {
+                token = newAccount.flatMap(store.token(forHost:)) ?? ""
+            }
+        }
+    }
     var token: String = ""
     var days: Int = 7
     var insulinType: InsulinType = .novolog
 
     // State
     var phase: Phase = .idle
+    var notice: String?
     /// Saved runs, newest first (the sidebar list).
     var runs: [SavedRun] = []
     /// The run currently shown in the detail pane.
@@ -30,6 +40,7 @@ final class TuningViewModel {
 
     private let store: CredentialStore
     private let runStore: RunStore
+    private var isRestoring = false
 
     var selectedRun: SavedRun? {
         runs.first { $0.id == selectedRunID }
@@ -38,7 +49,9 @@ final class TuningViewModel {
     init(store: CredentialStore = CredentialStore(), runStore: RunStore = RunStore()) {
         self.store = store
         self.runStore = runStore
+        isRestoring = true
         restore()
+        isRestoring = false
         runs = runStore.loadAll()
         selectedRunID = runs.first?.id
     }
@@ -51,7 +64,7 @@ final class TuningViewModel {
     private func restore() {
         if let saved = store.urlString {
             urlString = saved
-            if let host = CredentialStore.host(from: saved), let savedToken = store.token(forHost: host) {
+            if let host = CredentialStore.accountKey(from: saved), let savedToken = store.token(forHost: host) {
                 token = savedToken
             }
         }
@@ -61,17 +74,22 @@ final class TuningViewModel {
 
     /// Persist settings after a successful analysis (token to the Keychain).
     private func persistSettings() {
-        store.urlString = urlString
+        if let sanitized = CredentialStore.sanitizedURLString(urlString) {
+            store.urlString = sanitized
+            urlString = sanitized
+        }
         store.days = days
         store.insulinTypeRaw = insulinType.rawValue
-        if let host = CredentialStore.host(from: urlString) {
-            store.saveToken(token, forHost: host)
+        if let host = CredentialStore.accountKey(from: urlString),
+           !store.saveToken(token, forHost: host) {
+            notice = "The analysis succeeded, but the access token could not be saved to Keychain."
         }
     }
 
     func run() {
         guard canRun else { return }
         phase = .running
+        notice = nil
 
         let urlString = self.urlString
         let credentials: NightscoutCredentials = token.isEmpty ? .none : .token(token)
@@ -96,7 +114,9 @@ final class TuningViewModel {
                     recommendation: output.recommendation,
                     diagnostics: output.diagnostics
                 )
-                self.runStore.save(run)
+                if !self.runStore.save(run) {
+                    self.notice = "The analysis succeeded, but its history file could not be saved."
+                }
                 self.runs.insert(run, at: 0)
                 self.selectedRunID = run.id
                 self.phase = .done
@@ -108,7 +128,10 @@ final class TuningViewModel {
     }
 
     func deleteRun(id: String) {
-        runStore.delete(id: id)
+        guard runStore.delete(id: id) else {
+            notice = "That saved analysis could not be deleted."
+            return
+        }
         runs.removeAll { $0.id == id }
         if selectedRunID == id {
             selectedRunID = runs.first?.id
@@ -123,10 +146,18 @@ final class TuningViewModel {
             return "That doesn't look like a valid Nightscout URL."
         case let NightscoutError.httpStatus(code):
             return "Nightscout returned HTTP \(code)."
+        case let NightscoutError.partialDecoding(path, skipped):
+            return "Nightscout returned \(skipped) malformed record\(skipped == 1 ? "" : "s") from \(path). No recommendation was made."
         case TuningPipeline.PipelineError.noProfile:
             return "No profile found on this Nightscout site."
         case TuningPipeline.PipelineError.noGlucose:
             return "Not enough glucose data in the selected window."
+        case let TuningPipeline.PipelineError.insufficientUsableData(minimum, actual):
+            return "Only \(actual) usable samples remained; at least \(minimum) are required. No recommendation was made."
+        case TuningPipeline.PipelineError.invalidAnalysisWindow:
+            return "The selected analysis window is invalid."
+        case let TuningPipeline.PipelineError.invalidInput(field):
+            return "The \(field) data is invalid, so no recommendation was made."
         default:
             return "\(error)"
         }

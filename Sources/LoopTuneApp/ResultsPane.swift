@@ -18,12 +18,6 @@ struct DetailPane: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if case .failed(let message) = model.phase {
-                ContentUnavailableView {
-                    Label("Couldn't analyze", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text(message)
-                }
             } else if let run = model.selectedRun {
                 VStack(spacing: 0) {
                     Picker("View", selection: $tab) {
@@ -43,6 +37,12 @@ struct DetailPane: View {
                     case .diagnostics:
                         DiagnosticsView(run: run)
                     }
+                }
+            } else if case .failed(let message) = model.phase {
+                ContentUnavailableView {
+                    Label("Couldn't analyze", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(message)
                 }
             } else {
                 ContentUnavailableView {
@@ -122,6 +122,14 @@ struct ResultsView: View {
                 } icon: {
                     Image(systemName: "clock.arrow.circlepath")
                 }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            if recommendation.excludedOverrideSamples > 0 {
+                Label(
+                    "\(recommendation.excludedOverrideSamples) samples during insulin-needs overrides were excluded.",
+                    systemImage: "line.3.horizontal.decrease.circle"
+                )
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }

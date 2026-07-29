@@ -44,8 +44,8 @@ public struct DayCache: Sendable {
         freshnessMargin: TimeInterval = 24 * 3600
     ) {
         self.directory = directory ?? Self.defaultDirectory()
-        self.maxAgeDays = maxAgeDays
-        self.freshnessMargin = freshnessMargin
+        self.maxAgeDays = max(0, maxAgeDays)
+        self.freshnessMargin = max(0, freshnessMargin)
     }
 
     static func defaultDirectory() -> URL {
@@ -57,6 +57,7 @@ public struct DayCache: Sendable {
     // MARK: - Load / store
 
     public func load(host: String, dayKey: String) -> CachedDay? {
+        guard Self.isValidDayKey(dayKey) else { return nil }
         let url = fileURL(host: host, dayKey: dayKey)
         guard let data = try? Data(contentsOf: url) else { return nil }
         guard let cached = try? JSONDecoder().decode(CachedDay.self, from: data) else {
@@ -68,14 +69,21 @@ public struct DayCache: Sendable {
     }
 
     public func store(_ cachedDay: CachedDay, host: String) {
+        guard Self.isValidDayKey(cachedDay.day) else { return }
         let url = fileURL(host: host, dayKey: cachedDay.day)
         do {
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: url.deletingLastPathComponent().path
             )
             let data = try JSONEncoder().encode(cachedDay)
             try data.write(to: url, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch {
             // Caching is best-effort; a failed write only costs a refetch.
         }
@@ -143,6 +151,11 @@ public struct DayCache: Sendable {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
         return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
+    }
+
+    static func isValidDayKey(_ key: String) -> Bool {
+        guard key.count == 10, let date = parseDayKey(key) else { return false }
+        return dayKey(for: date) == key
     }
 
     func fileURL(host: String, dayKey: String) -> URL {

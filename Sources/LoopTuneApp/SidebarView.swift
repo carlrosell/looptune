@@ -43,6 +43,22 @@ struct SidebarView: View {
                 .disabled(!model.canRun)
             }
 
+            if case .failed(let message) = model.phase {
+                Section {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            if let notice = model.notice {
+                Section {
+                    Label(notice, systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             if !model.runs.isEmpty {
                 Section("Recent analyses") {
                     ForEach(model.runs) { run in
@@ -55,6 +71,16 @@ struct SidebarView: View {
                             }
                     }
                 }
+            }
+
+            Section {
+                Label {
+                    Text("Experimental analysis—not medical advice. Review changes with your care team.")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle")
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
             }
         }
         .listStyle(.sidebar)

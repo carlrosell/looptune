@@ -10,7 +10,7 @@ public struct RunStore: Sendable {
 
     public init(directory: URL? = nil, maxRuns: Int = 50) {
         self.directory = directory ?? Self.defaultDirectory()
-        self.maxRuns = maxRuns
+        self.maxRuns = max(0, maxRuns)
     }
 
     static func defaultDirectory() -> URL {
@@ -21,7 +21,15 @@ public struct RunStore: Sendable {
 
     /// Build a run id whose lexical order matches chronological order.
     public static func makeID(createdAt: Date) -> String {
-        let millis = Int64((createdAt.timeIntervalSince1970 * 1000).rounded())
+        let rawMillis = createdAt.timeIntervalSince1970 * 1000
+        let millis: Int64
+        if rawMillis.isFinite,
+           rawMillis >= Double(Int64.min),
+           rawMillis < Double(Int64.max) {
+            millis = Int64(rawMillis.rounded())
+        } else {
+            millis = 0
+        }
         // Zero-pad to a fixed width so string sorting matches time order.
         // `%lld` is required for Int64 — `%d` truncates it to 32 bits.
         let stamp = String(format: "%015lld", millis)
@@ -31,10 +39,18 @@ public struct RunStore: Sendable {
 
     @discardableResult
     public func save(_ run: SavedRun) -> Bool {
+        guard Self.isSafeID(run.id) else { return false }
         do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
             let data = try JSONEncoder().encode(run)
-            try data.write(to: fileURL(for: run.id), options: .atomic)
+            let url = fileURL(for: run.id)
+            try data.write(to: url, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
             enforceLimit()
             return true
         } catch {
@@ -51,7 +67,10 @@ public struct RunStore: Sendable {
             return []
         }
         let runs = files
-            .filter { $0.pathExtension == "json" }
+            .filter {
+                $0.pathExtension == "json"
+                    && Self.isSafeID($0.deletingPathExtension().lastPathComponent)
+            }
             .sorted { $0.lastPathComponent > $1.lastPathComponent }
             .compactMap { url -> SavedRun? in
                 guard let data = try? Data(contentsOf: url) else { return nil }
@@ -60,8 +79,15 @@ public struct RunStore: Sendable {
         return runs
     }
 
-    public func delete(id: String) {
-        try? FileManager.default.removeItem(at: fileURL(for: id))
+    @discardableResult
+    public func delete(id: String) -> Bool {
+        guard Self.isSafeID(id) else { return false }
+        do {
+            try FileManager.default.removeItem(at: fileURL(for: id))
+            return true
+        } catch {
+            return false
+        }
     }
 
     /// Trim to the newest `maxRuns` files.
@@ -81,5 +107,13 @@ public struct RunStore: Sendable {
 
     private func fileURL(for id: String) -> URL {
         directory.appendingPathComponent(id).appendingPathExtension("json")
+    }
+
+    /// IDs are filenames, not paths. Keeping this whitelist deliberately small
+    /// prevents a decoded/imported run from escaping the runs directory.
+    static func isSafeID(_ id: String) -> Bool {
+        !id.isEmpty && id.allSatisfy {
+            $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_"
+        }
     }
 }

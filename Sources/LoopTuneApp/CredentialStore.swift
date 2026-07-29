@@ -39,7 +39,8 @@ struct CredentialStore {
     // MARK: - Keychain (token)
 
     /// Store (or clear, when nil/empty) the access token for a site host.
-    func saveToken(_ token: String?, forHost host: String) {
+    @discardableResult
+    func saveToken(_ token: String?, forHost host: String) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
@@ -47,8 +48,8 @@ struct CredentialStore {
         ]
 
         guard let token, !token.isEmpty else {
-            SecItemDelete(query as CFDictionary)
-            return
+            let status = SecItemDelete(query as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound
         }
 
         let tokenData = Data(token.utf8)
@@ -58,8 +59,9 @@ struct CredentialStore {
             var addQuery = query
             addQuery[kSecValueData as String] = tokenData
             addQuery[kSecAttrLabel as String] = "LoopTune — Nightscout token (\(host))"
-            SecItemAdd(addQuery as CFDictionary, nil)
+            return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
         }
+        return updateStatus == errSecSuccess
     }
 
     /// Read the stored token for a site host.
@@ -79,11 +81,31 @@ struct CredentialStore {
         return String(decoding: data, as: UTF8.self)
     }
 
-    /// The keychain account key for a user-entered URL string (its host).
-    static func host(from urlString: String) -> String? {
+    /// The keychain account key for a user-entered URL. The port matters:
+    /// `localhost:1337` and `localhost:8080` can be unrelated sites.
+    static func accountKey(from urlString: String) -> String? {
         var string = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !string.isEmpty else { return nil }
         if !string.contains("://") { string = "https://" + string }
-        return URLComponents(string: string)?.host?.lowercased()
+        guard let components = URLComponents(string: string),
+              let host = components.host?.lowercased() else { return nil }
+        return components.port.map { "\(host):\($0)" } ?? host
+    }
+
+    /// Strip paths, query strings, and fragments before writing a non-secret
+    /// connection URL to UserDefaults. A pasted `?token=` must never persist.
+    static func sanitizedURLString(_ urlString: String) -> String? {
+        var string = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !string.isEmpty else { return nil }
+        if !string.contains("://") { string = "https://" + string }
+        guard var components = URLComponents(string: string),
+              let host = components.host?.lowercased(),
+              !host.isEmpty else { return nil }
+        components.scheme = components.scheme?.lowercased()
+        components.host = host
+        components.path = ""
+        components.query = nil
+        components.fragment = nil
+        return components.url?.absoluteString
     }
 }

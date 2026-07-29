@@ -3,7 +3,8 @@ import Charts
 import LoopTuneKit
 
 /// The "Data & diagnostics" tab: what was ingested, what the algorithm thinks
-/// is off under current settings, and how the recommendation would change it.
+/// is off under the settings recorded at the time, and how the recommendation
+/// would change the historical replay.
 struct DiagnosticsView: View {
     let run: SavedRun
     @Environment(\.colorScheme) private var colorScheme
@@ -21,6 +22,7 @@ struct DiagnosticsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                DisclaimerBanner()
                 improvementCard
                 problemSummary
                 deviationChart
@@ -36,13 +38,13 @@ struct DiagnosticsView: View {
     private var improvementCard: some View {
         let improvement = diagnostics.improvementPercent
         return VStack(alignment: .leading, spacing: 8) {
-            Text("How well the settings explain your glucose")
+            Text("Historical replay fit")
                 .font(.title2.weight(.semibold))
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 statBlock(
-                    title: "Now",
+                    title: "Recorded",
                     value: String(format: "%.1f", diagnostics.meanAbsDeviationBefore),
-                    unit: "mg/dL",
+                    unit: "mg/dL / 5 min",
                     tint: ChartPalette.current(colorScheme)
                 )
                 Image(systemName: "arrow.right")
@@ -50,7 +52,7 @@ struct DiagnosticsView: View {
                 statBlock(
                     title: "Recommended",
                     value: String(format: "%.1f", diagnostics.meanAbsDeviationAfter),
-                    unit: "mg/dL",
+                    unit: "mg/dL / 5 min",
                     tint: ChartPalette.tuned(colorScheme)
                 )
                 Spacer()
@@ -76,11 +78,17 @@ struct DiagnosticsView: View {
 
     private func improvementText(_ improvement: Double) -> String {
         if improvement >= 1 {
-            return String(format: "The recommended settings explain your glucose about %.0f%% more accurately (lower average deviation between what happened and what the model predicted).", improvement)
+            return String(
+                format: "On this same historical window, the recommendation's average replay residual is %.0f%% lower. This in-sample fit does not show that future glucose will improve.",
+                improvement
+            )
         } else if improvement <= -1 {
-            return "Your current settings already explain the data well over this window — the recommendation barely changes the fit."
+            return String(
+                format: "Warning: the recommendation fits this historical replay %.0f%% worse than the recorded settings. Do not treat this diagnostic as support for the change.",
+                abs(improvement)
+            )
         } else {
-            return "Your current settings and the recommendation fit the data about equally over this window."
+            return "The recorded settings and the recommendation fit the historical data about equally over this window."
         }
     }
 
@@ -90,7 +98,7 @@ struct DiagnosticsView: View {
     private var problemSummary: some View {
         let problems = diagnostics.problemHours
         if problems.isEmpty {
-            Label("No hour is running consistently high or low under your current settings.", systemImage: "checkmark.circle")
+            Label("No hour is running consistently high or low under the settings recorded at the time.", systemImage: "checkmark.circle")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         } else {
@@ -110,7 +118,7 @@ struct DiagnosticsView: View {
         let direction = hour.before > 0 ? "running high" : "running low"
         let time = String(format: "%02d:00", hour.hour)
         if hour.improves {
-            return "• \(time): \(direction) (avg \(signed(hour.before)) mg/dL per reading). Recommended settings bring this to \(signed(hour.after))."
+            return "• \(time): \(direction) (avg \(signed(hour.before)) mg/dL per reading). In the historical replay, the recommendation brings this to \(signed(hour.after))."
         }
         return "• \(time): \(direction) (avg \(signed(hour.before)) mg/dL per reading)."
     }
@@ -133,8 +141,8 @@ struct DiagnosticsView: View {
                         y: .value("Deviation", hour.before),
                         width: .fixed(6)
                     )
-                    .position(by: .value("Series", "Now"))
-                    .foregroundStyle(by: .value("Series", "Now"))
+                    .position(by: .value("Series", "Recorded"))
+                    .foregroundStyle(by: .value("Series", "Recorded"))
                 }
                 ForEach(diagnostics.hourlyDeviation) { hour in
                     BarMark(
@@ -161,7 +169,7 @@ struct DiagnosticsView: View {
                                 if hovered.sampleCount == 0 {
                                     TooltipRow(color: nil, label: "No data", value: "")
                                 } else {
-                                    TooltipRow(color: ChartPalette.current(colorScheme), label: "Now", value: String(format: "%+.1f mg/dL", hovered.before))
+                                    TooltipRow(color: ChartPalette.current(colorScheme), label: "Recorded", value: String(format: "%+.1f mg/dL", hovered.before))
                                     TooltipRow(color: ChartPalette.tuned(colorScheme), label: "Recommended", value: String(format: "%+.1f mg/dL", hovered.after))
                                     TooltipRow(color: nil, label: "Samples", value: "\(hovered.sampleCount)")
                                 }
@@ -170,7 +178,7 @@ struct DiagnosticsView: View {
                 }
             }
             .chartForegroundStyleScale([
-                "Now": ChartPalette.current(colorScheme),
+                "Recorded": ChartPalette.current(colorScheme),
                 "Recommended": ChartPalette.tuned(colorScheme),
             ])
             .chartXSelection(value: $selectedHour)
@@ -194,7 +202,7 @@ struct DiagnosticsView: View {
     private var deviationTable: some View {
         TableCard(
             title: "Deviation by hour (mg/dL)",
-            subtitle: "Now = your current settings · Recommended = the suggested settings."
+            subtitle: "Recorded = settings active at the time · Recommended = suggested settings replayed over the same history."
         ) {
             Table(diagnostics.hourlyDeviation) {
                 TableColumn("Hour") { hour in
@@ -202,7 +210,7 @@ struct DiagnosticsView: View {
                 }
                 .width(min: 48, ideal: 56)
 
-                TableColumn("Now") { hour in
+                TableColumn("Recorded") { hour in
                     Text(signed(hour.before))
                         .foregroundStyle(hour.isProblem ? AnyShapeStyle(ChartPalette.current(colorScheme)) : AnyShapeStyle(.primary))
                         .numericCell()
@@ -248,7 +256,7 @@ struct DiagnosticsView: View {
                 }
                 .width(min: 48, ideal: 56)
 
-                TableColumn("Mean") { day in
+                TableColumn("Mean mg/dL") { day in
                     Text(String(format: "%.0f", day.meanGlucose)).numericCell()
                 }
                 .width(min: 48, ideal: 56)
@@ -263,7 +271,7 @@ struct DiagnosticsView: View {
                 }
                 .width(min: 60, ideal: 68)
 
-                TableColumn("Insulin") { day in
+                TableColumn("Bolus U") { day in
                     Text(String(format: "%.1f U", day.totalBolusInsulin)).numericCell()
                 }
                 .width(min: 64, ideal: 74)
