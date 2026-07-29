@@ -29,6 +29,24 @@ public struct ProfileHistory: Sendable {
         }
         return result ?? timeline.first ?? current
     }
+
+    /// Return a history in which every profile missing an insulin model uses
+    /// the user's configured model. Nightscout profile documents do not carry
+    /// this setting, but historical replay is just as dependent on it as replay
+    /// against the current profile.
+    public func applyingDefaultInsulinType(_ insulinType: InsulinType) -> ProfileHistory {
+        func applying(to profile: TherapyProfile) -> TherapyProfile {
+            var copy = profile
+            if copy.insulinType == nil {
+                copy.insulinType = insulinType
+            }
+            return copy
+        }
+        return ProfileHistory(
+            timeline: timeline.map(applying),
+            current: applying(to: current)
+        )
+    }
 }
 
 public extension TherapyProfile {
@@ -40,6 +58,8 @@ public extension TherapyProfile {
         basalSchedule == other.basalSchedule
             && sensitivitySchedule == other.sensitivitySchedule
             && carbRatioSchedule == other.carbRatioSchedule
+            && timeZone == other.timeZone
+            && insulinType == other.insulinType
     }
 }
 
@@ -47,20 +67,19 @@ public extension TherapyProfile {
 public enum ProfileIngest {
     public enum IngestError: Error, Equatable {
         case noStore
+        case unknownGlucoseUnit(String?)
+        case invalidTimeZone(String?)
         case emptySchedule(String)
         case badSchedule(String)
+        case invalidValue(String)
     }
 
     /// Build a `ProfileHistory` from profile documents (newest first, as
-    /// `/api/v1/profile.json` returns them). Documents that fail to parse are
-    /// skipped; the newest parseable one becomes `current`.
+    /// `/api/v1/profile.json` returns them). Every document is validated:
+    /// silently dropping a malformed historical profile would replay part of
+    /// the analysis window against settings that were never active.
     public static func makeHistory(from docs: [NSProfileDocument]) throws -> ProfileHistory {
-        var parsed: [TherapyProfile] = []
-        for doc in docs {
-            if let profile = try? makeProfile(from: doc) {
-                parsed.append(profile)
-            }
-        }
+        let parsed = try docs.map(makeProfile)
         guard let current = parsed.first else { throw IngestError.noStore }
         let dated = parsed.filter { $0.activeFrom != nil }
         return ProfileHistory(timeline: dated, current: current)
@@ -77,17 +96,27 @@ public enum ProfileIngest {
         }
 
         // Units precedence: per-profile store units, then top-level document units.
-        let unit = GlucoseUnit(nightscoutString: store.units ?? doc.units)
+        let rawUnit = store.units ?? doc.units
+        guard let unit = GlucoseUnit.parseNightscout(rawUnit) else {
+            throw IngestError.unknownGlucoseUnit(rawUnit)
+        }
 
-        let timeZone = NightscoutTimeZone.parse(store.timezone) ?? TimeZone(identifier: "UTC")!
+        guard let timeZone = NightscoutTimeZone.parse(store.timezone) else {
+            throw IngestError.invalidTimeZone(store.timezone)
+        }
 
-        let basalSchedule = try schedule(from: store.basal, name: "basal") { $0 }
-        let sensitivitySchedule = try schedule(from: store.sens, name: "sens") { unit.toMilligramsPerDeciliter($0) }
-        let carbRatioSchedule = try schedule(from: store.carbratio, name: "carbratio") { $0 }
+        let basalSchedule = try schedule(from: store.basal, name: "basal", isValid: { $0 >= 0 }) { $0 }
+        let sensitivitySchedule = try schedule(from: store.sens, name: "sens", isValid: { $0 > 0 }) {
+            unit.toMilligramsPerDeciliter($0)
+        }
+        let carbRatioSchedule = try schedule(from: store.carbratio, name: "carbratio", isValid: { $0 > 0 }) { $0 }
         let targetSchedule = try makeTargetSchedule(low: store.target_low, high: store.target_high, unit: unit)
 
         let dosingStrategy = doc.loopSettings?.dosingStrategy.flatMap(DosingStrategy.init(rawValue:))
         let suspendThreshold = doc.loopSettings?.minimumBGGuard.map { unit.toMilligramsPerDeciliter($0) }
+        try validateOptional(suspendThreshold, name: "minimumBGGuard", allowsZero: false)
+        try validateOptional(doc.loopSettings?.maximumBasalRatePerHour, name: "maximumBasalRatePerHour", allowsZero: false)
+        try validateOptional(doc.loopSettings?.maximumBolus, name: "maximumBolus", allowsZero: true)
 
         return TherapyProfile(
             basalSchedule: basalSchedule,
@@ -107,11 +136,16 @@ public enum ProfileIngest {
     private static func schedule(
         from items: [NSScheduleItem],
         name: String,
+        isValid: (Double) -> Bool,
         transform: (Double) -> Double
     ) throws -> DailySchedule<Double> {
         guard !items.isEmpty else { throw IngestError.emptySchedule(name) }
-        let entries = items.map {
-            DailySchedule<Double>.Entry(secondsSinceMidnight: $0.timeAsSeconds, value: transform($0.value))
+        let entries = try items.map {
+            let value = transform($0.value)
+            guard value.isFinite, isValid(value) else {
+                throw IngestError.invalidValue(name)
+            }
+            return DailySchedule<Double>.Entry(secondsSinceMidnight: $0.timeAsSeconds, value: value)
         }
         do {
             return try DailySchedule(entries: entries)
@@ -142,12 +176,27 @@ public enum ProfileIngest {
             }
             let lowMgdl = unit.toMilligramsPerDeciliter(lowItem.value)
             let highMgdl = unit.toMilligramsPerDeciliter(highItem.value)
-            entries.append(.init(secondsSinceMidnight: lowItem.timeAsSeconds, value: min(lowMgdl, highMgdl)...max(lowMgdl, highMgdl)))
+            guard lowMgdl.isFinite, highMgdl.isFinite,
+                  lowMgdl > 0, highMgdl > 0, lowMgdl <= highMgdl else {
+                throw IngestError.invalidValue("target")
+            }
+            entries.append(.init(secondsSinceMidnight: lowItem.timeAsSeconds, value: lowMgdl...highMgdl))
         }
         do {
             return try DailySchedule(entries: entries)
         } catch {
             throw IngestError.badSchedule("target")
+        }
+    }
+
+    private static func validateOptional(
+        _ value: Double?,
+        name: String,
+        allowsZero: Bool
+    ) throws {
+        guard let value else { return }
+        guard value.isFinite, allowsZero ? value >= 0 : value > 0 else {
+            throw IngestError.invalidValue(name)
         }
     }
 }

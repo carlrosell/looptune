@@ -85,6 +85,69 @@ struct ProfileIngestTests {
             _ = try ProfileIngest.makeProfile(from: doc)
         }
     }
+
+    @Test("rejects missing or unknown units and invalid timezones")
+    func strictUnitsAndTimezone() throws {
+        let missingUnits = try decodeDoc(#"""
+        {"defaultProfile":"Default","store":{"Default":{
+          "timezone":"UTC",
+          "basal":[{"timeAsSeconds":0,"value":1}],
+          "sens":[{"timeAsSeconds":0,"value":50}],
+          "carbratio":[{"timeAsSeconds":0,"value":10}],
+          "target_low":[{"timeAsSeconds":0,"value":100}],
+          "target_high":[{"timeAsSeconds":0,"value":110}]
+        }}}
+        """#)
+        #expect(throws: ProfileIngest.IngestError.unknownGlucoseUnit(nil)) {
+            _ = try ProfileIngest.makeProfile(from: missingUnits)
+        }
+
+        let badZone = try decodeDoc(#"""
+        {"defaultProfile":"Default","units":"bananas","store":{"Default":{
+          "timezone":"Moon/Base",
+          "basal":[{"timeAsSeconds":0,"value":1}],
+          "sens":[{"timeAsSeconds":0,"value":50}],
+          "carbratio":[{"timeAsSeconds":0,"value":10}],
+          "target_low":[{"timeAsSeconds":0,"value":100}],
+          "target_high":[{"timeAsSeconds":0,"value":110}]
+        }}}
+        """#)
+        #expect(throws: ProfileIngest.IngestError.unknownGlucoseUnit("bananas")) {
+            _ = try ProfileIngest.makeProfile(from: badZone)
+        }
+
+        let invalidZoneJSON = #"""
+        {"defaultProfile":"Default","units":"mg/dL","store":{"Default":{
+          "timezone":"Moon/Base",
+          "basal":[{"timeAsSeconds":0,"value":1}],
+          "sens":[{"timeAsSeconds":0,"value":50}],
+          "carbratio":[{"timeAsSeconds":0,"value":10}],
+          "target_low":[{"timeAsSeconds":0,"value":100}],
+          "target_high":[{"timeAsSeconds":0,"value":110}]
+        }}}
+        """#
+        let invalidZone = try decodeDoc(invalidZoneJSON)
+        #expect(throws: ProfileIngest.IngestError.invalidTimeZone("Moon/Base")) {
+            _ = try ProfileIngest.makeProfile(from: invalidZone)
+        }
+    }
+
+    @Test("rejects nonphysical profile schedule and guardrail values")
+    func rejectsInvalidValues() throws {
+        let doc = try decodeDoc(#"""
+        {"defaultProfile":"Default","units":"mg/dL","store":{"Default":{
+          "timezone":"UTC",
+          "basal":[{"timeAsSeconds":0,"value":-1}],
+          "sens":[{"timeAsSeconds":0,"value":50}],
+          "carbratio":[{"timeAsSeconds":0,"value":10}],
+          "target_low":[{"timeAsSeconds":0,"value":100}],
+          "target_high":[{"timeAsSeconds":0,"value":110}]
+        }}}
+        """#)
+        #expect(throws: ProfileIngest.IngestError.invalidValue("basal")) {
+            _ = try ProfileIngest.makeProfile(from: doc)
+        }
+    }
 }
 
 @Suite("TreatmentIngest")
@@ -203,6 +266,19 @@ struct TreatmentIngestTests {
         #expect(result.overrides[0].insulinNeedsScaleFactor == 0.8)
         #expect(result.overrides[1].correctionRangeMilligramsPerDeciliter == 150...170)
         #expect(result.overrides[1].affectsInsulinNeeds == true)
+    }
+
+    @Test("non-finite treatment values are rejected during decoding")
+    func rejectsNonFiniteValues() throws {
+        #expect(throws: (any Error).self) {
+            _ = try decode(#"""
+        [
+          {"eventType":"Correction Bolus","created_at":"2023-01-09T20:00:00Z","insulin":"NaN"},
+          {"eventType":"Carb Correction","created_at":"2023-01-09T20:05:00Z","carbs":"Infinity"},
+          {"eventType":"Temp Basal","created_at":"2023-01-09T20:10:00Z","duration":30,"rate":"NaN"}
+        ]
+        """#)
+        }
     }
 }
 

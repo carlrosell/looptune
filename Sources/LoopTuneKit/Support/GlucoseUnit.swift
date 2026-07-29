@@ -23,6 +23,24 @@ public enum GlucoseUnit: String, Codable, Sendable, CaseIterable {
         self = normalized.contains("mmol") ? .millimolesPerLiter : .milligramsPerDeciliter
     }
 
+    /// Strict parser for calculations. Unlike the presentation-oriented
+    /// initializer above, this refuses missing or unrecognized units so profile
+    /// values can never be silently interpreted in the wrong scale.
+    static func parseNightscout(_ raw: String?) -> GlucoseUnit? {
+        guard let raw else { return nil }
+        let normalized = raw
+            .lowercased()
+            .replacingOccurrences(of: "\u{00a0}", with: "")
+            .replacingOccurrences(of: " ", with: "")
+        if ["mmol", "mmol/l", "mmoll"].contains(normalized) {
+            return .millimolesPerLiter
+        }
+        if normalized == "mg/dl" || normalized == "mgdl" {
+            return .milligramsPerDeciliter
+        }
+        return nil
+    }
+
     /// Convert a value expressed in this unit into mg/dL.
     public func toMilligramsPerDeciliter(_ value: Double) -> Double {
         switch self {

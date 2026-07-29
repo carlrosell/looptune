@@ -1,14 +1,16 @@
 import Foundation
 
-/// Decodes a JSON array element-by-element, silently skipping any element that
-/// fails to decode. Nightscout responses mix many uploaders, and a single
-/// malformed document should not discard an entire day of otherwise-valid data.
+/// Decodes a JSON array element-by-element and counts elements that fail. The
+/// network client rejects a nonzero `skippedCount`, while direct callers can
+/// inspect the valid subset for diagnostics and tests.
 public struct LenientArray<Element: Decodable>: Decodable {
     public let elements: [Element]
+    public let skippedCount: Int
 
     public init(from decoder: Decoder) throws {
         var container = try decoder.unkeyedContainer()
         var elements: [Element] = []
+        var skippedCount = 0
         if let count = container.count {
             elements.reserveCapacity(count)
         }
@@ -21,11 +23,13 @@ public struct LenientArray<Element: Decodable>: Decodable {
                 // `AnyDecodable` never throws, so the unkeyed container always
                 // advances by exactly one.
                 _ = try? container.decode(AnyDecodable.self)
+                skippedCount += 1
             }
             // Safety: if nothing consumed this iteration, stop rather than loop.
             if container.currentIndex == indexBefore { break }
         }
         self.elements = elements
+        self.skippedCount = skippedCount
     }
 
     /// A type that decodes successfully from any JSON value without inspecting

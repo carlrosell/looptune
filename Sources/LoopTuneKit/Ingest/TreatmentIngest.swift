@@ -63,10 +63,12 @@ public enum TreatmentIngest {
 
     static func bolus(from treatment: NSTreatment) -> DoseRecord? {
         // Use delivered `insulin`, not `programmed` (interrupted boluses differ).
-        guard let insulin = treatment.insulin, insulin > 0 else { return nil }
+        guard let insulin = treatment.insulin, insulin.isFinite, insulin > 0 else { return nil }
         let start = treatment.createdAt
         // `duration` (minutes) is nonzero for square/extended boluses.
-        let durationMinutes = treatment.duration ?? 0
+        let durationMinutes = treatment.duration.flatMap {
+            $0.isFinite && $0 >= 0 ? $0 : nil
+        } ?? 0
         let end = start.addingTimeInterval(max(0, durationMinutes) * 60)
         return DoseRecord(
             kind: .bolus(units: insulin),
@@ -80,7 +82,9 @@ public enum TreatmentIngest {
     // MARK: - Temp basals / suspends
 
     static func tempBasal(from treatment: NSTreatment) -> DoseRecord? {
-        guard let durationMinutes = treatment.duration, durationMinutes > 0 else { return nil }
+        guard let durationMinutes = treatment.duration,
+              durationMinutes.isFinite,
+              durationMinutes > 0 else { return nil }
         // Skip percentage temps that lack an absolute rate (not usable for replay).
         if treatment.temp == "percent", treatment.rate == nil, treatment.absolute == nil, treatment.amount == nil {
             return nil
@@ -98,11 +102,11 @@ public enum TreatmentIngest {
         // Effective delivered rate: prefer amount/duration (what actually ran),
         // then programmed rate, then absolute.
         let effectiveRate: Double
-        if let amount = treatment.amount {
+        if let amount = treatment.amount, amount.isFinite, amount >= 0 {
             effectiveRate = amount / (durationMinutes / 60)
-        } else if let rate = treatment.rate {
+        } else if let rate = treatment.rate, rate.isFinite, rate >= 0 {
             effectiveRate = rate
-        } else if let absolute = treatment.absolute {
+        } else if let absolute = treatment.absolute, absolute.isFinite, absolute >= 0 {
             effectiveRate = absolute
         } else {
             return nil
@@ -141,8 +145,10 @@ public enum TreatmentIngest {
     // MARK: - Carbs
 
     static func carb(from treatment: NSTreatment) -> CarbRecord? {
-        guard let grams = treatment.carbs, grams > 0 else { return nil }
-        let absorption = treatment.absorptionTime.map { $0 * 60 } ?? CarbRecord.defaultAbsorptionTime
+        guard let grams = treatment.carbs, grams.isFinite, grams > 0 else { return nil }
+        let absorption = treatment.absorptionTime.flatMap {
+            $0.isFinite && $0 > 0 ? $0 * 60 : nil
+        } ?? CarbRecord.defaultAbsorptionTime
         return CarbRecord(date: treatment.createdAt, grams: grams, absorptionTime: absorption, foodType: treatment.foodType)
     }
 
@@ -168,7 +174,9 @@ public enum TreatmentIngest {
         let end: Date?
         if isIndefinite {
             end = nil
-        } else if let durationMinutes = treatment.duration, durationMinutes > 0 {
+        } else if let durationMinutes = treatment.duration,
+                  durationMinutes.isFinite,
+                  durationMinutes > 0 {
             end = start.addingTimeInterval(durationMinutes * 60)
         } else {
             end = nil
@@ -178,7 +186,9 @@ public enum TreatmentIngest {
         // it is stored as-is without unit conversion. Non-Loop uploaders that
         // emit mmol/L override ranges are out of scope for v1.
         let range: ClosedRange<Double>?
-        if let bounds = treatment.correctionRange, bounds.count == 2 {
+        if let bounds = treatment.correctionRange,
+           bounds.count == 2,
+           bounds.allSatisfy({ $0.isFinite && $0 > 0 }) {
             range = min(bounds[0], bounds[1])...max(bounds[0], bounds[1])
         } else {
             range = nil
@@ -186,7 +196,9 @@ public enum TreatmentIngest {
         return OverridePeriod(
             startDate: start,
             endDate: end,
-            insulinNeedsScaleFactor: treatment.insulinNeedsScaleFactor,
+            insulinNeedsScaleFactor: treatment.insulinNeedsScaleFactor.flatMap {
+                $0.isFinite && $0 > 0 ? $0 : nil
+            },
             correctionRangeMilligramsPerDeciliter: range,
             reason: treatment.reason
         )

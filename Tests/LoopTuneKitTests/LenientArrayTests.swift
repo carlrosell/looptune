@@ -18,8 +18,13 @@ struct LenientArrayTests {
           {"date": 1700000300000, "sgv": 120, "type": "sgv"}
         ]
         """#
-        let entries = try decode(NSEntry.self, json)
+        let decoded = try JSONDecoder().decode(
+            LenientArray<NSEntry>.self,
+            from: Data(json.utf8)
+        )
+        let entries = decoded.elements
         #expect(entries.count == 2)
+        #expect(decoded.skippedCount == 1)
         #expect(entries[0].sgv == 100)
         #expect(entries[1].sgv == 120)
     }

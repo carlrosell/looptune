@@ -31,8 +31,9 @@ extension NSEntry: Codable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         // Prefer epoch-ms `date`; fall back to ISO `dateString`.
-        if let millis = container.lenientDouble(forKey: .date) {
-            date = NightscoutDate.fromEpochMilliseconds(millis)
+        if let millis = container.lenientDouble(forKey: .date),
+           let parsed = NightscoutDate.fromEpochMilliseconds(millis) {
+            date = parsed
         } else if let iso = container.lenientString(forKey: .dateString), let parsed = NightscoutDate.parseISO(iso) {
             date = parsed
         } else {
@@ -56,6 +57,9 @@ extension NSEntry: Codable {
 /// carbs, temp basals, suspends, and overrides; the Ingest layer dispatches on
 /// `eventType`.
 public struct NSTreatment: Sendable, Equatable {
+    /// Stable identifiers used to deduplicate inclusive Nightscout queries.
+    public var identifier: String?
+    public var syncIdentifier: String?
     public var eventType: String?
     public var createdAt: Date
     public var enteredBy: String?
@@ -88,6 +92,8 @@ public struct NSTreatment: Sendable, Equatable {
 
 extension NSTreatment: Codable {
     private enum CodingKeys: String, CodingKey {
+        case identifier = "_id"
+        case syncIdentifier
         case eventType, created_at, timestamp, enteredBy
         case insulin, programmed
         case rate, absolute, amount, duration, temp, reason, automatic
@@ -107,6 +113,8 @@ extension NSTreatment: Codable {
     /// documents round-trip through the same lenient decoder as live fetches.
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(identifier, forKey: .identifier)
+        try container.encodeIfPresent(syncIdentifier, forKey: .syncIdentifier)
         try container.encodeIfPresent(eventType, forKey: .eventType)
         try container.encode(Self.isoEncoder.string(from: createdAt), forKey: .created_at)
         try container.encodeIfPresent(enteredBy, forKey: .enteredBy)
@@ -130,34 +138,44 @@ extension NSTreatment: Codable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        identifier = container.lenientString(forKey: .identifier)
+        syncIdentifier = container.lenientString(forKey: .syncIdentifier)
         eventType = container.lenientString(forKey: .eventType)
 
         if let iso = container.lenientString(forKey: .created_at), let parsed = NightscoutDate.parseISO(iso) {
             createdAt = parsed
         } else if let iso = container.lenientString(forKey: .timestamp), let parsed = NightscoutDate.parseISO(iso) {
             createdAt = parsed
-        } else if let millis = container.lenientDouble(forKey: .created_at) {
-            createdAt = NightscoutDate.fromEpochMilliseconds(millis)
+        } else if let millis = container.lenientDouble(forKey: .created_at),
+                  let parsed = NightscoutDate.fromEpochMilliseconds(millis) {
+            createdAt = parsed
         } else {
             throw DecodingError.dataCorruptedError(forKey: .created_at, in: container, debugDescription: "treatment has no usable created_at")
         }
 
         enteredBy = container.lenientString(forKey: .enteredBy)
-        insulin = container.lenientDouble(forKey: .insulin)
-        programmed = container.lenientDouble(forKey: .programmed)
-        rate = container.lenientDouble(forKey: .rate)
-        absolute = container.lenientDouble(forKey: .absolute)
-        amount = container.lenientDouble(forKey: .amount)
-        duration = container.lenientDouble(forKey: .duration)
+        insulin = try container.finiteLenientDouble(forKey: .insulin)
+        programmed = try container.finiteLenientDouble(forKey: .programmed)
+        rate = try container.finiteLenientDouble(forKey: .rate)
+        absolute = try container.finiteLenientDouble(forKey: .absolute)
+        amount = try container.finiteLenientDouble(forKey: .amount)
+        duration = try container.finiteLenientDouble(forKey: .duration)
         temp = container.lenientString(forKey: .temp)
         reason = container.lenientString(forKey: .reason)
         automatic = container.lenientBool(forKey: .automatic)
-        carbs = container.lenientDouble(forKey: .carbs)
-        absorptionTime = container.lenientDouble(forKey: .absorptionTime)
+        carbs = try container.finiteLenientDouble(forKey: .carbs)
+        absorptionTime = try container.finiteLenientDouble(forKey: .absorptionTime)
         foodType = container.lenientString(forKey: .foodType)
         durationType = container.lenientString(forKey: .durationType)
-        insulinNeedsScaleFactor = container.lenientDouble(forKey: .insulinNeedsScaleFactor)
-        correctionRange = (try? container.decodeIfPresent([Double].self, forKey: .correctionRange)) ?? nil
+        insulinNeedsScaleFactor = try container.finiteLenientDouble(forKey: .insulinNeedsScaleFactor)
+        correctionRange = try container.decodeIfPresent([Double].self, forKey: .correctionRange)
+        if let correctionRange, !correctionRange.allSatisfy(\.isFinite) {
+            throw DecodingError.dataCorruptedError(
+                forKey: .correctionRange,
+                in: container,
+                debugDescription: "correction range contains a non-finite value"
+            )
+        }
         insulinType = container.lenientString(forKey: .insulinType)
     }
 }
@@ -184,18 +202,36 @@ extension NSScheduleItem: Decodable {
         } else {
             throw DecodingError.dataCorruptedError(forKey: .timeAsSeconds, in: container, debugDescription: "schedule item has no time")
         }
-        value = container.lenientDouble(forKey: .value) ?? 0
+        guard (0..<86_400).contains(timeAsSeconds) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .timeAsSeconds,
+                in: container,
+                debugDescription: "schedule time must be in 0..<86400"
+            )
+        }
+        guard let decodedValue = container.lenientDouble(forKey: .value), decodedValue.isFinite else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .value,
+                in: container,
+                debugDescription: "schedule item has no finite value"
+            )
+        }
+        value = decodedValue
     }
 
     static func secondsFromHHmm(_ string: String) -> Int? {
         let parts = string.split(separator: ":").map { Int($0) }
-        guard parts.count >= 2, let hour = parts[0], let minute = parts[1] else { return nil }
-        return hour * 3600 + minute * 60
+        guard (2...3).contains(parts.count),
+              let hour = parts[0], (0..<24).contains(hour),
+              let minute = parts[1], (0..<60).contains(minute) else { return nil }
+        let second = parts.count == 3 ? parts[2] : 0
+        guard let second, (0..<60).contains(second) else { return nil }
+        return hour * 3600 + minute * 60 + second
     }
 }
 
 /// A profile store entry (`store.<name>`).
-public struct NSProfileStore: Sendable, Equatable, Decodable {
+public struct NSProfileStore: Sendable, Equatable {
     public var dia: Double?
     public var units: String?
     public var timezone: String?
@@ -206,13 +242,47 @@ public struct NSProfileStore: Sendable, Equatable, Decodable {
     public var target_high: [NSScheduleItem]?
 }
 
+extension NSProfileStore: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case dia, units, timezone, basal, sens, carbratio, target_low, target_high
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        dia = try container.finiteLenientDouble(forKey: .dia)
+        units = container.lenientString(forKey: .units)
+        timezone = container.lenientString(forKey: .timezone)
+        basal = try container.decode([NSScheduleItem].self, forKey: .basal)
+        sens = try container.decode([NSScheduleItem].self, forKey: .sens)
+        carbratio = try container.decode([NSScheduleItem].self, forKey: .carbratio)
+        target_low = try container.decodeIfPresent([NSScheduleItem].self, forKey: .target_low)
+        target_high = try container.decodeIfPresent([NSScheduleItem].self, forKey: .target_high)
+    }
+}
+
 /// Loop-specific settings block, present only on Loop-sourced profiles.
-public struct NSLoopSettings: Sendable, Equatable, Decodable {
+public struct NSLoopSettings: Sendable, Equatable {
     public var dosingEnabled: Bool?
     public var dosingStrategy: String?
     public var minimumBGGuard: Double?
     public var maximumBasalRatePerHour: Double?
     public var maximumBolus: Double?
+}
+
+extension NSLoopSettings: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case dosingEnabled, dosingStrategy, minimumBGGuard
+        case maximumBasalRatePerHour, maximumBolus
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        dosingEnabled = try container.strictLenientBool(forKey: .dosingEnabled)
+        dosingStrategy = container.lenientString(forKey: .dosingStrategy)
+        minimumBGGuard = try container.finiteLenientDouble(forKey: .minimumBGGuard)
+        maximumBasalRatePerHour = try container.finiteLenientDouble(forKey: .maximumBasalRatePerHour)
+        maximumBolus = try container.finiteLenientDouble(forKey: .maximumBolus)
+    }
 }
 
 /// A Nightscout `profile` document.
@@ -234,7 +304,14 @@ extension NSProfileDocument: Decodable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         defaultProfile = container.lenientString(forKey: .defaultProfile)
         if let iso = container.lenientString(forKey: .startDate) {
-            startDate = NightscoutDate.parseISO(iso)
+            guard let parsed = NightscoutDate.parseISO(iso) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .startDate,
+                    in: container,
+                    debugDescription: "profile startDate is malformed"
+                )
+            }
+            startDate = parsed
         } else if let millis = container.lenientDouble(forKey: .startDate) {
             startDate = NightscoutDate.fromEpochMilliseconds(millis)
         } else {
@@ -242,8 +319,8 @@ extension NSProfileDocument: Decodable {
         }
         units = container.lenientString(forKey: .units)
         enteredBy = container.lenientString(forKey: .enteredBy)
-        store = (try? container.decodeIfPresent([String: NSProfileStore].self, forKey: .store)) ?? [:]
-        loopSettings = try? container.decodeIfPresent(NSLoopSettings.self, forKey: .loopSettings)
+        store = try container.decodeIfPresent([String: NSProfileStore].self, forKey: .store) ?? [:]
+        loopSettings = try container.decodeIfPresent(NSLoopSettings.self, forKey: .loopSettings)
     }
 }
 

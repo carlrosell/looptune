@@ -16,13 +16,30 @@ extension KeyedDecodingContainer {
         return nil
     }
 
+    /// A present numeric field must decode to a finite value. Optional means
+    /// absent/null is allowed—not that malformed or non-finite data is ignored.
+    func finiteLenientDouble(forKey key: Key) throws -> Double? {
+        guard contains(key), (try? decodeNil(forKey: key)) != true else { return nil }
+        guard let value = lenientDouble(forKey: key), value.isFinite else {
+            throw DecodingError.dataCorruptedError(
+                forKey: key,
+                in: self,
+                debugDescription: "numeric value is malformed or non-finite"
+            )
+        }
+        return value
+    }
+
     /// An `Int` encoded as a number or numeric string. Non-finite doubles are
     /// rejected (rather than trapping in `Int(_:)`).
     func lenientInt(forKey key: Key) -> Int? {
         if let value = try? decodeIfPresent(Int.self, forKey: key) {
             return value
         }
-        if let value = lenientDouble(forKey: key), value.isFinite {
+        if let value = lenientDouble(forKey: key),
+           value.isFinite,
+           value >= Double(Int.min),
+           value < Double(Int.max) {
             return Int(value)
         }
         return nil
@@ -44,6 +61,20 @@ extension KeyedDecodingContainer {
             return number != 0
         }
         return nil
+    }
+
+    /// A present boolean field may use Nightscout's common bool/string/number
+    /// spellings, but any other representation is corruption rather than nil.
+    func strictLenientBool(forKey key: Key) throws -> Bool? {
+        guard contains(key), (try? decodeNil(forKey: key)) != true else { return nil }
+        guard let value = lenientBool(forKey: key) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: key,
+                in: self,
+                debugDescription: "boolean value is malformed"
+            )
+        }
+        return value
     }
 
     /// A `String` (passes through actual strings; stringifies numbers).
@@ -81,7 +112,8 @@ enum NightscoutDate {
     }
 
     /// Parse epoch milliseconds into a `Date`.
-    static func fromEpochMilliseconds(_ millis: Double) -> Date {
-        Date(timeIntervalSince1970: millis / 1000)
+    static func fromEpochMilliseconds(_ millis: Double) -> Date? {
+        guard millis.isFinite else { return nil }
+        return Date(timeIntervalSince1970: millis / 1000)
     }
 }

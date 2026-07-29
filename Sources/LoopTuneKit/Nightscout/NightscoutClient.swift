@@ -28,6 +28,26 @@ public enum NightscoutError: Error, Equatable {
     case unauthorized
     case httpStatus(Int)
     case decoding(String)
+    case partialDecoding(path: String, skipped: Int)
+}
+
+extension NightscoutError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .invalidURL:
+            return "Invalid Nightscout URL. Use HTTPS (plain HTTP is allowed only for localhost)."
+        case .invalidResponse:
+            return "Nightscout returned a non-HTTP response."
+        case .unauthorized:
+            return "Nightscout rejected the supplied credentials."
+        case .httpStatus(let code):
+            return "Nightscout returned HTTP \(code)."
+        case .decoding(let detail):
+            return "Nightscout JSON could not be decoded: \(detail)"
+        case .partialDecoding(let path, let skipped):
+            return "Nightscout returned \(skipped) malformed record\(skipped == 1 ? "" : "s") from \(path)."
+        }
+    }
 }
 
 /// A read-only client for a Nightscout site.
@@ -47,8 +67,11 @@ public struct NightscoutClient: Sendable {
         self.transport = transport
     }
 
-    public init(baseURL: URL, credentials: NightscoutCredentials = .none, transport: NightscoutTransport = URLSessionTransport()) {
-        self.baseURL = baseURL
+    public init(baseURL: URL, credentials: NightscoutCredentials = .none, transport: NightscoutTransport = URLSessionTransport()) throws {
+        guard let normalized = Self.normalizeBaseURL(baseURL.absoluteString) else {
+            throw NightscoutError.invalidURL
+        }
+        self.baseURL = normalized
         self.credentials = credentials
         self.transport = transport
     }
@@ -62,11 +85,23 @@ public struct NightscoutClient: Sendable {
         guard var components = URLComponents(string: string), let host = components.host, !host.isEmpty else {
             return nil
         }
+        let scheme = components.scheme?.lowercased() ?? "https"
+        guard scheme == "https" || (scheme == "http" && Self.isLoopback(host)) else {
+            return nil
+        }
+        components.scheme = scheme
         components.path = ""
         components.query = nil
         components.fragment = nil
         if components.scheme == nil { components.scheme = "https" }
         return components.url
+    }
+
+    private static func isLoopback(_ host: String) -> Bool {
+        let normalized = host.lowercased()
+        return normalized == "localhost"
+            || normalized == "::1"
+            || normalized.hasPrefix("127.")
     }
 
     // MARK: - Request building
@@ -113,11 +148,19 @@ public struct NightscoutClient: Sendable {
         }
     }
 
-    /// Decode a JSON array, skipping individual malformed elements.
+    /// Decode a JSON array element-by-element so partial corruption can be
+    /// reported. Silently omitting glucose, doses, or settings could otherwise
+    /// produce a plausible-looking recommendation from incomplete evidence.
     private func fetchArray<Element: Decodable>(_ type: Element.Type, path: String, queryItems: [URLQueryItem]) async throws -> [Element] {
         let data = try await fetchData(path: path, queryItems: queryItems)
         do {
-            return try JSONDecoder().decode(LenientArray<Element>.self, from: data).elements
+            let decoded = try JSONDecoder().decode(LenientArray<Element>.self, from: data)
+            guard decoded.skippedCount == 0 else {
+                throw NightscoutError.partialDecoding(path: path, skipped: decoded.skippedCount)
+            }
+            return decoded.elements
+        } catch let error as NightscoutError {
+            throw error
         } catch {
             throw NightscoutError.decoding(String(describing: error))
         }

@@ -27,7 +27,10 @@ struct NightscoutClientRequestTests {
         #expect(NightscoutClient.normalizeBaseURL("mysite.herokuapp.com")?.absoluteString == "https://mysite.herokuapp.com")
         #expect(NightscoutClient.normalizeBaseURL("https://mysite.com/api/v1/entries.json")?.absoluteString == "https://mysite.com")
         #expect(NightscoutClient.normalizeBaseURL("https://mysite.com/?token=abc-123")?.absoluteString == "https://mysite.com")
-        #expect(NightscoutClient.normalizeBaseURL("  http://local:1337  ")?.absoluteString == "http://local:1337")
+        #expect(NightscoutClient.normalizeBaseURL("  http://localhost:1337  ")?.absoluteString == "http://localhost:1337")
+        #expect(NightscoutClient.normalizeBaseURL("http://127.0.0.1:8080")?.absoluteString == "http://127.0.0.1:8080")
+        #expect(NightscoutClient.normalizeBaseURL("http://remote.example.com") == nil)
+        #expect(NightscoutClient.normalizeBaseURL("ftp://remote.example.com") == nil)
         #expect(NightscoutClient.normalizeBaseURL("") == nil)
     }
 
@@ -78,6 +81,26 @@ struct NightscoutClientRequestTests {
             _ = try await client.fetchStatus()
         }
     }
+
+    @Test("partially malformed arrays fail instead of silently omitting evidence")
+    func partialArrayFails() async throws {
+        let stub = StubTransport(responseData: Data(#"""
+        [
+          {"date":1700000000000,"sgv":100},
+          {"not":"an entry"}
+        ]
+        """#.utf8))
+        let client = try NightscoutClient(rawURLString: "https://x.com", transport: stub)
+        await #expect(throws: NightscoutError.partialDecoding(
+            path: "/api/v1/entries/sgv.json",
+            skipped: 1
+        )) {
+            _ = try await client.fetchEntries(
+                from: Date(timeIntervalSince1970: 1_700_000_000),
+                to: Date(timeIntervalSince1970: 1_700_000_300)
+            )
+        }
+    }
 }
 
 @Suite("Nightscout DTO decoding")
@@ -101,8 +124,10 @@ struct NightscoutDTODecodingTests {
 
     @Test("temp basal treatment decodes rate/amount/duration/reason")
     func tempBasalDecoding() throws {
-        let json = #"{"eventType":"Temp Basal","created_at":"2023-01-09T20:44:28Z","rate":1.75,"absolute":1.75,"amount":0.875,"duration":30.0,"temp":"absolute","automatic":true}"#
+        let json = #"{"_id":"mongo-id","syncIdentifier":"sync-id","eventType":"Temp Basal","created_at":"2023-01-09T20:44:28Z","rate":1.75,"absolute":1.75,"amount":0.875,"duration":30.0,"temp":"absolute","automatic":true}"#
         let t = try decode(NSTreatment.self, json)
+        #expect(t.identifier == "mongo-id")
+        #expect(t.syncIdentifier == "sync-id")
         #expect(t.eventType == "Temp Basal")
         #expect(t.rate == 1.75)
         #expect(t.amount == 0.875)
@@ -161,6 +186,22 @@ struct NightscoutDTODecodingTests {
     func scheduleItemHHmm() throws {
         let item = try decode(NSScheduleItem.self, #"{"time":"06:30","value":9}"#)
         #expect(item.timeAsSeconds == 23400)
+    }
+
+    @Test("schedule items reject missing values, invalid clock times, and overflowing integers")
+    func scheduleItemValidation() {
+        #expect(throws: (any Error).self) {
+            _ = try decode(NSScheduleItem.self, #"{"time":"25:00","value":9}"#)
+        }
+        #expect(throws: (any Error).self) {
+            _ = try decode(NSScheduleItem.self, #"{"time":"06:30"}"#)
+        }
+        #expect(throws: (any Error).self) {
+            _ = try decode(
+                NSScheduleItem.self,
+                #"{"timeAsSeconds":"999999999999999999999999999999","value":9}"#
+            )
+        }
     }
 
     @Test("status document exposes units")
