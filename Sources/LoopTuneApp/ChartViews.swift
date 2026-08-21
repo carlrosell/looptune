@@ -100,6 +100,7 @@ struct HourlyGlucoseOutcomeView: View {
 
 private struct DisplayDistribution: Identifiable {
     let hour: Int
+    let segment: Int
     let sampleCount: Int
     let p10: Double
     let p25: Double
@@ -109,8 +110,9 @@ private struct DisplayDistribution: Identifiable {
 
     var id: Int { hour }
 
-    init(_ source: HourlyValueDistribution, unit: GlucoseUnit) {
+    init(_ source: HourlyValueDistribution, unit: GlucoseUnit, segment: Int) {
         hour = source.hour
+        self.segment = segment
         sampleCount = source.sampleCount
         p10 = unit.fromMilligramsPerDeciliter(source.p10)
         p25 = unit.fromMilligramsPerDeciliter(source.p25)
@@ -153,7 +155,15 @@ struct HourlyGlucoseChartView: View {
     @State private var selectedHour: Int?
 
     private var rows: [DisplayDistribution] {
-        distributions.map { DisplayDistribution($0, unit: displayUnit) }
+        var segment = 0
+        var previousHour: Int?
+        return distributions.map { distribution in
+            if let previousHour, distribution.hour != previousHour + 1 {
+                segment += 1
+            }
+            previousHour = distribution.hour
+            return DisplayDistribution(distribution, unit: displayUnit, segment: segment)
+        }
     }
 
     private var hovered: DisplayDistribution? {
@@ -202,26 +212,29 @@ struct HourlyGlucoseChartView: View {
                     AreaMark(
                         x: .value("Hour", row.hour),
                         yStart: .value("10th percentile", row.p10),
-                        yEnd: .value("90th percentile", row.p90)
+                        yEnd: .value("90th percentile", row.p90),
+                        series: .value("Segment", "10–90%-\(row.segment)")
                     )
-                    .interpolationMethod(.catmullRom)
+                    .interpolationMethod(.linear)
                     .foregroundStyle(by: .value("Series", "10–90%"))
                 }
                 ForEach(rows) { row in
                     AreaMark(
                         x: .value("Hour", row.hour),
                         yStart: .value("25th percentile", row.p25),
-                        yEnd: .value("75th percentile", row.p75)
+                        yEnd: .value("75th percentile", row.p75),
+                        series: .value("Segment", "25–75%-\(row.segment)")
                     )
-                    .interpolationMethod(.catmullRom)
+                    .interpolationMethod(.linear)
                     .foregroundStyle(by: .value("Series", "25–75%"))
                 }
                 ForEach(rows) { row in
                     LineMark(
                         x: .value("Hour", row.hour),
-                        y: .value("Median glucose", row.median)
+                        y: .value("Median glucose", row.median),
+                        series: .value("Segment", "Median-\(row.segment)")
                     )
-                    .interpolationMethod(.catmullRom)
+                    .interpolationMethod(.linear)
                     .foregroundStyle(by: .value("Series", "Median"))
                     .lineStyle(StrokeStyle(lineWidth: 2))
                 }
