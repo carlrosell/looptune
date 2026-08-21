@@ -31,6 +31,16 @@ public struct ScheduleTuningOutput: Sendable, Equatable {
 
 /// The raw output of one tuning run, before guardrail clamping and presentation.
 public struct TuningOutput: Sendable, Equatable {
+    public enum ScheduledParameter: String, Sendable, Equatable {
+        case sensitivity
+        case carbRatio
+    }
+
+    public enum InitializationError: Error, Sendable, Equatable {
+        case emptySchedule(ScheduledParameter)
+        case missingMidnightEntry(ScheduledParameter, firstOffset: Int)
+    }
+
     public var tunedBasalHourly: [Double]
     public var pumpBasalHourly: [Double]
     public var untunedBasalHours: [Bool]
@@ -93,9 +103,9 @@ public struct TuningOutput: Sendable, Equatable {
         categoryCounts: [DeviationCategory: Int],
         totalSamples: Int,
         basalSampleCountByHour: [Int] = Array(repeating: 0, count: 24)
-    ) {
-        precondition(sensitivitySchedule.first?.secondsSinceMidnight == 0)
-        precondition(carbRatioSchedule.first?.secondsSinceMidnight == 0)
+    ) throws {
+        try Self.validate(sensitivitySchedule, parameter: .sensitivity)
+        try Self.validate(carbRatioSchedule, parameter: .carbRatio)
         self.tunedBasalHourly = tunedBasalHourly
         self.pumpBasalHourly = pumpBasalHourly
         self.untunedBasalHours = untunedBasalHours
@@ -104,6 +114,21 @@ public struct TuningOutput: Sendable, Equatable {
         self.categoryCounts = categoryCounts
         self.totalSamples = totalSamples
         self.basalSampleCountByHour = basalSampleCountByHour
+    }
+
+    private static func validate(
+        _ schedule: [ScheduleTuningOutput],
+        parameter: ScheduledParameter
+    ) throws {
+        guard let first = schedule.first else {
+            throw InitializationError.emptySchedule(parameter)
+        }
+        guard first.secondsSinceMidnight == 0 else {
+            throw InitializationError.missingMidnightEntry(
+                parameter,
+                firstOffset: first.secondsSinceMidnight
+            )
+        }
     }
 
     public func tunedSensitivityDailySchedule() throws -> DailySchedule<Double> {
@@ -161,7 +186,7 @@ public struct LoopTuner: Sendable {
         pumpProfile: TherapyProfile,
         analysisStart: Date,
         analysisEnd: Date
-    ) -> TuningOutput {
+    ) throws -> TuningOutput {
         let categorizer = Categorizer(profile: currentProfile, options: options)
         let categorized = categorizer.categorize(deviations)
 
@@ -198,7 +223,7 @@ public struct LoopTuner: Sendable {
         var counts: [DeviationCategory: Int] = [:]
         for entry in categorized { counts[entry.category, default: 0] += 1 }
 
-        return TuningOutput(
+        return try TuningOutput(
             tunedBasalHourly: basalResult.hourlyRates,
             pumpBasalHourly: pumpProfile.basalSchedule.hourlyValues(),
             untunedBasalHours: basalResult.untuned,

@@ -125,7 +125,7 @@ public struct ChainedTuner: Sendable {
                 excludedOverrideSamples += allDeviations.count - deviations.count
                 guard deviations.count >= Self.minimumSamplesPerDay else { continue }
 
-                let output = tuner.tune(
+                let output = try tuner.tune(
                     deviations: deviations,
                     carbs: inputs.eligibleCarbs(from: segment.start, to: segment.end),
                     currentProfile: evolving,
@@ -186,7 +186,7 @@ public struct ChainedTuner: Sendable {
         guard var final = lastOutput else {
             // No tunable day at all: recommend the pump settings unchanged.
             let pumpHourly = pumpProfile.basalSchedule.hourlyValues()
-            let output = TuningOutput(
+            let output = try TuningOutput(
                 tunedBasalHourly: pumpHourly,
                 pumpBasalHourly: pumpHourly,
                 untunedBasalHours: Array(repeating: true, count: 24),

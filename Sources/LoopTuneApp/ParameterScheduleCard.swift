@@ -45,18 +45,8 @@ struct ParameterScheduleCard: View {
                 .width(min: 82, ideal: 96)
 
                 TableColumn("Data") { entry in
-                    if entry.untuned && entry.evidenceCount == 0 {
-                        Text("no data").foregroundStyle(.tertiary)
-                    } else if entry.untuned {
-                        Text("\(entry.evidenceCount) \(evidenceName), unchanged")
-                            .foregroundStyle(.tertiary)
-                    } else if entry.daysMissing > 0 {
-                        Text("\(entry.evidenceCount) \(evidenceName), \(entry.daysMissing)d missing")
-                            .foregroundStyle(.tertiary)
-                    } else {
-                        Text("\(entry.evidenceCount) \(evidenceName)")
-                            .foregroundStyle(.secondary)
-                    }
+                    Text(entry.evidenceDescription(evidenceName))
+                        .foregroundStyle(entry.untuned || entry.daysMissing > 0 ? .tertiary : .secondary)
                 }
             }
             .resultsTable(rowCount: entries.count)

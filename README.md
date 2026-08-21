@@ -49,8 +49,10 @@ analyzed. Per-hour **"days missing"** counts show how much real data sits
 behind each basal hour. Profile changes take effect at their exact timestamps,
 and periods where an override changes insulin needs are excluded and reported.
 ISF and carb ratio are tuned independently for every time block already
-configured in Loop; blocks without usable evidence stay unchanged. A
-recommendation requires at least 12 usable five-minute samples.
+configured in Loop; blocks without usable evidence stay unchanged. An analysis
+requires at least 12 usable five-minute samples. Within that analysis, each ISF
+block needs 10 usable ISF samples. A carb-ratio block needs at least one eligible
+logged meal and has no separate five-minute-sample threshold.
 
 ## Validation status
 
@@ -103,7 +105,7 @@ remembered.
 
 ## Development
 
-- `swift build` / `swift test` (157 tests across 31 suites)
+- `swift build` / `swift test` (163 tests across 31 suites)
 - `scripts/dev.sh` — watch mode: rebuilds and relaunches the app on every
   save (the app restores its state on launch, so a relaunch is nearly free);
   pass `release` for an optimized build

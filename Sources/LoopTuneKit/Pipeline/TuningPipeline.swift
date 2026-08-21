@@ -149,7 +149,7 @@ public struct TuningPipeline: Sendable {
         }
 
         let tuner = LoopTuner(options: options)
-        let output = tuner.tune(
+        let output = try tuner.tune(
             deviations: deviations,
             carbs: inputs.eligibleCarbs(from: inputs.analysisStart, to: inputs.analysisEnd),
             currentProfile: profile,
@@ -277,7 +277,7 @@ public struct TuningPipeline: Sendable {
         let inputs = try await fetchInputs(client: client, configuration: configuration, endingAt: end, cache: cache)
         let configuredInputs = Self.applyingConfiguration(configuration, to: inputs)
         let recommendation = try run(inputs: configuredInputs, configuration: configuration)
-        let diagnostics = await DiagnosticsBuilder().build(
+        let diagnostics = try await DiagnosticsBuilder().build(
             inputs: configuredInputs,
             recommendation: recommendation
         )

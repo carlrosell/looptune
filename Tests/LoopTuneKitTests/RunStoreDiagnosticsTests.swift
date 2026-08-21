@@ -4,8 +4,8 @@ import Foundation
 
 @Suite("Recommendation Codable")
 struct RecommendationCodableTests {
-    private func sampleRecommendation() -> TuningRecommendation {
-        let output = TuningOutput(
+    private func sampleRecommendation() throws -> TuningRecommendation {
+        let output = try TuningOutput(
             tunedBasalHourly: Array(repeating: 1.1, count: 24),
             pumpBasalHourly: Array(repeating: 1.0, count: 24),
             untunedBasalHours: Array(repeating: false, count: 24),
@@ -26,7 +26,7 @@ struct RecommendationCodableTests {
 
     @Test("recommendation round-trips through JSON verbatim")
     func roundTrip() throws {
-        let rec = sampleRecommendation()
+        let rec = try sampleRecommendation()
         let data = try JSONEncoder().encode(rec)
         let decoded = try JSONDecoder().decode(TuningRecommendation.self, from: data)
         #expect(decoded == rec)
@@ -39,7 +39,7 @@ struct RecommendationCodableTests {
 
     @Test("recommendations saved before override accounting decode compatibly")
     func legacyDecode() throws {
-        let rec = sampleRecommendation()
+        let rec = try sampleRecommendation()
         let encoded = try JSONEncoder().encode(rec)
         var object = try #require(
             JSONSerialization.jsonObject(with: encoded) as? [String: Any]
@@ -54,6 +54,24 @@ struct RecommendationCodableTests {
         #expect(decoded.sensitivitySchedule.count == 1)
         #expect(decoded.sensitivitySchedule[0].parameter == decoded.sensitivity)
         #expect(decoded.carbRatioSchedule.count == 1)
+    }
+
+    @Test("minute-only schedule entries decode compatibly")
+    func legacyScheduleEntryDecode() throws {
+        let rec = try sampleRecommendation()
+        let encoded = try JSONEncoder().encode(rec)
+        var object = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        var schedule = try #require(object["sensitivitySchedule"] as? [[String: Any]])
+        for index in schedule.indices {
+            schedule[index].removeValue(forKey: "secondsSinceMidnight")
+        }
+        object["sensitivitySchedule"] = schedule
+
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(TuningRecommendation.self, from: legacyData)
+        #expect(decoded.sensitivitySchedule.map(\.secondsSinceMidnight) == [0, 12 * 3_600])
     }
 
     @Test("diagnostics saved before hourly distributions decode compatibly")
@@ -235,7 +253,7 @@ struct DiagnosticsBuilderTests {
         }
         let inputs = TuningInputs(profile: profile, glucose: glucose, doses: [], carbs: [], analysisStart: base, analysisEnd: glucose.last!.date)
         let rec = try TuningPipeline().run(inputs: inputs, configuration: TuningConfiguration(days: 1))
-        let diag = await DiagnosticsBuilder().build(inputs: inputs, recommendation: rec)
+        let diag = try await DiagnosticsBuilder().build(inputs: inputs, recommendation: rec)
 
         #expect(diag.hourlyDeviation.count == 24)
         #expect(diag.glucoseCount == 288)
@@ -248,6 +266,49 @@ struct DiagnosticsBuilderTests {
                 && $0.median <= $0.p75
                 && $0.p75 <= $0.p90
         } == true)
+    }
+
+    @Test("build propagates an invalid recommended schedule")
+    func buildRejectsInvalidRecommendedSchedule() async throws {
+        let profile = try profile(basal: 1.0)
+        let glucose = (0..<12).map { index in
+            GlucoseSample(
+                date: base.addingTimeInterval(Double(index) * 300),
+                milligramsPerDeciliter: 120
+            )
+        }
+        let inputs = TuningInputs(
+            profile: profile,
+            glucose: glucose,
+            doses: [],
+            carbs: [],
+            analysisStart: base,
+            analysisEnd: glucose.last!.date
+        )
+        let output = TuningOutput(
+            tunedBasalHourly: Array(repeating: 1.0, count: 24),
+            pumpBasalHourly: Array(repeating: 1.0, count: 24),
+            untunedBasalHours: Array(repeating: false, count: 24),
+            tunedISF: 50,
+            pumpISF: 50,
+            tunedCarbRatio: 10,
+            pumpCarbRatio: 10,
+            categoryCounts: [:],
+            totalSamples: 12
+        )
+        let validRecommendation = TuningRecommendation(from: output, daysAnalyzed: 1)
+        var recommendation = validRecommendation
+        recommendation.sensitivitySchedule = []
+
+        await #expect(throws: DailySchedule<Double>.ScheduleError.empty) {
+            try await DiagnosticsBuilder().build(inputs: inputs, recommendation: recommendation)
+        }
+
+        recommendation = validRecommendation
+        recommendation.carbRatioSchedule = []
+        await #expect(throws: DailySchedule<Double>.ScheduleError.empty) {
+            try await DiagnosticsBuilder().build(inputs: inputs, recommendation: recommendation)
+        }
     }
 
     @Test("hourly charts use conventional interpolated percentiles")
@@ -302,7 +363,7 @@ struct DiagnosticsBuilderTests {
             inputs: inputs,
             configuration: TuningConfiguration(days: 1)
         )
-        let diagnostics = await DiagnosticsBuilder().build(inputs: inputs, recommendation: rec)
+        let diagnostics = try await DiagnosticsBuilder().build(inputs: inputs, recommendation: rec)
         #expect(diagnostics.hourlyDeviation.reduce(0) { $0 + $1.sampleCount } == rec.totalSamples)
     }
 }

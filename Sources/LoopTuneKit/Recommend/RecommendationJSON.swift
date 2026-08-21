@@ -41,6 +41,7 @@ struct RecommendationDTO: Encodable {
     }
     struct ParameterScheduleEntry: Encodable {
         var time: String
+        var secondsSinceMidnight: Int
         var startMinutes: Int
         var unit: String
         var pump: Double
@@ -114,6 +115,7 @@ private extension RecommendationDTO.ParameterScheduleEntry {
         let rec = entry.parameter
         self.init(
             time: entry.timeString,
+            secondsSinceMidnight: entry.secondsSinceMidnight,
             startMinutes: entry.startMinutes,
             unit: rec.unitLabel(in: unit),
             pump: rec.pumpValue(in: unit),

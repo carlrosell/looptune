@@ -141,9 +141,12 @@ public struct BasalHourRecommendation: Sendable, Equatable, Identifiable {
 /// the same guardrails, unit conversion, and change classification as the
 /// original daily summary.
 public struct ParameterScheduleRecommendation: Sendable, Equatable, Identifiable {
-    public var id: Int { startMinutes }
-    /// Minutes since local midnight.
-    public var startMinutes: Int
+    public var id: Int { secondsSinceMidnight }
+    /// Full schedule offset in seconds since local midnight.
+    public var secondsSinceMidnight: Int
+    /// Whole minutes since local midnight, for Loop-style display and JSON
+    /// compatibility. Schedule identity and reconstruction use seconds.
+    public var startMinutes: Int { secondsSinceMidnight / 60 }
     public var parameter: ParameterRecommendation
     public var untuned: Bool
     /// Usable ISF samples or logged meals behind this block.
@@ -152,9 +155,29 @@ public struct ParameterScheduleRecommendation: Sendable, Equatable, Identifiable
     public var daysMissing: Int
 
     public var timeString: String {
-        String(format: "%02d:%02d", startMinutes / 60, startMinutes % 60)
+        let hour = secondsSinceMidnight / 3600
+        let minute = secondsSinceMidnight % 3600 / 60
+        let second = secondsSinceMidnight % 60
+        return second == 0
+            ? String(format: "%02d:%02d", hour, minute)
+            : String(format: "%02d:%02d:%02d", hour, minute, second)
     }
 
+    public init(
+        secondsSinceMidnight: Int,
+        parameter: ParameterRecommendation,
+        untuned: Bool,
+        evidenceCount: Int = 0,
+        daysMissing: Int = 0
+    ) {
+        self.secondsSinceMidnight = secondsSinceMidnight
+        self.parameter = parameter
+        self.untuned = untuned
+        self.evidenceCount = evidenceCount
+        self.daysMissing = daysMissing
+    }
+
+    /// Compatibility initializer for callers that only have minute offsets.
     public init(
         startMinutes: Int,
         parameter: ParameterRecommendation,
@@ -162,11 +185,28 @@ public struct ParameterScheduleRecommendation: Sendable, Equatable, Identifiable
         evidenceCount: Int = 0,
         daysMissing: Int = 0
     ) {
-        self.startMinutes = startMinutes
-        self.parameter = parameter
-        self.untuned = untuned
-        self.evidenceCount = evidenceCount
-        self.daysMissing = daysMissing
+        self.init(
+            secondsSinceMidnight: startMinutes * 60,
+            parameter: parameter,
+            untuned: untuned,
+            evidenceCount: evidenceCount,
+            daysMissing: daysMissing
+        )
+    }
+
+    public func evidenceDescription(_ evidenceName: String) -> String {
+        var description: String
+        if untuned && evidenceCount == 0 {
+            description = "no data"
+        } else if untuned {
+            description = "\(evidenceCount) \(evidenceName), unchanged"
+        } else {
+            description = "\(evidenceCount) \(evidenceName)"
+        }
+        if daysMissing > 0 {
+            description += ", \(daysMissing)d missing"
+        }
+        return description
     }
 }
 
@@ -215,7 +255,7 @@ public struct TuningRecommendation: Sendable, Equatable {
         )
         let sensitivitySchedule = output.sensitivitySchedule.map { entry in
             ParameterScheduleRecommendation(
-                startMinutes: entry.secondsSinceMidnight / 60,
+                secondsSinceMidnight: entry.secondsSinceMidnight,
                 parameter: ParameterRecommendation(
                     name: "Insulin Sensitivity",
                     unit: "mg/dL/U",
@@ -231,7 +271,7 @@ public struct TuningRecommendation: Sendable, Equatable {
         }
         let carbRatioSchedule = output.carbRatioSchedule.map { entry in
             ParameterScheduleRecommendation(
-                startMinutes: entry.secondsSinceMidnight / 60,
+                secondsSinceMidnight: entry.secondsSinceMidnight,
                 parameter: ParameterRecommendation(
                     name: "Carb Ratio",
                     unit: "g/U",
@@ -288,13 +328,13 @@ public struct TuningRecommendation: Sendable, Equatable {
 
     public func recommendedSensitivityDailySchedule() throws -> DailySchedule<Double> {
         try DailySchedule(entries: sensitivitySchedule.map {
-            .init(secondsSinceMidnight: $0.startMinutes * 60, value: $0.parameter.recommendedValue)
+            .init(secondsSinceMidnight: $0.secondsSinceMidnight, value: $0.parameter.recommendedValue)
         })
     }
 
     public func recommendedCarbRatioDailySchedule() throws -> DailySchedule<Double> {
         try DailySchedule(entries: carbRatioSchedule.map {
-            .init(secondsSinceMidnight: $0.startMinutes * 60, value: $0.parameter.recommendedValue)
+            .init(secondsSinceMidnight: $0.secondsSinceMidnight, value: $0.parameter.recommendedValue)
         })
     }
 
@@ -305,11 +345,11 @@ public struct TuningRecommendation: Sendable, Equatable {
         guard !schedule.isEmpty else { return 0 }
         var total = 0.0
         for index in schedule.indices {
-            let start = schedule[index].startMinutes
-            let end = index + 1 < schedule.count ? schedule[index + 1].startMinutes : 24 * 60
+            let start = schedule[index].secondsSinceMidnight
+            let end = index + 1 < schedule.count ? schedule[index + 1].secondsSinceMidnight : 86_400
             total += value(schedule[index]) * Double(end - start)
         }
-        return total / Double(24 * 60)
+        return total / 86_400
     }
 
     private static func applyScheduleSummary(

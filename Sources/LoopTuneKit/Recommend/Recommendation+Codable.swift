@@ -43,12 +43,17 @@ extension ParameterRecommendation: Codable {
 
 extension ParameterScheduleRecommendation: Codable {
     private enum CodingKeys: String, CodingKey {
-        case startMinutes, parameter, untuned, evidenceCount, daysMissing
+        case secondsSinceMidnight, startMinutes
+        case parameter, untuned, evidenceCount, daysMissing
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.startMinutes = try container.decode(Int.self, forKey: .startMinutes)
+        if let seconds = try container.decodeIfPresent(Int.self, forKey: .secondsSinceMidnight) {
+            self.secondsSinceMidnight = seconds
+        } else {
+            self.secondsSinceMidnight = try container.decode(Int.self, forKey: .startMinutes) * 60
+        }
         self.parameter = try container.decode(ParameterRecommendation.self, forKey: .parameter)
         self.untuned = try container.decode(Bool.self, forKey: .untuned)
         self.evidenceCount = try container.decode(Int.self, forKey: .evidenceCount)
@@ -57,6 +62,7 @@ extension ParameterScheduleRecommendation: Codable {
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(secondsSinceMidnight, forKey: .secondsSinceMidnight)
         try container.encode(startMinutes, forKey: .startMinutes)
         try container.encode(parameter, forKey: .parameter)
         try container.encode(untuned, forKey: .untuned)

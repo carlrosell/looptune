@@ -139,7 +139,7 @@ struct GuardrailTests {
 
     @Test("time-of-day summaries match the guardrail-clamped schedule")
     func scheduleSummaryUsesClampedEntries() throws {
-        let output = TuningOutput(
+        let output = try TuningOutput(
             tunedBasalHourly: Array(repeating: 1.0, count: 24),
             pumpBasalHourly: Array(repeating: 1.0, count: 24),
             untunedBasalHours: Array(repeating: false, count: 24),
@@ -163,6 +163,70 @@ struct GuardrailTests {
         })
         #expect(TuningReport.render(recommendation).contains("Insulin Sensitivity schedule"))
         #expect(try RecommendationJSON.encode(recommendation).contains("\"time\" : \"12:00\""))
+    }
+
+    @Test("schedule recommendations preserve second-resolution boundaries")
+    func scheduleRecommendationsPreserveSeconds() throws {
+        let output = try TuningOutput(
+            tunedBasalHourly: Array(repeating: 1.0, count: 24),
+            pumpBasalHourly: Array(repeating: 1.0, count: 24),
+            untunedBasalHours: Array(repeating: false, count: 24),
+            sensitivitySchedule: [
+                ScheduleTuningOutput(secondsSinceMidnight: 0, tunedValue: 50, pumpValue: 50, untuned: false),
+                ScheduleTuningOutput(secondsSinceMidnight: 3_601, tunedValue: 60, pumpValue: 60, untuned: false),
+                ScheduleTuningOutput(secondsSinceMidnight: 3_659, tunedValue: 70, pumpValue: 70, untuned: false),
+            ],
+            carbRatioSchedule: [
+                ScheduleTuningOutput(secondsSinceMidnight: 0, tunedValue: 10, pumpValue: 10, untuned: false),
+            ],
+            categoryCounts: [:],
+            totalSamples: 12
+        )
+        let recommendation = TuningRecommendation(from: output, daysAnalyzed: 1)
+
+        #expect(recommendation.sensitivitySchedule.map(\.id) == [0, 3_601, 3_659])
+        #expect(recommendation.sensitivitySchedule.map(\.startMinutes) == [0, 60, 60])
+        #expect(recommendation.sensitivitySchedule.map(\.timeString) == ["00:00", "01:00:01", "01:00:59"])
+        #expect(try recommendation.recommendedSensitivityDailySchedule().entries.map(\.secondsSinceMidnight) == [0, 3_601, 3_659])
+        let firstDuration = Double(3_601)
+        let secondDuration = Double(3_659 - 3_601)
+        let thirdDuration = Double(86_400 - 3_659)
+        let expectedAverage = (50 * firstDuration + 60 * secondDuration + 70 * thirdDuration) / 86_400
+        #expect(abs(recommendation.sensitivity.recommendedValue - expectedAverage) < 1e-9)
+        #expect(try RecommendationJSON.encode(recommendation).contains("\"secondsSinceMidnight\" : 3659"))
+    }
+
+    @Test("schedule evidence always includes missing days")
+    func scheduleEvidenceIncludesMissingDays() {
+        let parameter = ParameterRecommendation(
+            name: "Insulin Sensitivity",
+            unit: "mg/dL/U",
+            pumpValue: 50,
+            rawTunedValue: 50,
+            bounds: LoopGuardrails.sensitivity,
+            isGlucoseDenominated: true
+        )
+
+        #expect(ParameterScheduleRecommendation(
+            secondsSinceMidnight: 0,
+            parameter: parameter,
+            untuned: true,
+            daysMissing: 2
+        ).evidenceDescription("samples") == "no data, 2d missing")
+        #expect(ParameterScheduleRecommendation(
+            secondsSinceMidnight: 0,
+            parameter: parameter,
+            untuned: true,
+            evidenceCount: 9,
+            daysMissing: 3
+        ).evidenceDescription("samples") == "9 samples, unchanged, 3d missing")
+        #expect(ParameterScheduleRecommendation(
+            secondsSinceMidnight: 0,
+            parameter: parameter,
+            untuned: false,
+            evidenceCount: 10,
+            daysMissing: 1
+        ).evidenceDescription("samples") == "10 samples, 1d missing")
     }
 }
 

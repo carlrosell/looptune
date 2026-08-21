@@ -154,8 +154,9 @@ private enum ScheduleSlot {
         in entries: [ScheduleTuningOutput],
         timeZone: TimeZone
     ) -> Double {
+        guard let first = entries.first else { return 0 }
         let seconds = DailySchedule<Double>.secondsSinceMidnight(of: date, in: timeZone)
-        var result = entries[0].tunedValue
+        var result = first.tunedValue
         for entry in entries where entry.secondsSinceMidnight <= seconds {
             result = entry.tunedValue
         }

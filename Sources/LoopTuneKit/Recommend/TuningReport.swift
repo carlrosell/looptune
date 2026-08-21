@@ -113,16 +113,7 @@ public enum TuningReport {
             let rec = entry.parameter
             let pump = rec.formatted(rec.pumpValue(in: unit), in: unit)
             let tuned = rec.formatted(rec.recommendedValue(in: unit), in: unit)
-            let evidence: String
-            if entry.untuned && entry.evidenceCount == 0 {
-                evidence = "no data"
-            } else if entry.untuned {
-                evidence = "\(entry.evidenceCount) \(evidenceName), unchanged"
-            } else if entry.daysMissing > 0 {
-                evidence = "\(entry.evidenceCount) \(evidenceName), \(entry.daysMissing)d missing"
-            } else {
-                evidence = "\(entry.evidenceCount) \(evidenceName)"
-            }
+            let evidence = entry.evidenceDescription(evidenceName)
             lines.append(
                 pad(entry.timeString, 8)
                 + pad(pump, 14)

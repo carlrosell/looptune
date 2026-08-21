@@ -10,16 +10,16 @@ import Foundation
 public struct DiagnosticsBuilder: Sendable {
     public init() {}
 
-    public func build(inputs: TuningInputs, recommendation: TuningRecommendation) async -> RunDiagnostics {
+    public func build(inputs: TuningInputs, recommendation: TuningRecommendation) async throws -> RunDiagnostics {
         let profile = inputs.profile
         let timeZone = profile.timeZone
 
         // Recommended profile with every tuned time-of-day schedule applied.
-        let recommendedProfile = (try? profile.replacing(
+        let recommendedProfile = try profile.replacing(
             basalHourly: recommendation.basalHours.sorted { $0.hour < $1.hour }.map { $0.roundedRate() },
-            sensitivitySchedule: recommendation.recommendedSensitivityDailySchedule(),
-            carbRatioSchedule: recommendation.recommendedCarbRatioDailySchedule()
-        )) ?? profile
+            sensitivitySchedule: try recommendation.recommendedSensitivityDailySchedule(),
+            carbRatioSchedule: try recommendation.recommendedCarbRatioDailySchedule()
+        )
 
         // The two replays are independent CPU-bound work — run them as
         // concurrent child tasks.

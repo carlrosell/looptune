@@ -57,6 +57,56 @@ struct ScheduleHelperTests {
         let expected = (0.8 * 6 + 1.0 * 18) / 24
         #expect(abs(schedule.timeWeightedAverage() - expected) < 1e-9)
     }
+
+    @Test("schedule tuning output rejects invalid public schedules without trapping")
+    func tuningOutputValidation() throws {
+        let midnight = ScheduleTuningOutput(
+            secondsSinceMidnight: 0,
+            tunedValue: 10,
+            pumpValue: 10,
+            untuned: false
+        )
+        let late = ScheduleTuningOutput(
+            secondsSinceMidnight: 60,
+            tunedValue: 10,
+            pumpValue: 10,
+            untuned: false
+        )
+        let basal = Array(repeating: 1.0, count: 24)
+        let untuned = Array(repeating: false, count: 24)
+
+        #expect(throws: TuningOutput.InitializationError.emptySchedule(.sensitivity)) {
+            try TuningOutput(
+                tunedBasalHourly: basal,
+                pumpBasalHourly: basal,
+                untunedBasalHours: untuned,
+                sensitivitySchedule: [],
+                carbRatioSchedule: [midnight],
+                categoryCounts: [:],
+                totalSamples: 0
+            )
+        }
+        #expect(throws: TuningOutput.InitializationError.missingMidnightEntry(.carbRatio, firstOffset: 60)) {
+            try TuningOutput(
+                tunedBasalHourly: basal,
+                pumpBasalHourly: basal,
+                untunedBasalHours: untuned,
+                sensitivitySchedule: [midnight],
+                carbRatioSchedule: [late],
+                categoryCounts: [:],
+                totalSamples: 0
+            )
+        }
+        _ = try TuningOutput(
+            tunedBasalHourly: basal,
+            pumpBasalHourly: basal,
+            untunedBasalHours: untuned,
+            sensitivitySchedule: [midnight],
+            carbRatioSchedule: [midnight],
+            categoryCounts: [:],
+            totalSamples: 0
+        )
+    }
 }
 
 @Suite("Tuners")
@@ -291,6 +341,69 @@ struct TunerTests {
         #expect(result[1].tunedValue > 12)
         #expect(result.map(\.evidenceCount) == [1, 1])
         #expect(result.allSatisfy { !$0.untuned })
+
+        let resultWithPreMealResidual = CarbRatioTuner().tuneSchedule(
+            samples: [
+                csf(hour: 6, deviation: 1_000),
+                csf(hour: 13, deviation: 20),
+                csf(hour: 19, deviation: -20),
+            ],
+            carbs: [breakfast, dinner],
+            currentProfile: profile,
+            pumpSchedule: carbRatio,
+            tunedSensitivity: [ScheduleTuningOutput(
+                secondsSinceMidnight: 0,
+                tunedValue: 50,
+                pumpValue: 50,
+                untuned: false
+            )]
+        )
+        #expect(resultWithPreMealResidual == result)
+    }
+
+    @Test("empty tuned sensitivity is handled safely during carb-ratio tuning")
+    func carbRatioScheduleWithEmptySensitivity() throws {
+        let utc = TimeZone(identifier: "UTC")!
+        let midnight = Date(timeIntervalSince1970: 1_699_833_600)
+        let carbRatio = try DailySchedule(entries: [
+            .init(secondsSinceMidnight: 0, value: 10.0),
+            .init(secondsSinceMidnight: 12 * 3_600, value: 12.0),
+        ])
+        let profile = TherapyProfile(
+            basalSchedule: try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: 1.0)]),
+            sensitivitySchedule: try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: 50.0)]),
+            carbRatioSchedule: carbRatio,
+            targetSchedule: try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: 100.0...110.0)]),
+            timeZone: utc,
+            glucoseUnit: .milligramsPerDeciliter
+        )
+        let meal = CarbRecord(date: midnight.addingTimeInterval(8 * 3_600), grams: 40)
+        let sample = CategorizedSample(
+            sample: DeviationSample(
+                date: midnight.addingTimeInterval(9 * 3_600),
+                glucose: 150,
+                averageDelta: 0,
+                insulinEffect: -1,
+                deviation: 20,
+                insulinOnBoard: 2,
+                carbsOnBoard: 20
+            ),
+            category: .csf,
+            scheduledBasal: 1,
+            scheduledISF: 50,
+            mealCarbs: 20
+        )
+
+        let result = CarbRatioTuner().tuneSchedule(
+            samples: [sample],
+            carbs: [meal],
+            currentProfile: profile,
+            pumpSchedule: carbRatio,
+            tunedSensitivity: []
+        )
+
+        #expect(result.map(\.tunedValue) == [10, 12])
+        #expect(result.allSatisfy { $0.untuned })
     }
 }
 
