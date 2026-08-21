@@ -45,6 +45,6 @@ public struct SavedRun: Codable, Sendable, Identifiable, Equatable {
     }
 
     private func signed(_ value: Double) -> String {
-        String(format: "%+.0f%%", value)
+        abs(value) < 0.5 ? "0%" : String(format: "%+.0f%%", value)
     }
 }

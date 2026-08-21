@@ -5,6 +5,7 @@ import LoopTuneKit
 /// error; otherwise it shows the selected run in two tabs.
 struct DetailPane: View {
     let model: TuningViewModel
+    let displayUnit: GlucoseUnit
 
     private enum Tab: Hashable { case recommendations, diagnostics }
     @State private var tab: Tab = .recommendations
@@ -33,9 +34,13 @@ struct DetailPane: View {
 
                     switch tab {
                     case .recommendations:
-                        ResultsView(recommendation: run.recommendation)
+                        ResultsView(
+                            recommendation: run.recommendation,
+                            diagnostics: run.diagnostics,
+                            displayUnit: displayUnit
+                        )
                     case .diagnostics:
-                        DiagnosticsView(run: run)
+                        DiagnosticsView(run: run, displayUnit: displayUnit)
                     }
                 }
             } else if case .failed(let message) = model.phase {
@@ -58,16 +63,11 @@ struct DetailPane: View {
 /// The recommendation display.
 struct ResultsView: View {
     let recommendation: TuningRecommendation
-    @State private var displayUnit: GlucoseUnit
+    let diagnostics: RunDiagnostics
+    let displayUnit: GlucoseUnit
     /// Finder-style multi-selection: click, ⌘-click, ⇧-click — handy for
     /// ticking off rows already entered into Loop.
     @State private var basalSelection = Set<Int>()
-
-    init(recommendation: TuningRecommendation) {
-        self.recommendation = recommendation
-        // Default to the site's own unit.
-        _displayUnit = State(initialValue: recommendation.profileGlucoseUnit)
-    }
 
     var body: some View {
         ScrollView {
@@ -80,6 +80,11 @@ struct ResultsView: View {
                     ParameterCard(rec: recommendation.sensitivity, displayUnit: displayUnit)
                     ParameterCard(rec: recommendation.carbRatio, displayUnit: displayUnit)
                 }
+
+                HourlyGlucoseOutcomeView(
+                    diagnostics: diagnostics,
+                    displayUnit: displayUnit
+                )
 
                 BasalChartView(hours: recommendation.basalHours)
                 CoverageChartView(hours: recommendation.basalHours)
@@ -96,18 +101,8 @@ struct ResultsView: View {
     /// The takeaway, before any table: what changed, and by how much.
     private var verdictHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Suggested changes")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-                Picker("Units", selection: $displayUnit) {
-                    Text("mg/dL").tag(GlucoseUnit.milligramsPerDeciliter)
-                    Text("mmol/L").tag(GlucoseUnit.millimolesPerLiter)
-                }
-                .pickerStyle(.segmented)
-                .fixedSize()
-                .labelsHidden()
-            }
+            Text("Suggested changes")
+                .font(.title2.weight(.semibold))
             HStack(spacing: 8) {
                 MetricBadge(label: "Basal", percent: basalPercentChange)
                 MetricBadge(label: "ISF", percent: recommendation.sensitivity.percentChange)
@@ -233,7 +228,7 @@ struct MetricBadge: View {
                 .font(.caption2.weight(.bold))
             Text(label)
                 .font(.callout)
-            Text(String(format: "%+.0f%%", percent))
+            Text(formattedSignedPercent(percent))
                 .font(.callout.weight(.semibold))
                 .monospacedDigit()
                 .contentTransition(.numericText())
@@ -262,7 +257,7 @@ struct ParameterCard: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Text("was \(rec.formatted(rec.pumpValue(in: displayUnit), in: displayUnit))  ·  \(String(format: "%+.0f%%", rec.percentChange))")
+            Text("was \(rec.formatted(rec.pumpValue(in: displayUnit), in: displayUnit))  ·  \(formattedSignedPercent(rec.percentChange))")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if rec.guardrailStatus != .ok {
@@ -282,6 +277,11 @@ struct ParameterCard: View {
                 .strokeBorder(.quaternary, lineWidth: 1)
         )
     }
+}
+
+/// Format sub-half-percent movement as 0% rather than the confusing -0%.
+func formattedSignedPercent(_ value: Double) -> String {
+    abs(value) < 0.5 ? "0%" : String(format: "%+.0f%%", value)
 }
 
 struct DisclaimerBanner: View {

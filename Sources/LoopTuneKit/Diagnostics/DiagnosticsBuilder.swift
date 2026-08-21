@@ -36,6 +36,13 @@ public struct DiagnosticsBuilder: Sendable {
         let (before, after) = await (beforeTask, afterTask)
 
         let hourly = hourlyDeviations(before: before, after: after, timeZone: timeZone)
+        let glucoseInWindow = inputs.glucose.filter {
+            $0.date >= inputs.analysisStart && $0.date <= inputs.analysisEnd
+        }
+        let hourlyGlucose = Self.hourlyDistribution(
+            glucoseInWindow.map { (date: $0.date, value: $0.milligramsPerDeciliter) },
+            timeZone: timeZone
+        )
         let daySummaries = Self.daySummaries(inputs: inputs, timeZone: timeZone)
 
         return RunDiagnostics(
@@ -47,7 +54,8 @@ public struct DiagnosticsBuilder: Sendable {
             daySummaries: daySummaries,
             hourlyDeviation: hourly,
             meanAbsDeviationBefore: meanAbsolute(before),
-            meanAbsDeviationAfter: meanAbsolute(after)
+            meanAbsDeviationAfter: meanAbsolute(after),
+            hourlyGlucose: hourlyGlucose
         )
     }
 
@@ -123,6 +131,47 @@ public struct DiagnosticsBuilder: Sendable {
             let afterMean = afterBuckets.counts[hour] > 0 ? afterBuckets.sums[hour] / Double(afterBuckets.counts[hour]) : 0
             return HourDeviation(hour: hour, before: beforeMean, after: afterMean, sampleCount: beforeBuckets.counts[hour])
         }
+    }
+
+    /// Descriptive hourly percentiles use the conventional `(n − 1) × p`
+    /// interpolation. This is deliberately separate from oref0's tuning
+    /// percentile helper, whose different rank formula is retained for parity.
+    static func hourlyDistribution(
+        _ values: [(date: Date, value: Double)],
+        timeZone: TimeZone
+    ) -> [HourlyValueDistribution] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        var byHour = [[Double]](repeating: [], count: 24)
+
+        for item in values where item.value.isFinite {
+            let hour = calendar.component(.hour, from: item.date)
+            byHour[hour].append(item.value)
+        }
+
+        return (0..<24).compactMap { hour in
+            let sorted = byHour[hour].sorted()
+            guard !sorted.isEmpty else { return nil }
+            return HourlyValueDistribution(
+                hour: hour,
+                sampleCount: sorted.count,
+                p10: descriptivePercentile(sorted, 0.10),
+                p25: descriptivePercentile(sorted, 0.25),
+                median: descriptivePercentile(sorted, 0.50),
+                p75: descriptivePercentile(sorted, 0.75),
+                p90: descriptivePercentile(sorted, 0.90)
+            )
+        }
+    }
+
+    private static func descriptivePercentile(_ sorted: [Double], _ percentile: Double) -> Double {
+        guard let first = sorted.first else { return 0 }
+        guard sorted.count > 1 else { return first }
+        let rank = Double(sorted.count - 1) * percentile
+        let lower = Int(rank.rounded(.down))
+        let upper = min(sorted.count - 1, lower + 1)
+        let fraction = rank - Double(lower)
+        return sorted[lower] + (sorted[upper] - sorted[lower]) * fraction
     }
 
     static func daySummaries(inputs: TuningInputs, timeZone: TimeZone) -> [DaySummary] {

@@ -7,6 +7,7 @@ import LoopTuneKit
 /// would change the historical replay.
 struct DiagnosticsView: View {
     let run: SavedRun
+    let displayUnit: GlucoseUnit
     @Environment(\.colorScheme) private var colorScheme
     @State private var daySelection = Set<String>()
     @State private var selectedHour: Int?
@@ -43,16 +44,16 @@ struct DiagnosticsView: View {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 statBlock(
                     title: "Recorded",
-                    value: String(format: "%.1f", diagnostics.meanAbsDeviationBefore),
-                    unit: "mg/dL / 5 min",
+                    value: deviationNumber(diagnostics.meanAbsDeviationBefore),
+                    unit: "\(displayUnit.shortLabel) / 5 min",
                     tint: ChartPalette.current(colorScheme)
                 )
                 Image(systemName: "arrow.right")
                     .foregroundStyle(.secondary)
                 statBlock(
                     title: "Recommended",
-                    value: String(format: "%.1f", diagnostics.meanAbsDeviationAfter),
-                    unit: "mg/dL / 5 min",
+                    value: deviationNumber(diagnostics.meanAbsDeviationAfter),
+                    unit: "\(displayUnit.shortLabel) / 5 min",
                     tint: ChartPalette.tuned(colorScheme)
                 )
                 Spacer()
@@ -118,12 +119,10 @@ struct DiagnosticsView: View {
         let direction = hour.before > 0 ? "running high" : "running low"
         let time = String(format: "%02d:00", hour.hour)
         if hour.improves {
-            return "• \(time): \(direction) (avg \(signed(hour.before)) mg/dL per reading). In the historical replay, the recommendation brings this to \(signed(hour.after))."
+            return "• \(time): \(direction) (avg \(deviationNumber(hour.before, signed: true)) \(displayUnit.shortLabel) per reading). In the historical replay, the recommendation brings this to \(deviationNumber(hour.after, signed: true)) \(displayUnit.shortLabel)."
         }
-        return "• \(time): \(direction) (avg \(signed(hour.before)) mg/dL per reading)."
+        return "• \(time): \(direction) (avg \(deviationNumber(hour.before, signed: true)) \(displayUnit.shortLabel) per reading)."
     }
-
-    private func signed(_ value: Double) -> String { String(format: "%+.1f", value) }
 
     // MARK: - Deviation chart
 
@@ -138,7 +137,7 @@ struct DiagnosticsView: View {
                 ForEach(diagnostics.hourlyDeviation) { hour in
                     BarMark(
                         x: .value("Hour", hour.hour),
-                        y: .value("Deviation", hour.before),
+                        y: .value("Deviation", displayUnit.fromMilligramsPerDeciliter(hour.before)),
                         width: .fixed(6)
                     )
                     .position(by: .value("Series", "Recorded"))
@@ -147,7 +146,7 @@ struct DiagnosticsView: View {
                 ForEach(diagnostics.hourlyDeviation) { hour in
                     BarMark(
                         x: .value("Hour", hour.hour),
-                        y: .value("Deviation", hour.after),
+                        y: .value("Deviation", displayUnit.fromMilligramsPerDeciliter(hour.after)),
                         width: .fixed(6)
                     )
                     .position(by: .value("Series", "Recommended"))
@@ -169,8 +168,16 @@ struct DiagnosticsView: View {
                                 if hovered.sampleCount == 0 {
                                     TooltipRow(color: nil, label: "No data", value: "")
                                 } else {
-                                    TooltipRow(color: ChartPalette.current(colorScheme), label: "Recorded", value: String(format: "%+.1f mg/dL", hovered.before))
-                                    TooltipRow(color: ChartPalette.tuned(colorScheme), label: "Recommended", value: String(format: "%+.1f mg/dL", hovered.after))
+                                    TooltipRow(
+                                        color: ChartPalette.current(colorScheme),
+                                        label: "Recorded",
+                                        value: "\(deviationNumber(hovered.before, signed: true)) \(displayUnit.shortLabel)"
+                                    )
+                                    TooltipRow(
+                                        color: ChartPalette.tuned(colorScheme),
+                                        label: "Recommended",
+                                        value: "\(deviationNumber(hovered.after, signed: true)) \(displayUnit.shortLabel)"
+                                    )
                                     TooltipRow(color: nil, label: "Samples", value: "\(hovered.sampleCount)")
                                 }
                             }
@@ -192,7 +199,7 @@ struct DiagnosticsView: View {
                     }
                 }
             }
-            .chartYAxisLabel("mg/dL", position: .trailing)
+            .chartYAxisLabel(displayUnit.shortLabel, position: .trailing)
             .frame(height: 200)
         }
     }
@@ -201,7 +208,7 @@ struct DiagnosticsView: View {
 
     private var deviationTable: some View {
         TableCard(
-            title: "Deviation by hour (mg/dL)",
+            title: "Deviation by hour (\(displayUnit.shortLabel))",
             subtitle: "Recorded = settings active at the time · Recommended = suggested settings replayed over the same history."
         ) {
             Table(diagnostics.hourlyDeviation) {
@@ -211,14 +218,14 @@ struct DiagnosticsView: View {
                 .width(min: 48, ideal: 56)
 
                 TableColumn("Recorded") { hour in
-                    Text(signed(hour.before))
+                    Text(deviationNumber(hour.before, signed: true))
                         .foregroundStyle(hour.isProblem ? AnyShapeStyle(ChartPalette.current(colorScheme)) : AnyShapeStyle(.primary))
                         .numericCell()
                 }
                 .width(min: 64, ideal: 76)
 
                 TableColumn("Recommended") { hour in
-                    Text(signed(hour.after)).numericCell()
+                    Text(deviationNumber(hour.after, signed: true)).numericCell()
                 }
                 .width(min: 84, ideal: 96)
 
@@ -256,8 +263,8 @@ struct DiagnosticsView: View {
                 }
                 .width(min: 48, ideal: 56)
 
-                TableColumn("Mean mg/dL") { day in
-                    Text(String(format: "%.0f", day.meanGlucose)).numericCell()
+                TableColumn("Mean \(displayUnit.shortLabel)") { day in
+                    Text(glucoseNumber(day.meanGlucose)).numericCell()
                 }
                 .width(min: 48, ideal: 56)
 
@@ -284,5 +291,26 @@ struct DiagnosticsView: View {
             }
             .resultsTable(rowCount: diagnostics.daySummaries.count)
         }
+    }
+
+    private func deviationNumber(_ milligramsPerDeciliter: Double, signed: Bool = false) -> String {
+        let value = displayUnit.fromMilligramsPerDeciliter(milligramsPerDeciliter)
+        switch (displayUnit, signed) {
+        case (.milligramsPerDeciliter, false):
+            return String(format: "%.1f", value)
+        case (.milligramsPerDeciliter, true):
+            return String(format: "%+.1f", value)
+        case (.millimolesPerLiter, false):
+            return String(format: "%.2f", value)
+        case (.millimolesPerLiter, true):
+            return String(format: "%+.2f", value)
+        }
+    }
+
+    private func glucoseNumber(_ milligramsPerDeciliter: Double) -> String {
+        let value = displayUnit.fromMilligramsPerDeciliter(milligramsPerDeciliter)
+        return displayUnit == .millimolesPerLiter
+            ? String(format: "%.1f", value)
+            : String(format: "%.0f", value)
     }
 }

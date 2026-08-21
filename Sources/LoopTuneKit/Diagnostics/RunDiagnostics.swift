@@ -61,6 +61,38 @@ public struct HourDeviation: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+/// Percentile summary for one local clock hour. Values are stored canonically
+/// in mg/dL.
+public struct HourlyValueDistribution: Codable, Sendable, Equatable, Identifiable {
+    public var hour: Int
+    public var sampleCount: Int
+    public var p10: Double
+    public var p25: Double
+    public var median: Double
+    public var p75: Double
+    public var p90: Double
+
+    public var id: Int { hour }
+
+    public init(
+        hour: Int,
+        sampleCount: Int,
+        p10: Double,
+        p25: Double,
+        median: Double,
+        p75: Double,
+        p90: Double
+    ) {
+        self.hour = hour
+        self.sampleCount = sampleCount
+        self.p10 = p10
+        self.p25 = p25
+        self.median = median
+        self.p75 = p75
+        self.p90 = p90
+    }
+}
+
 /// Everything shown on a run's detail view: what was ingested, what the
 /// algorithm thinks is off, and how the recommendation would change it.
 public struct RunDiagnostics: Codable, Sendable, Equatable {
@@ -72,6 +104,8 @@ public struct RunDiagnostics: Codable, Sendable, Equatable {
 
     public var daySummaries: [DaySummary]
     public var hourlyDeviation: [HourDeviation]
+    /// Actual CGM values grouped by local clock hour.
+    public var hourlyGlucose: [HourlyValueDistribution]?
 
     /// Mean absolute deviation across the window (mg/dL) — the headline quality
     /// number. Lower is a closer fit to this same historical replay; it is an
@@ -87,7 +121,18 @@ public struct RunDiagnostics: Codable, Sendable, Equatable {
     /// Hours flagged as running off under the settings recorded at the time.
     public var problemHours: [HourDeviation] { hourlyDeviation.filter(\.isProblem) }
 
-    public init(glucoseCount: Int, doseCount: Int, carbCount: Int, windowStart: Date, windowEnd: Date, daySummaries: [DaySummary], hourlyDeviation: [HourDeviation], meanAbsDeviationBefore: Double, meanAbsDeviationAfter: Double) {
+    public init(
+        glucoseCount: Int,
+        doseCount: Int,
+        carbCount: Int,
+        windowStart: Date,
+        windowEnd: Date,
+        daySummaries: [DaySummary],
+        hourlyDeviation: [HourDeviation],
+        meanAbsDeviationBefore: Double,
+        meanAbsDeviationAfter: Double,
+        hourlyGlucose: [HourlyValueDistribution]? = nil
+    ) {
         self.glucoseCount = glucoseCount
         self.doseCount = doseCount
         self.carbCount = carbCount
@@ -97,5 +142,6 @@ public struct RunDiagnostics: Codable, Sendable, Equatable {
         self.hourlyDeviation = hourlyDeviation
         self.meanAbsDeviationBefore = meanAbsDeviationBefore
         self.meanAbsDeviationAfter = meanAbsDeviationAfter
+        self.hourlyGlucose = hourlyGlucose
     }
 }

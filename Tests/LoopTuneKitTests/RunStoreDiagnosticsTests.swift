@@ -42,6 +42,41 @@ struct RecommendationCodableTests {
         #expect(decoded.excludedOverrideSamples == 0)
         #expect(decoded.totalSamples == rec.totalSamples)
     }
+
+    @Test("diagnostics saved before hourly distributions decode compatibly")
+    func legacyDiagnosticsDecode() throws {
+        let distribution = HourlyValueDistribution(
+            hour: 0,
+            sampleCount: 10,
+            p10: 90,
+            p25: 100,
+            median: 110,
+            p75: 120,
+            p90: 130
+        )
+        let diagnostics = RunDiagnostics(
+            glucoseCount: 10,
+            doseCount: 0,
+            carbCount: 0,
+            windowStart: Date(timeIntervalSince1970: 0),
+            windowEnd: Date(timeIntervalSince1970: 3_600),
+            daySummaries: [],
+            hourlyDeviation: [],
+            meanAbsDeviationBefore: 4,
+            meanAbsDeviationAfter: 3,
+            hourlyGlucose: [distribution]
+        )
+        let encoded = try JSONEncoder().encode(diagnostics)
+        var object = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object.removeValue(forKey: "hourlyGlucose")
+
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(RunDiagnostics.self, from: legacyData)
+        #expect(decoded.hourlyGlucose == nil)
+        #expect(decoded.meanAbsDeviationBefore == 4)
+    }
 }
 
 @Suite("RunStore")
@@ -193,6 +228,38 @@ struct DiagnosticsBuilderTests {
         #expect(diag.glucoseCount == 288)
         #expect(diag.meanAbsDeviationBefore >= 0)
         #expect(diag.meanAbsDeviationAfter >= 0)
+        #expect(diag.hourlyGlucose?.count == 24)
+        #expect(diag.hourlyGlucose?.allSatisfy {
+            $0.p10 <= $0.p25
+                && $0.p25 <= $0.median
+                && $0.median <= $0.p75
+                && $0.p75 <= $0.p90
+        } == true)
+    }
+
+    @Test("hourly charts use conventional interpolated percentiles")
+    func hourlyDistributionPercentiles() throws {
+        let midnight = Date(timeIntervalSince1970: 0)
+        let values = [100.0, 110, 120, 130, 140].enumerated().map { index, value in
+            (
+                date: midnight.addingTimeInterval(Double(index) * 60),
+                value: value
+            )
+        }
+        let row = try #require(
+            DiagnosticsBuilder.hourlyDistribution(
+                values,
+                timeZone: TimeZone(secondsFromGMT: 0)!
+            ).first
+        )
+
+        #expect(row.hour == 0)
+        #expect(row.sampleCount == 5)
+        #expect(row.p10 == 104)
+        #expect(row.p25 == 110)
+        #expect(row.median == 120)
+        #expect(row.p75 == 130)
+        #expect(row.p90 == 136)
     }
 
     @Test("diagnostics exclude insulin-needs override intervals")

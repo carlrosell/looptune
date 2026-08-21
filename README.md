@@ -91,11 +91,12 @@ swift run LoopTuneApp
 ```
 
 Enter your Nightscout URL, choose a window and insulin type, and click Analyze.
-The results view shows ISF/CR cards, a pump-vs-tuned basal chart, a per-hour
-data-coverage chart, and the full basal table with days-missing confidence,
-plus an mg/dL ↔ mmol/L toggle (defaults to your site's unit). Your access token
-is stored per host and port in the login Keychain; paths, fragments, and pasted
-query tokens are stripped before the URL is remembered.
+The results view shows an hourly CGM percentile profile, ISF/CR cards, a
+pump-vs-tuned basal chart, per-hour data coverage, and the full basal table with
+days-missing confidence, plus an app-wide mg/dL ↔ mmol/L preference in the
+window toolbar (defaults to your site's unit until explicitly changed). Your
+access token is stored per host and port in the login Keychain; paths,
+fragments, and pasted query tokens are stripped before the URL is remembered.
 
 ## Development
 
