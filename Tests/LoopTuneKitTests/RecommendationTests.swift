@@ -107,6 +107,8 @@ struct GuardrailTests {
         let json = try RecommendationJSON.encode(rec)
         #expect(json.contains("recommendedRounded"))
         #expect(json.contains("basalIncrement"))
+        #expect(json.contains("sensitivitySchedule"))
+        #expect(json.contains("carbRatioSchedule"))
         #expect(json.contains("NOT medical advice"))
         // 24 × 1.00 rounded.
         #expect(abs(rec.roundedDailyBasal() - 24.0) < 1e-9)
@@ -133,6 +135,34 @@ struct GuardrailTests {
         #expect(cr.unitLabel(in: .millimolesPerLiter) == "g/U")
         // Percent change is unit-invariant.
         #expect(abs(isf.percentChange - (-10)) < 1e-9)
+    }
+
+    @Test("time-of-day summaries match the guardrail-clamped schedule")
+    func scheduleSummaryUsesClampedEntries() throws {
+        let output = TuningOutput(
+            tunedBasalHourly: Array(repeating: 1.0, count: 24),
+            pumpBasalHourly: Array(repeating: 1.0, count: 24),
+            untunedBasalHours: Array(repeating: false, count: 24),
+            sensitivitySchedule: [
+                ScheduleTuningOutput(secondsSinceMidnight: 0, tunedValue: 600, pumpValue: 50, untuned: false, evidenceCount: 12),
+                ScheduleTuningOutput(secondsSinceMidnight: 12 * 3600, tunedValue: 600, pumpValue: 60, untuned: false, evidenceCount: 14),
+            ],
+            carbRatioSchedule: [
+                ScheduleTuningOutput(secondsSinceMidnight: 0, tunedValue: 10, pumpValue: 10, untuned: false),
+            ],
+            categoryCounts: [.isf: 26],
+            totalSamples: 26
+        )
+        let recommendation = TuningRecommendation(from: output, daysAnalyzed: 1)
+
+        #expect(recommendation.sensitivity.rawTunedValue == 600)
+        #expect(recommendation.sensitivity.recommendedValue == 500)
+        #expect(recommendation.sensitivity.guardrailStatus == .atLimit)
+        #expect(recommendation.sensitivitySchedule.allSatisfy {
+            $0.parameter.recommendedValue == 500 && $0.parameter.guardrailStatus == .atLimit
+        })
+        #expect(TuningReport.render(recommendation).contains("Insulin Sensitivity schedule"))
+        #expect(try RecommendationJSON.encode(recommendation).contains("\"time\" : \"12:00\""))
     }
 }
 

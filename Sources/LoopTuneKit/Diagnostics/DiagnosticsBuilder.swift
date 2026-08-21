@@ -14,11 +14,11 @@ public struct DiagnosticsBuilder: Sendable {
         let profile = inputs.profile
         let timeZone = profile.timeZone
 
-        // Recommended profile: tuned basal schedule + tuned single ISF/CR.
+        // Recommended profile with every tuned time-of-day schedule applied.
         let recommendedProfile = (try? profile.replacing(
             basalHourly: recommendation.basalHours.sorted { $0.hour < $1.hour }.map { $0.roundedRate() },
-            isf: recommendation.sensitivity.recommendedValue,
-            carbRatio: recommendation.carbRatio.recommendedValue
+            sensitivitySchedule: recommendation.recommendedSensitivityDailySchedule(),
+            carbRatioSchedule: recommendation.recommendedCarbRatioDailySchedule()
         )) ?? profile
 
         // The two replays are independent CPU-bound work — run them as

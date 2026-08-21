@@ -9,8 +9,14 @@ struct RecommendationCodableTests {
             tunedBasalHourly: Array(repeating: 1.1, count: 24),
             pumpBasalHourly: Array(repeating: 1.0, count: 24),
             untunedBasalHours: Array(repeating: false, count: 24),
-            tunedISF: 48, pumpISF: 50,
-            tunedCarbRatio: 9.5, pumpCarbRatio: 10,
+            sensitivitySchedule: [
+                ScheduleTuningOutput(secondsSinceMidnight: 0, tunedValue: 48, pumpValue: 50, untuned: false, evidenceCount: 20),
+                ScheduleTuningOutput(secondsSinceMidnight: 12 * 3600, tunedValue: 58, pumpValue: 60, untuned: false, evidenceCount: 18),
+            ],
+            carbRatioSchedule: [
+                ScheduleTuningOutput(secondsSinceMidnight: 0, tunedValue: 9.5, pumpValue: 10, untuned: false, evidenceCount: 3),
+                ScheduleTuningOutput(secondsSinceMidnight: 12 * 3600, tunedValue: 11, pumpValue: 12, untuned: false, evidenceCount: 4),
+            ],
             categoryCounts: [.basal: 100, .isf: 20, .csf: 40, .uam: 0],
             totalSamples: 160,
             basalSampleCountByHour: Array(repeating: 5, count: 24)
@@ -27,6 +33,8 @@ struct RecommendationCodableTests {
         #expect(decoded.categoryCounts[.basal] == 100)
         #expect(decoded.profileGlucoseUnit == .millimolesPerLiter)
         #expect(decoded.daysTuned == 6)
+        #expect(decoded.sensitivitySchedule.count == 2)
+        #expect(decoded.carbRatioSchedule[1].startMinutes == 12 * 60)
     }
 
     @Test("recommendations saved before override accounting decode compatibly")
@@ -37,10 +45,15 @@ struct RecommendationCodableTests {
             JSONSerialization.jsonObject(with: encoded) as? [String: Any]
         )
         object.removeValue(forKey: "excludedOverrideSamples")
+        object.removeValue(forKey: "sensitivitySchedule")
+        object.removeValue(forKey: "carbRatioSchedule")
         let legacyData = try JSONSerialization.data(withJSONObject: object)
         let decoded = try JSONDecoder().decode(TuningRecommendation.self, from: legacyData)
         #expect(decoded.excludedOverrideSamples == 0)
         #expect(decoded.totalSamples == rec.totalSamples)
+        #expect(decoded.sensitivitySchedule.count == 1)
+        #expect(decoded.sensitivitySchedule[0].parameter == decoded.sensitivity)
+        #expect(decoded.carbRatioSchedule.count == 1)
     }
 
     @Test("diagnostics saved before hourly distributions decode compatibly")

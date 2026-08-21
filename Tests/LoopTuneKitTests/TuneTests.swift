@@ -122,6 +122,54 @@ struct TunerTests {
         #expect(tuner.tune(samples: samples, currentISF: 50, pumpISF: 50) == 50)
     }
 
+    @Test("ISF schedule tunes configured time blocks independently")
+    func isfScheduleByTimeOfDay() throws {
+        let utc = TimeZone(identifier: "UTC")!
+        let midnight = Date(timeIntervalSince1970: 1_699_833_600)
+        let schedule = try DailySchedule(entries: [
+            .init(secondsSinceMidnight: 0, value: 50.0),
+            .init(secondsSinceMidnight: 8 * 3600, value: 60.0),
+            .init(secondsSinceMidnight: 16 * 3600, value: 70.0),
+        ])
+
+        func entries(hour: Int, count: Int, deviation: Double, isf: Double) -> [CategorizedSample] {
+            (0..<count).map { index in
+                let datum = DeviationSample(
+                    date: midnight.addingTimeInterval(Double(hour * 3600 + index * 300)),
+                    glucose: 150,
+                    averageDelta: 0,
+                    insulinEffect: -4,
+                    deviation: deviation,
+                    insulinOnBoard: 1,
+                    carbsOnBoard: 0
+                )
+                return CategorizedSample(
+                    sample: datum,
+                    category: .isf,
+                    scheduledBasal: 1,
+                    scheduledISF: isf
+                )
+            }
+        }
+
+        let samples = entries(hour: 1, count: 10, deviation: 1, isf: 50)
+            + entries(hour: 10, count: 10, deviation: -1, isf: 60)
+            + entries(hour: 18, count: 9, deviation: 1, isf: 70)
+        let result = SensitivityTuner().tuneSchedule(
+            samples: samples,
+            currentSchedule: schedule,
+            pumpSchedule: schedule,
+            timeZone: utc
+        )
+
+        #expect(result.map(\.secondsSinceMidnight) == [0, 8 * 3600, 16 * 3600])
+        #expect(result[0].tunedValue < 50)
+        #expect(result[1].tunedValue > 60)
+        #expect(result[2].tunedValue == 70)
+        #expect(result.map(\.evidenceCount) == [10, 10, 9])
+        #expect(result.map(\.untuned) == [false, false, true])
+    }
+
     @Test("basal tuner raises prior hours when deviations are positive")
     func basalRaisesPriorHours() {
         // All deviations at hour 12 (UTC), positive → basal at hours 9,10,11 rise.
@@ -184,6 +232,65 @@ struct TunerTests {
     func crUnchangedWithoutMeals() {
         let tuner = CarbRatioTuner()
         #expect(tuner.tune(samples: [], totalMealCarbs: 0, replayISF: 50, targetISF: 50, currentCR: 10, pumpCR: 10) == 10)
+    }
+
+    @Test("carb-ratio residuals stay with the time block active at the meal")
+    func carbRatioScheduleByMealTime() throws {
+        let utc = TimeZone(identifier: "UTC")!
+        let midnight = Date(timeIntervalSince1970: 1_699_833_600)
+        let carbRatio = try DailySchedule(entries: [
+            .init(secondsSinceMidnight: 0, value: 10.0),
+            .init(secondsSinceMidnight: 12 * 3600, value: 12.0),
+        ])
+        let profile = TherapyProfile(
+            basalSchedule: try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: 1.0)]),
+            sensitivitySchedule: try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: 50.0)]),
+            carbRatioSchedule: carbRatio,
+            targetSchedule: try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: 100.0...110.0)]),
+            timeZone: utc,
+            glucoseUnit: .milligramsPerDeciliter
+        )
+        let breakfast = CarbRecord(date: midnight.addingTimeInterval(8 * 3600), grams: 40)
+        let dinner = CarbRecord(date: midnight.addingTimeInterval(18 * 3600), grams: 60)
+
+        func csf(hour: Int, deviation: Double) -> CategorizedSample {
+            let datum = DeviationSample(
+                date: midnight.addingTimeInterval(Double(hour * 3600)),
+                glucose: 150,
+                averageDelta: 0,
+                insulinEffect: -1,
+                deviation: deviation,
+                insulinOnBoard: 2,
+                carbsOnBoard: 20
+            )
+            return CategorizedSample(
+                sample: datum,
+                category: .csf,
+                scheduledBasal: 1,
+                scheduledISF: 50,
+                mealCarbs: 20
+            )
+        }
+
+        let result = CarbRatioTuner().tuneSchedule(
+            // Breakfast is still absorbing after the noon CR boundary.
+            samples: [csf(hour: 13, deviation: 20), csf(hour: 19, deviation: -20)],
+            carbs: [breakfast, dinner],
+            currentProfile: profile,
+            pumpSchedule: carbRatio,
+            tunedSensitivity: [ScheduleTuningOutput(
+                secondsSinceMidnight: 0,
+                tunedValue: 50,
+                pumpValue: 50,
+                untuned: false
+            )]
+        )
+
+        #expect(result.map(\.secondsSinceMidnight) == [0, 12 * 3600])
+        #expect(result[0].tunedValue < 10)
+        #expect(result[1].tunedValue > 12)
+        #expect(result.map(\.evidenceCount) == [1, 1])
+        #expect(result.allSatisfy { !$0.untuned })
     }
 }
 
