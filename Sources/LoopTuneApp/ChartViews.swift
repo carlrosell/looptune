@@ -217,6 +217,13 @@ struct HourlyGlucoseChartView: View {
                     )
                     .interpolationMethod(.linear)
                     .foregroundStyle(by: .value("Series", "10–90%"))
+                    RectangleMark(
+                        x: .value("Hour", row.hour),
+                        yStart: .value("10th percentile", row.p10),
+                        yEnd: .value("90th percentile", row.p90),
+                        width: .fixed(4)
+                    )
+                    .foregroundStyle(by: .value("Series", "10–90%"))
                 }
                 ForEach(rows) { row in
                     AreaMark(
@@ -226,6 +233,13 @@ struct HourlyGlucoseChartView: View {
                         series: .value("Segment", "25–75%-\(row.segment)")
                     )
                     .interpolationMethod(.linear)
+                    .foregroundStyle(by: .value("Series", "25–75%"))
+                    RectangleMark(
+                        x: .value("Hour", row.hour),
+                        yStart: .value("25th percentile", row.p25),
+                        yEnd: .value("75th percentile", row.p75),
+                        width: .fixed(4)
+                    )
                     .foregroundStyle(by: .value("Series", "25–75%"))
                 }
                 ForEach(rows) { row in
@@ -237,6 +251,11 @@ struct HourlyGlucoseChartView: View {
                     .interpolationMethod(.linear)
                     .foregroundStyle(by: .value("Series", "Median"))
                     .lineStyle(StrokeStyle(lineWidth: 2))
+                    PointMark(
+                        x: .value("Hour", row.hour),
+                        y: .value("Median glucose", row.median)
+                    )
+                    .foregroundStyle(by: .value("Series", "Median"))
                 }
                 RuleMark(y: .value("Upper reference", referenceHigh))
                     .foregroundStyle(.orange.opacity(0.75))

@@ -59,12 +59,25 @@ struct ChartRenderingTests {
         let sparseBitmap = try #require(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
         let emptyImage = try render([])
         let emptyBitmap = try #require(emptyImage.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
-        // At the fixed test width, these stripes cross the plot near 06:00 and 02:30.
+        // At the fixed test width, this stripe crosses the omitted span near 06:00.
         let gapX = sparseBitmap.pixelsWide / 4
         #expect(try changedPixelCount(sparseBitmap, emptyBitmap, xRange: gapX..<(gapX + 4)) == 0)
+        let hour2Range = sparseBitmap.pixelsWide / 12..<sparseBitmap.pixelsWide / 9
+        #expect(try changedPixelCount(
+            sparseBitmap,
+            emptyBitmap,
+            xRange: hour2Range
+        ) > 0)
+        let hour10Range = sparseBitmap.pixelsWide * 3 / 8..<sparseBitmap.pixelsWide * 5 / 12
+        #expect(try changedPixelCount(
+            sparseBitmap,
+            emptyBitmap,
+            xRange: hour10Range
+        ) > 0)
 
         let adjacentImage = try render([distribution(hour: 2), distribution(hour: 3)])
         let adjacentBitmap = try #require(adjacentImage.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+        // This stripe crosses the plot between the adjacent observations.
         let adjacentX = adjacentBitmap.pixelsWide / 9
         #expect(try changedPixelCount(
             adjacentBitmap,
