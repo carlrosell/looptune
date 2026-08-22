@@ -63,17 +63,23 @@ struct ChartRenderingTests {
         let gapX = sparseBitmap.pixelsWide / 4
         #expect(try changedPixelCount(sparseBitmap, emptyBitmap, xRange: gapX..<(gapX + 4)) == 0)
         let hour2Range = sparseBitmap.pixelsWide / 12..<sparseBitmap.pixelsWide / 9
+        let whiskerYRange = sparseBitmap.pixelsHigh / 4..<sparseBitmap.pixelsHigh * 2 / 5
         #expect(try changedPixelCount(
             sparseBitmap,
             emptyBitmap,
-            xRange: hour2Range
+            xRange: hour2Range,
+            yRange: whiskerYRange
         ) > 0)
-        let hour10Range = sparseBitmap.pixelsWide * 3 / 8..<sparseBitmap.pixelsWide * 5 / 12
+        let hour10Range = sparseBitmap.pixelsWide * 2 / 5..<sparseBitmap.pixelsWide * 9 / 20
         #expect(try changedPixelCount(
             sparseBitmap,
             emptyBitmap,
-            xRange: hour10Range
+            xRange: hour10Range,
+            yRange: whiskerYRange
         ) > 0)
+        let medianYRange = sparseBitmap.pixelsHigh * 2 / 5..<sparseBitmap.pixelsHigh * 3 / 5
+        #expect(darkPixelCount(sparseBitmap, xRange: hour2Range, yRange: medianYRange) > 0)
+        #expect(darkPixelCount(sparseBitmap, xRange: hour10Range, yRange: medianYRange) > 0)
 
         let adjacentImage = try render([distribution(hour: 2), distribution(hour: 3)])
         let adjacentBitmap = try #require(adjacentImage.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
@@ -105,6 +111,7 @@ struct ChartRenderingTests {
         )
         .padding(24)
         .frame(width: 1_100)
+        .environment(\.colorScheme, .light)
         .background(Color(nsColor: .windowBackgroundColor))
         let renderer = ImageRenderer(content: content)
         renderer.scale = 2
@@ -114,7 +121,8 @@ struct ChartRenderingTests {
     private func changedPixelCount(
         _ first: NSBitmapImageRep,
         _ second: NSBitmapImageRep,
-        xRange: Range<Int>
+        xRange: Range<Int>,
+        yRange: Range<Int>? = nil
     ) throws -> Int {
         try #require(first.pixelsWide == second.pixelsWide)
         try #require(first.pixelsHigh == second.pixelsHigh)
@@ -125,7 +133,7 @@ struct ChartRenderingTests {
         try #require(bytesPerPixel > 0)
 
         var changedPixels = 0
-        for y in 0..<first.pixelsHigh {
+        for y in yRange ?? 0..<first.pixelsHigh {
             for x in xRange {
                 let firstOffset = y * first.bytesPerRow + x * bytesPerPixel
                 let secondOffset = y * second.bytesPerRow + x * bytesPerPixel
@@ -137,5 +145,26 @@ struct ChartRenderingTests {
             }
         }
         return changedPixels
+    }
+
+    private func darkPixelCount(
+        _ image: NSBitmapImageRep,
+        xRange: Range<Int>,
+        yRange: Range<Int>
+    ) -> Int {
+        var darkPixels = 0
+        for y in yRange {
+            for x in xRange {
+                guard let color = image.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else {
+                    continue
+                }
+                if color.redComponent < 0.25,
+                   color.greenComponent < 0.25,
+                   color.blueComponent < 0.25 {
+                    darkPixels += 1
+                }
+            }
+        }
+        return darkPixels
     }
 }

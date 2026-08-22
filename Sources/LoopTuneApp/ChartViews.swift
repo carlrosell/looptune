@@ -274,8 +274,8 @@ struct HourlyGlucoseChartView: View {
                         ) {
                             ChartTooltip(title: hourRange(hovered.hour)) {
                                 TooltipRow(color: .primary, label: "Median", value: glucoseValue(hovered.median))
-                                TooltipRow(color: nil, label: "25–75%", value: glucoseRange(hovered.p25, hovered.p75))
-                                TooltipRow(color: nil, label: "10–90%", value: glucoseRange(hovered.p10, hovered.p90))
+                                TooltipRow(color: nil, label: "25–75%", value: "\(glucoseRange(hovered.p25, hovered.p75)) \(displayUnit.shortLabel)")
+                                TooltipRow(color: nil, label: "10–90%", value: "\(glucoseRange(hovered.p10, hovered.p90)) \(displayUnit.shortLabel)")
                                 TooltipRow(color: nil, label: "Readings", value: "\(hovered.sampleCount)")
                             }
                         }
