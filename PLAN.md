@@ -422,7 +422,8 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 ## 8. Status log (append-only)
 
 - **2026-07-25** — Whole-application adversarial review completed. Every
-  first-party file was read and tracked in `CODE_REVIEW.html`. Fixed 15 findings
+  first-party file was read and tracked in
+  `docs/code-reviews/2026-07-25-whole-application-review.html`. Fixed 15 findings
   spanning override attribution, exact profile-change timing, historical
   insulin models, minimum evidence, basal cap enforcement, irregular CGM
   normalization, strict Nightscout/profile validation, TLS and stale-token

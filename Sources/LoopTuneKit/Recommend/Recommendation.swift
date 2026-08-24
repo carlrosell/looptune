@@ -103,7 +103,8 @@ public struct BasalHourRecommendation: Sendable, Equatable, Identifiable {
     /// Day windows in which this hour received no tuning data (confidence:
     /// higher = less real data behind the recommendation for this hour).
     public var daysMissing: Int
-    /// Basal-categorized samples observed at this hour across the window.
+    /// Basal-categorized samples that informed this scheduled basal hour across
+    /// the window. A deviation observed at hour h informs basal hours h−3…h−1.
     public var sampleCount: Int
 
     public init(hour: Int, pumpRate: Double, rawTunedRate: Double, untuned: Bool, daysMissing: Int = 0, sampleCount: Int = 0) {

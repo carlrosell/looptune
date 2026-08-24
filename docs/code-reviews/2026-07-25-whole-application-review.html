@@ -202,7 +202,7 @@
     <section id="status">
       <h2>Current status</h2>
       <div class="grid">
-        <div class="metric"><strong id="total-count">81</strong><span>auditable files</span></div>
+        <div class="metric"><strong id="total-count">82</strong><span>auditable files</span></div>
         <div class="metric"><strong id="reviewed-count">0</strong><span>file reviews complete</span></div>
         <div class="metric"><strong id="open-count">0</strong><span>open findings</span></div>
         <div class="metric"><strong id="test-count">0 / 0</strong><span>verification checks passed</span></div>
@@ -226,7 +226,11 @@
       <ul>
         <li>All 78 files tracked by Git at the baseline, totaling 9,518 lines.</li>
         <li><code>Package.resolved</code>, an ignored but locally present dependency lockfile used by the build.</li>
-        <li>This living report, <code>CODE_REVIEW.html</code>.</li>
+        <li>
+          This living report, archived as
+          <code>docs/code-reviews/2026-07-25-whole-application-review.html</code>.
+        </li>
+        <li><code>docs/code-reviews/README.md</code>, the durable index and naming convention for future reviews.</li>
         <li>
           <code>Tests/LoopTuneAppTests/CredentialStoreTests.swift</code>, added during the review
           to cover credential-account isolation and URL sanitization.
@@ -625,6 +629,7 @@
         <li><strong>2026-07-25 — Expanded coverage:</strong> grew the suite from 122 to 150 tests and from 29 to 30 suites, adding malformed-input, evidence-minimum, override, profile-history, interval-normalization, cap, deduplication, persistence-permission, URL, and disclaimer regressions.</li>
         <li><strong>2026-07-25 — Final verification:</strong> clean debug and release builds passed without warnings; all 150 tests passed twice; CLI validation, deterministic Nightscout fetch/tune, native launch, syntax/data checks, dependency provenance, and final inventory reconciliation passed.</li>
         <li><strong>2026-07-25 — Completion:</strong> 81 of 81 auditable first-party files reviewed, 15 of 15 findings fixed, 11 of 11 verification checks passed, and no unreviewed file or unresolved finding remains.</li>
+        <li><strong>2026-07-29 — Archival:</strong> moved this report into the dated <code>docs/code-reviews/</code> archive, added its index/convention, reviewed the new documentation, and reconciled the ledger at 82 of 82 files.</li>
       </ul>
     </section>
 
@@ -715,7 +720,8 @@
       "Tests/LoopTuneKitTests/UnitsAndTimeZoneTests.swift",
       "Tests/LoopTuneAppTests/CredentialStoreTests.swift",
       "Package.resolved",
-      "CODE_REVIEW.html"
+      "docs/code-reviews/README.md",
+      "docs/code-reviews/2026-07-25-whole-application-review.html"
     ];
 
     const FINDING_FILES = {
@@ -748,9 +754,9 @@
     };
 
     const REVIEW_OVERRIDES = {
-      "CODE_REVIEW.html": {
+      "docs/code-reviews/2026-07-25-whole-application-review.html": {
         status: "Fixed + reviewed",
-        note: "Living plan and final review ledger; final HTML, script, finding, verification, and inventory reconciliation passed."
+        note: "Archived plan and final review ledger; HTML, script, finding, verification, and 82-file inventory reconciliation passed."
       }
     };
 
@@ -765,11 +771,11 @@
       { check: "CLI controlled Nightscout integration", status: "Passed", evidence: "looptune fetch/tune against deterministic 127.0.0.1 HTTP mock", result: "Authorized fetch returned 313 CGM records; tuning used 288 samples and emitted valid JSON with the disclaimer" },
       { check: "Native app launch smoke", status: "Passed", evidence: ".build/debug/LoopTuneApp", result: "App launched and remained alive until deliberately terminated; view-model/UI paths were also reviewed in full" },
       { check: "External/generated tree boundaries", status: "Passed", evidence: "Manifest/source/test/script dependency search plus clean regeneration", result: "references/ is provenance-only and not executed or bundled; .build/ regenerated from pinned inputs" },
-      { check: "Final inventory and diff reconciliation", status: "Passed", evidence: "git ls-files + untracked inventory vs FILE_PATHS; duplicate check; git diff --check", result: "81 actual files equal 81 unique ledger entries; no missing/extra path and no unreviewed status" }
+      { check: "Final inventory and diff reconciliation", status: "Passed", evidence: "git ls-files + untracked inventory vs FILE_PATHS; duplicate check; git diff --check", result: "82 actual files equal 82 unique ledger entries; no missing/extra path and no unreviewed status" }
     ];
 
     function kindFor(path) {
-      if (path === "CODE_REVIEW.html") return "Review report";
+      if (path.startsWith("docs/code-reviews/") && path.endsWith(".html")) return "Review report";
       if (path === "Package.swift" || path === "Package.resolved") return "Build manifest";
       if (path.endsWith(".swift") && path.startsWith("Tests/")) return "Test source";
       if (path.endsWith(".swift")) return "Application source";

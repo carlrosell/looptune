@@ -69,6 +69,260 @@ struct TooltipRow: View {
     }
 }
 
+/// The hourly outcome graph shown with a recommendation. Older saved runs
+/// predate the compact percentile summaries and need to be reanalyzed.
+struct HourlyGlucoseOutcomeView: View {
+    let diagnostics: RunDiagnostics
+    let displayUnit: GlucoseUnit
+
+    var body: some View {
+        if let glucose = diagnostics.hourlyGlucose,
+           !glucose.isEmpty {
+            HourlyGlucoseChartView(
+                distributions: glucose,
+                days: diagnostics.daySummaries.count,
+                displayUnit: displayUnit
+            )
+        } else {
+            Label {
+                Text("Run Analyze again to add the hourly glucose graph to this older result.")
+            } icon: {
+                Image(systemName: "chart.xyaxis.line")
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quinary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+    }
+}
+
+private struct DisplayDistribution: Identifiable {
+    let hour: Int
+    let segment: Int
+    let sampleCount: Int
+    let p10: Double
+    let p25: Double
+    let median: Double
+    let p75: Double
+    let p90: Double
+
+    var id: Int { hour }
+
+    init(_ source: HourlyValueDistribution, unit: GlucoseUnit, segment: Int) {
+        hour = source.hour
+        self.segment = segment
+        sampleCount = source.sampleCount
+        p10 = unit.fromMilligramsPerDeciliter(source.p10)
+        p25 = unit.fromMilligramsPerDeciliter(source.p25)
+        median = unit.fromMilligramsPerDeciliter(source.median)
+        p75 = unit.fromMilligramsPerDeciliter(source.p75)
+        p90 = unit.fromMilligramsPerDeciliter(source.p90)
+    }
+}
+
+private struct CompactChartLegendItem: View {
+    let color: Color
+    let label: String
+    var isBand = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if isBand {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(color)
+                    .frame(width: 14, height: 8)
+            } else {
+                Capsule()
+                    .fill(color)
+                    .frame(width: 14, height: 2)
+            }
+            Text(label)
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+}
+
+/// Actual CGM percentile bands by local clock hour, matching the hourly value
+/// profiles commonly used by Nightscout analysis tools.
+struct HourlyGlucoseChartView: View {
+    let distributions: [HourlyValueDistribution]
+    let days: Int
+    let displayUnit: GlucoseUnit
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var selectedHour: Int?
+
+    private var rows: [DisplayDistribution] {
+        var segment = 0
+        var previousHour: Int?
+        return distributions.map { distribution in
+            if let previousHour, distribution.hour != previousHour + 1 {
+                segment += 1
+            }
+            previousHour = distribution.hour
+            return DisplayDistribution(distribution, unit: displayUnit, segment: segment)
+        }
+    }
+
+    private var hovered: DisplayDistribution? {
+        guard let selectedHour else { return nil }
+        let clamped = min(max(selectedHour, 0), 23)
+        return rows.first { $0.hour == clamped }
+    }
+
+    private var referenceLow: Double {
+        displayUnit.fromMilligramsPerDeciliter(70)
+    }
+
+    private var referenceHigh: Double {
+        displayUnit.fromMilligramsPerDeciliter(180)
+    }
+
+    private var yDomain: ClosedRange<Double> {
+        let lowest = min(referenceLow, rows.map(\.p10).min() ?? referenceLow)
+        let highest = max(referenceHigh, rows.map(\.p90).max() ?? referenceHigh)
+        let padding = max((highest - lowest) * 0.08, displayUnit == .millimolesPerLiter ? 0.3 : 5)
+        return max(0, lowest - padding)...(highest + padding)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Your glucose by hour")
+                .font(.headline)
+            Text("What actually happened during \(days) analyzed day\(days == 1 ? "" : "s"), grouped by local clock hour.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 14) {
+                CompactChartLegendItem(color: .primary, label: "Median")
+                CompactChartLegendItem(
+                    color: ChartPalette.tuned(colorScheme).opacity(0.22),
+                    label: "25–75%",
+                    isBand: true
+                )
+                CompactChartLegendItem(
+                    color: ChartPalette.tuned(colorScheme).opacity(0.10),
+                    label: "10–90%",
+                    isBand: true
+                )
+            }
+            Chart {
+                ForEach(rows) { row in
+                    AreaMark(
+                        x: .value("Hour", row.hour),
+                        yStart: .value("10th percentile", row.p10),
+                        yEnd: .value("90th percentile", row.p90),
+                        series: .value("Segment", "10–90%-\(row.segment)")
+                    )
+                    .interpolationMethod(.linear)
+                    .foregroundStyle(by: .value("Series", "10–90%"))
+                    RectangleMark(
+                        x: .value("Hour", row.hour),
+                        yStart: .value("10th percentile", row.p10),
+                        yEnd: .value("90th percentile", row.p90),
+                        width: .fixed(4)
+                    )
+                    .foregroundStyle(by: .value("Series", "10–90%"))
+                }
+                ForEach(rows) { row in
+                    AreaMark(
+                        x: .value("Hour", row.hour),
+                        yStart: .value("25th percentile", row.p25),
+                        yEnd: .value("75th percentile", row.p75),
+                        series: .value("Segment", "25–75%-\(row.segment)")
+                    )
+                    .interpolationMethod(.linear)
+                    .foregroundStyle(by: .value("Series", "25–75%"))
+                    RectangleMark(
+                        x: .value("Hour", row.hour),
+                        yStart: .value("25th percentile", row.p25),
+                        yEnd: .value("75th percentile", row.p75),
+                        width: .fixed(4)
+                    )
+                    .foregroundStyle(by: .value("Series", "25–75%"))
+                }
+                ForEach(rows) { row in
+                    LineMark(
+                        x: .value("Hour", row.hour),
+                        y: .value("Median glucose", row.median),
+                        series: .value("Segment", "Median-\(row.segment)")
+                    )
+                    .interpolationMethod(.linear)
+                    .foregroundStyle(by: .value("Series", "Median"))
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                    PointMark(
+                        x: .value("Hour", row.hour),
+                        y: .value("Median glucose", row.median)
+                    )
+                    .foregroundStyle(by: .value("Series", "Median"))
+                }
+                RuleMark(y: .value("Upper reference", referenceHigh))
+                    .foregroundStyle(.orange.opacity(0.75))
+                    .lineStyle(StrokeStyle(lineWidth: 1))
+                RuleMark(y: .value("Lower reference", referenceLow))
+                    .foregroundStyle(.red.opacity(0.75))
+                    .lineStyle(StrokeStyle(lineWidth: 1))
+                if let hovered {
+                    RuleMark(x: .value("Hour", hovered.hour))
+                        .foregroundStyle(.secondary.opacity(0.35))
+                        .lineStyle(StrokeStyle(lineWidth: 1))
+                        .annotation(
+                            position: .top,
+                            spacing: 4,
+                            overflowResolution: .init(x: .fit(to: .chart), y: .disabled)
+                        ) {
+                            ChartTooltip(title: hourRange(hovered.hour)) {
+                                TooltipRow(color: .primary, label: "Median", value: glucoseValue(hovered.median))
+                                TooltipRow(color: nil, label: "25–75%", value: "\(glucoseRange(hovered.p25, hovered.p75)) \(displayUnit.shortLabel)")
+                                TooltipRow(color: nil, label: "10–90%", value: "\(glucoseRange(hovered.p10, hovered.p90)) \(displayUnit.shortLabel)")
+                                TooltipRow(color: nil, label: "Readings", value: "\(hovered.sampleCount)")
+                            }
+                        }
+                }
+            }
+            .chartForegroundStyleScale([
+                "10–90%": ChartPalette.tuned(colorScheme).opacity(0.10),
+                "25–75%": ChartPalette.tuned(colorScheme).opacity(0.22),
+                "Median": Color.primary,
+            ])
+            .chartLegend(.hidden)
+            .chartXSelection(value: $selectedHour)
+            .chartXScale(domain: 0...23)
+            .chartYScale(domain: yDomain)
+            .chartXAxis {
+                AxisMarks(values: [0, 4, 8, 12, 16, 20, 23]) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let hour = value.as(Int.self) {
+                            Text(String(format: "%02d:00", hour))
+                        }
+                    }
+                }
+            }
+            .chartYAxisLabel(displayUnit.shortLabel, position: .trailing)
+            .frame(height: 240)
+            Text("Reference lines: \(glucoseValue(referenceLow)) low · \(glucoseValue(referenceHigh)) high. These are the app's \(glucoseRange(referenceLow, referenceHigh)) \(displayUnit.shortLabel) reporting range, not a personalized target.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func hourRange(_ hour: Int) -> String {
+        String(format: "%02d:00–%02d:00", hour, (hour + 1) % 24)
+    }
+
+    private func glucoseValue(_ value: Double) -> String {
+        let format = displayUnit == .millimolesPerLiter ? "%.1f %@" : "%.0f %@"
+        return String(format: format, value, displayUnit.shortLabel)
+    }
+
+    private func glucoseRange(_ low: Double, _ high: Double) -> String {
+        let format = displayUnit == .millimolesPerLiter ? "%.1f–%.1f" : "%.0f–%.0f"
+        return String(format: format, low, high)
+    }
+}
+
 /// 24-hour basal schedule: pump vs LoopTune as step lines.
 struct BasalChartView: View {
     let hours: [BasalHourRecommendation]
@@ -108,6 +362,9 @@ struct BasalChartView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Basal schedule — pump vs LoopTune (U/hr)")
                 .font(.subheadline.weight(.semibold))
+            Text("A mismatch observed in one hour tunes the previous three basal hours, because the insulin delivered there acts later.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Chart {
                 ForEach(points) { point in
                     LineMark(
@@ -157,8 +414,9 @@ struct BasalChartView: View {
     }
 }
 
-/// Per-hour basal data coverage: how many deviation samples informed each hour.
-/// Hours with no samples appear as gaps (and are flagged in the table below).
+/// Per-hour basal data coverage: how many deviation samples informed each
+/// scheduled basal hour after the tuner's three-hour lookback.
+/// Hours with no direct evidence appear as gaps (and are flagged in the table).
 struct CoverageChartView: View {
     let hours: [BasalHourRecommendation]
     @Environment(\.colorScheme) private var colorScheme
@@ -172,7 +430,7 @@ struct CoverageChartView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Data coverage — basal samples per hour")
+            Text("Data coverage — samples informing each basal hour")
                 .font(.subheadline.weight(.semibold))
             Chart {
                 ForEach(hours, id: \.hour) { entry in
@@ -219,7 +477,7 @@ struct CoverageChartView: View {
             }
             .frame(height: 90)
             if hours.contains(where: { $0.sampleCount == 0 }) {
-                Text("Hours without bars had no basal-attributed data; their recommendations are interpolated from neighbors.")
+                Text("Hours without bars had no direct basal evidence; their recommendations are interpolated from neighboring hours.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
