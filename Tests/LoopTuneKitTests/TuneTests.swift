@@ -72,6 +72,18 @@ struct ScheduleHelperTests {
             pumpValue: 10,
             untuned: false
         )
+        let later = ScheduleTuningOutput(
+            secondsSinceMidnight: 120,
+            tunedValue: 10,
+            pumpValue: 10,
+            untuned: false
+        )
+        let outOfRange = ScheduleTuningOutput(
+            secondsSinceMidnight: 86_400,
+            tunedValue: 10,
+            pumpValue: 10,
+            untuned: false
+        )
         let basal = Array(repeating: 1.0, count: 24)
         let untuned = Array(repeating: false, count: 24)
 
@@ -93,6 +105,43 @@ struct ScheduleHelperTests {
                 untunedBasalHours: untuned,
                 sensitivitySchedule: [midnight],
                 carbRatioSchedule: [late],
+                categoryCounts: [:],
+                totalSamples: 0
+            )
+        }
+        #expect(throws: TuningOutput.InitializationError.offsetOutOfRange(.sensitivity, offset: 86_400)) {
+            try TuningOutput(
+                tunedBasalHourly: basal,
+                pumpBasalHourly: basal,
+                untunedBasalHours: untuned,
+                sensitivitySchedule: [midnight, outOfRange],
+                carbRatioSchedule: [midnight],
+                categoryCounts: [:],
+                totalSamples: 0
+            )
+        }
+        #expect(throws: TuningOutput.InitializationError.duplicateOffset(.carbRatio, offset: 0)) {
+            try TuningOutput(
+                tunedBasalHourly: basal,
+                pumpBasalHourly: basal,
+                untunedBasalHours: untuned,
+                sensitivitySchedule: [midnight],
+                carbRatioSchedule: [midnight, midnight],
+                categoryCounts: [:],
+                totalSamples: 0
+            )
+        }
+        #expect(throws: TuningOutput.InitializationError.outOfOrderOffset(
+            .sensitivity,
+            previousOffset: 120,
+            offset: 60
+        )) {
+            try TuningOutput(
+                tunedBasalHourly: basal,
+                pumpBasalHourly: basal,
+                untunedBasalHours: untuned,
+                sensitivitySchedule: [midnight, later, late],
+                carbRatioSchedule: [midnight],
                 categoryCounts: [:],
                 totalSamples: 0
             )

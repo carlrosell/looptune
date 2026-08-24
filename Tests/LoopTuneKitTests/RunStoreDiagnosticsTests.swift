@@ -21,7 +21,7 @@ struct RecommendationCodableTests {
             totalSamples: 160,
             basalSampleCountByHour: Array(repeating: 5, count: 24)
         )
-        return TuningRecommendation(from: output, daysAnalyzed: 7, profileGlucoseUnit: .millimolesPerLiter, daysTuned: 6)
+        return try TuningRecommendation(from: output, daysAnalyzed: 7, profileGlucoseUnit: .millimolesPerLiter, daysTuned: 6)
     }
 
     @Test("recommendation round-trips through JSON verbatim")
@@ -118,7 +118,7 @@ struct RunStoreTests {
         return RunStore(directory: dir, maxRuns: maxRuns)
     }
 
-    private func makeRun(createdAt: Date) -> SavedRun {
+    private func makeRun(createdAt: Date) throws -> SavedRun {
         let output = TuningOutput(
             tunedBasalHourly: Array(repeating: 1.0, count: 24),
             pumpBasalHourly: Array(repeating: 1.0, count: 24),
@@ -126,16 +126,16 @@ struct RunStoreTests {
             tunedISF: 50, pumpISF: 50, tunedCarbRatio: 10, pumpCarbRatio: 10,
             categoryCounts: [:], totalSamples: 10
         )
-        let rec = TuningRecommendation(from: output, daysAnalyzed: 1)
+        let rec = try TuningRecommendation(from: output, daysAnalyzed: 1)
         let diag = RunDiagnostics(glucoseCount: 288, doseCount: 5, carbCount: 2, windowStart: createdAt, windowEnd: createdAt, daySummaries: [], hourlyDeviation: [], meanAbsDeviationBefore: 4, meanAbsDeviationAfter: 3)
         return SavedRun(id: RunStore.makeID(createdAt: createdAt), createdAt: createdAt, siteHost: "site", days: 1, insulinType: .novolog, recommendation: rec, diagnostics: diag)
     }
 
     @Test("saves and lists runs newest-first")
-    func saveAndList() {
+    func saveAndList() throws {
         let store = makeStore()
-        let older = makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
-        let newer = makeRun(createdAt: Date(timeIntervalSince1970: 1_700_100_000))
+        let older = try makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        let newer = try makeRun(createdAt: Date(timeIntervalSince1970: 1_700_100_000))
         store.save(older)
         store.save(newer)
         let all = store.loadAll()
@@ -145,9 +145,9 @@ struct RunStoreTests {
     }
 
     @Test("round-trips a full run with diagnostics")
-    func roundTrip() {
+    func roundTrip() throws {
         let store = makeStore()
-        let run = makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        let run = try makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
         store.save(run)
         let loaded = store.loadAll().first
         #expect(loaded == run)
@@ -155,10 +155,10 @@ struct RunStoreTests {
     }
 
     @Test("enforces the run limit, keeping the newest")
-    func limit() {
+    func limit() throws {
         let store = makeStore(maxRuns: 3)
         for i in 0..<6 {
-            store.save(makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000 + Double(i) * 1000)))
+            store.save(try makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000 + Double(i) * 1000)))
         }
         let all = store.loadAll()
         #expect(all.count == 3)
@@ -167,18 +167,18 @@ struct RunStoreTests {
     }
 
     @Test("delete removes a run")
-    func delete() {
+    func delete() throws {
         let store = makeStore()
-        let run = makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        let run = try makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
         store.save(run)
         store.delete(id: run.id)
         #expect(store.loadAll().isEmpty)
     }
 
     @Test("rejects path-like run IDs")
-    func rejectsUnsafeID() {
+    func rejectsUnsafeID() throws {
         let store = makeStore()
-        var run = makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        var run = try makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
         run.id = "../outside"
         #expect(!store.save(run))
         #expect(!store.delete(id: "../outside"))
@@ -186,10 +186,10 @@ struct RunStoreTests {
     }
 
     @Test("a zero or negative limit retains no runs")
-    func nonPositiveLimit() {
+    func nonPositiveLimit() throws {
         for limit in [0, -5] {
             let store = makeStore(maxRuns: limit)
-            #expect(store.save(makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))))
+            #expect(store.save(try makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))))
             #expect(store.loadAll().isEmpty)
         }
     }
@@ -197,7 +197,7 @@ struct RunStoreTests {
     @Test("saved health-data files are owner-only")
     func privatePermissions() throws {
         let store = makeStore()
-        let run = makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        let run = try makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
         #expect(store.save(run))
         let file = store.directory.appendingPathComponent(run.id).appendingPathExtension("json")
         let directoryAttributes = try FileManager.default.attributesOfItem(atPath: store.directory.path)
@@ -296,7 +296,7 @@ struct DiagnosticsBuilderTests {
             categoryCounts: [:],
             totalSamples: 12
         )
-        let validRecommendation = TuningRecommendation(from: output, daysAnalyzed: 1)
+        let validRecommendation = try TuningRecommendation(from: output, daysAnalyzed: 1)
         var recommendation = validRecommendation
         recommendation.sensitivitySchedule = []
 

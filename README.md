@@ -105,7 +105,7 @@ remembered.
 
 ## Development
 
-- `swift build` / `swift test` (163 tests across 31 suites)
+- `swift build` / `swift test` (164 tests across 31 suites)
 - `scripts/dev.sh` — watch mode: rebuilds and relaunches the app on every
   save (the app restores its state on launch, so a relaunch is nearly free);
   pass `release` for an optimized build

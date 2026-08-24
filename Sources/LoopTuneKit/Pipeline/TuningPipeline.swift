@@ -121,7 +121,7 @@ public struct TuningPipeline: Sendable {
                     actual: result.output.totalSamples
                 )
             }
-            return TuningRecommendation(
+            return try TuningRecommendation(
                 from: result.output,
                 daysAnalyzed: days,
                 profileGlucoseUnit: profile.glucoseUnit,
@@ -158,7 +158,7 @@ public struct TuningPipeline: Sendable {
             analysisEnd: inputs.analysisEnd
         )
 
-        return TuningRecommendation(
+        return try TuningRecommendation(
             from: output,
             daysAnalyzed: days,
             profileGlucoseUnit: profile.glucoseUnit,

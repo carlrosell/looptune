@@ -39,6 +39,9 @@ public struct TuningOutput: Sendable, Equatable {
     public enum InitializationError: Error, Sendable, Equatable {
         case emptySchedule(ScheduledParameter)
         case missingMidnightEntry(ScheduledParameter, firstOffset: Int)
+        case offsetOutOfRange(ScheduledParameter, offset: Int)
+        case duplicateOffset(ScheduledParameter, offset: Int)
+        case outOfOrderOffset(ScheduledParameter, previousOffset: Int, offset: Int)
     }
 
     public var tunedBasalHourly: [Double]
@@ -104,8 +107,14 @@ public struct TuningOutput: Sendable, Equatable {
         totalSamples: Int,
         basalSampleCountByHour: [Int] = Array(repeating: 0, count: 24)
     ) throws {
-        try Self.validate(sensitivitySchedule, parameter: .sensitivity)
-        try Self.validate(carbRatioSchedule, parameter: .carbRatio)
+        try Self.validate(
+            sensitivitySchedule.map(\.secondsSinceMidnight),
+            parameter: .sensitivity
+        )
+        try Self.validate(
+            carbRatioSchedule.map(\.secondsSinceMidnight),
+            parameter: .carbRatio
+        )
         self.tunedBasalHourly = tunedBasalHourly
         self.pumpBasalHourly = pumpBasalHourly
         self.untunedBasalHours = untunedBasalHours
@@ -116,18 +125,33 @@ public struct TuningOutput: Sendable, Equatable {
         self.basalSampleCountByHour = basalSampleCountByHour
     }
 
-    private static func validate(
-        _ schedule: [ScheduleTuningOutput],
+    static func validate(
+        _ offsets: [Int],
         parameter: ScheduledParameter
     ) throws {
-        guard let first = schedule.first else {
+        guard let first = offsets.first else {
             throw InitializationError.emptySchedule(parameter)
         }
-        guard first.secondsSinceMidnight == 0 else {
+        for offset in offsets where !(0..<86_400).contains(offset) {
+            throw InitializationError.offsetOutOfRange(parameter, offset: offset)
+        }
+        guard first == 0 else {
             throw InitializationError.missingMidnightEntry(
                 parameter,
-                firstOffset: first.secondsSinceMidnight
+                firstOffset: first
             )
+        }
+        for (previous, offset) in zip(offsets, offsets.dropFirst()) {
+            guard offset != previous else {
+                throw InitializationError.duplicateOffset(parameter, offset: offset)
+            }
+            guard offset > previous else {
+                throw InitializationError.outOfOrderOffset(
+                    parameter,
+                    previousOffset: previous,
+                    offset: offset
+                )
+            }
         }
     }
 

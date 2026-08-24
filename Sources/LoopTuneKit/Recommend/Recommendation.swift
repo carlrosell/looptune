@@ -248,10 +248,18 @@ public struct TuningRecommendation: Sendable, Equatable {
         daysTuned: Int? = nil,
         settingsChanges: [Date] = [],
         excludedOverrideSamples: Int = 0
-    ) {
+    ) throws {
         precondition(
             output.tunedBasalHourly.count == 24 && output.pumpBasalHourly.count == 24 && output.untunedBasalHours.count == 24,
             "TuningOutput basal arrays must each contain 24 hourly entries"
+        )
+        try TuningOutput.validate(
+            output.sensitivitySchedule.map(\.secondsSinceMidnight),
+            parameter: .sensitivity
+        )
+        try TuningOutput.validate(
+            output.carbRatioSchedule.map(\.secondsSinceMidnight),
+            parameter: .carbRatio
         )
         let sensitivitySchedule = output.sensitivitySchedule.map { entry in
             ParameterScheduleRecommendation(

@@ -53,7 +53,7 @@ struct GuardrailTests {
     }
 
     @Test("loop basal schedule collapses to change points like Loop's entry screen")
-    func loopScheduleCollapse() {
+    func loopScheduleCollapse() throws {
         // Rounded rates: 0.2 (00–05), 0.25 (06–11), 0.3 (12–15), 0.5 (16–17), 0.3 (18–23)
         // → exactly the 5 entries from Loop's Basaldoser screen.
         var hourly = [Double]()
@@ -69,7 +69,7 @@ struct GuardrailTests {
             tunedISF: 50, pumpISF: 50, tunedCarbRatio: 10, pumpCarbRatio: 10,
             categoryCounts: [:], totalSamples: 100
         )
-        let rec = TuningRecommendation(from: output, daysAnalyzed: 1)
+        let rec = try TuningRecommendation(from: output, daysAnalyzed: 1)
         let entries = rec.loopBasalSchedule()
         #expect(entries.count == 5)
         #expect(entries[0] == LoopBasalEntry(startMinutes: 0, rate: 0.2))
@@ -86,7 +86,7 @@ struct GuardrailTests {
             tunedISF: 50, pumpISF: 50, tunedCarbRatio: 10, pumpCarbRatio: 10,
             categoryCounts: [:], totalSamples: 100
         )
-        let flatEntries = TuningRecommendation(from: flat, daysAnalyzed: 1).loopBasalSchedule()
+        let flatEntries = try TuningRecommendation(from: flat, daysAnalyzed: 1).loopBasalSchedule()
         #expect(flatEntries == [LoopBasalEntry(startMinutes: 0, rate: 1.0)])
     }
 
@@ -100,7 +100,7 @@ struct GuardrailTests {
             tunedCarbRatio: 10.0, pumpCarbRatio: 10.0,
             categoryCounts: [:], totalSamples: 100
         )
-        let rec = TuningRecommendation(from: output, daysAnalyzed: 1)
+        let rec = try TuningRecommendation(from: output, daysAnalyzed: 1)
         let text = TuningReport.render(rec)
         #expect(text.contains("Rounded"))
         #expect(text.contains("1.00"))
@@ -153,7 +153,7 @@ struct GuardrailTests {
             categoryCounts: [.isf: 26],
             totalSamples: 26
         )
-        let recommendation = TuningRecommendation(from: output, daysAnalyzed: 1)
+        let recommendation = try TuningRecommendation(from: output, daysAnalyzed: 1)
 
         #expect(recommendation.sensitivity.rawTunedValue == 600)
         #expect(recommendation.sensitivity.recommendedValue == 500)
@@ -182,7 +182,7 @@ struct GuardrailTests {
             categoryCounts: [:],
             totalSamples: 12
         )
-        let recommendation = TuningRecommendation(from: output, daysAnalyzed: 1)
+        let recommendation = try TuningRecommendation(from: output, daysAnalyzed: 1)
 
         #expect(recommendation.sensitivitySchedule.map(\.id) == [0, 3_601, 3_659])
         #expect(recommendation.sensitivitySchedule.map(\.startMinutes) == [0, 60, 60])
@@ -194,6 +194,29 @@ struct GuardrailTests {
         let expectedAverage = (50 * firstDuration + 60 * secondDuration + 70 * thirdDuration) / 86_400
         #expect(abs(recommendation.sensitivity.recommendedValue - expectedAverage) < 1e-9)
         #expect(try RecommendationJSON.encode(recommendation).contains("\"secondsSinceMidnight\" : 3659"))
+    }
+
+    @Test("recommendation summaries reject mutated invalid schedules")
+    func recommendationSummaryRejectsInvalidSchedule() throws {
+        var output = try TuningOutput(
+            tunedBasalHourly: Array(repeating: 1.0, count: 24),
+            pumpBasalHourly: Array(repeating: 1.0, count: 24),
+            untunedBasalHours: Array(repeating: false, count: 24),
+            sensitivitySchedule: [
+                ScheduleTuningOutput(secondsSinceMidnight: 0, tunedValue: 50, pumpValue: 50, untuned: false),
+                ScheduleTuningOutput(secondsSinceMidnight: 3_600, tunedValue: 60, pumpValue: 60, untuned: false),
+            ],
+            carbRatioSchedule: [
+                ScheduleTuningOutput(secondsSinceMidnight: 0, tunedValue: 10, pumpValue: 10, untuned: false),
+            ],
+            categoryCounts: [:],
+            totalSamples: 12
+        )
+        output.sensitivitySchedule[1].secondsSinceMidnight = 0
+
+        #expect(throws: TuningOutput.InitializationError.duplicateOffset(.sensitivity, offset: 0)) {
+            try TuningRecommendation(from: output, daysAnalyzed: 1)
+        }
     }
 
     @Test("schedule evidence always includes missing days")
