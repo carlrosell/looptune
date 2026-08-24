@@ -27,6 +27,11 @@ public struct CarbRatioTuner: Sendable {
         self.absoluteMaxCR = absoluteMaxCR
     }
 
+    struct Result: Sendable, Equatable {
+        var value: Double
+        var untuned: Bool
+    }
+
     /// - Parameters:
     ///   - samples: categorized deviations (only `.csf` are used).
     ///   - totalMealCarbs: total grams of carbs eaten in the analysis window.
@@ -46,18 +51,39 @@ public struct CarbRatioTuner: Sendable {
             .filter { $0.category == .csf }
             .reduce(0.0) { $0 + $1.sample.deviation }
 
+        return tuneWithEvidence(
+            mealDeviations: mealDeviations,
+            totalMealCarbs: totalMealCarbs,
+            replayISF: replayISF,
+            targetISF: targetISF,
+            currentCR: currentCR,
+            pumpCR: pumpCR
+        ).value
+    }
+
+    func tuneWithEvidence(
+        mealDeviations: Double,
+        totalMealCarbs: Double,
+        replayISF: Double,
+        targetISF: Double,
+        currentCR: Double,
+        pumpCR: Double
+    ) -> Result {
+
         guard totalMealCarbs.isFinite, totalMealCarbs > 0,
               replayISF.isFinite, replayISF > 0,
               targetISF.isFinite, targetISF > 0,
               currentCR.isFinite, currentCR > 0,
               pumpCR.isFinite, pumpCR > 0,
               mealDeviations.isFinite else {
-            return currentCR
+            return Result(value: currentCR, untuned: true)
         }
 
         let csfReplay = replayISF / currentCR
         let csfTrue = csfReplay + mealDeviations / totalMealCarbs
-        guard csfTrue.isFinite, csfTrue > 0 else { return currentCR }
+        guard csfTrue.isFinite, csfTrue > 0 else {
+            return Result(value: currentCR, untuned: true)
+        }
 
         let fullNewCR = targetISF / csfTrue
 
@@ -66,6 +92,7 @@ public struct CarbRatioTuner: Sendable {
         let cappedFull = TuningMath.clamp(fullNewCR, minCR, maxCR)
 
         let newCR = (1 - caps.stepFraction) * currentCR + caps.stepFraction * cappedFull
-        return (TuningMath.clamp(newCR, minCR, maxCR) * 1000).rounded() / 1000
+        let value = (TuningMath.clamp(newCR, minCR, maxCR) * 1000).rounded() / 1000
+        return Result(value: value, untuned: false)
     }
 }

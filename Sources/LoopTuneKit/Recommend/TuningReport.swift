@@ -39,6 +39,25 @@ public enum TuningReport {
         lines.append(parameterRow(recommendation.carbRatio, unit: unit))
         lines.append("")
 
+        if recommendation.sensitivitySchedule.count > 1 {
+            appendSchedule(
+                recommendation.sensitivitySchedule,
+                title: "Insulin Sensitivity schedule",
+                evidenceName: "samples",
+                unit: unit,
+                to: &lines
+            )
+        }
+        if recommendation.carbRatioSchedule.count > 1 {
+            appendSchedule(
+                recommendation.carbRatioSchedule,
+                title: "Carb Ratio schedule",
+                evidenceName: "meals",
+                unit: unit,
+                to: &lines
+            )
+        }
+
         lines.append("Basal schedule [U/hr] — Rounded = nearest \(String(format: "%.3g", basalIncrement)) U/hr (what Loop accepts)")
         lines.append(pad("Hour", 8) + pad("Pump", 12) + pad("LoopTune", 12) + pad("Rounded", 10) + pad("Days missing", 14) + "Flag")
         lines.append(String(repeating: "-", count: 62))
@@ -77,6 +96,33 @@ public enum TuningReport {
         let pump = "\(rec.formatted(rec.pumpValue(in: unit), in: unit)) \(rec.unitLabel(in: unit))"
         let tuned = rec.formatted(rec.recommendedValue(in: unit), in: unit)
         return pad(rec.name, 22) + pad(pump, 14) + pad(tuned, 14) + change + flagSuffix(tier: rec.changeTier, status: rec.guardrailStatus)
+    }
+
+    private static func appendSchedule(
+        _ entries: [ParameterScheduleRecommendation],
+        title: String,
+        evidenceName: String,
+        unit: GlucoseUnit,
+        to lines: inout [String]
+    ) {
+        let unitLabel = entries.first?.parameter.unitLabel(in: unit) ?? ""
+        lines.append("\(title) [\(unitLabel)] using existing Loop time blocks")
+        lines.append(pad("Time", 8) + pad("Pump", 14) + pad("LoopTune", 14) + "Data")
+        lines.append(String(repeating: "-", count: 54))
+        for entry in entries {
+            let rec = entry.parameter
+            let pump = rec.formatted(rec.pumpValue(in: unit), in: unit)
+            let tuned = rec.formatted(rec.recommendedValue(in: unit), in: unit)
+            let evidence = entry.evidenceDescription(evidenceName)
+            lines.append(
+                pad(entry.timeString, 8)
+                + pad(pump, 14)
+                + pad(tuned, 14)
+                + evidence
+                + flagSuffix(tier: rec.changeTier, status: rec.guardrailStatus)
+            )
+        }
+        lines.append("")
     }
 
     private static func basalRow(_ hour: BasalHourRecommendation, increment: Double) -> String {

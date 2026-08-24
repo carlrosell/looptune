@@ -180,16 +180,19 @@ deviations when BG < 80 (post-hypo rebound guard).
   `[pumpRate(h)×autotuneMin, pumpRate(h)×autotuneMax]`. Unused-hour smoothing:
   `0.8×orig + 0.1×lastAdjusted + 0.1×nextAdjusted`, increment `untuned(h)`
   counter (surfaced as "days missing"). Hours evaluated in **profile timezone**.
-- **ISF (single value, like oref0):** per ISF datum `ratio = 1 + deviation/BGI`;
-  `fullNewISF = ISF × median(ratios)` (needs ≥10 datapoints, else unchanged);
-  optional blend toward pump ISF via `adjustmentFraction` (default 1.0 = none);
-  `newISF = 0.8×ISF + 0.2×adjustedISF`; clamp `[pumpISF/autotuneMax, pumpISF/autotuneMin]`.
-  > Loop supports an ISF *schedule* (up to 48 entries). v1 tunes a single ISF
-  > (parity with autotune, simpler, well-validated). Per-slot ISF is a stretch
-  > goal (OQ-4).
-- **Carb Ratio (single value):** LoopTune's replay has already subtracted the
-  modeled carb effect, so meal deviations are residuals rather than raw carb
-  impact. It computes
+- **ISF (per configured Loop block):** per ISF datum
+  `ratio = 1 + deviation/BGI`; `fullNewISF = ISF × median(ratios)` (needs ≥10
+  usable datapoints in that block, else unchanged); optional blend toward pump
+  ISF via `adjustmentFraction` (default 1.0 = none);
+  `newISF = 0.8×ISF + 0.2×adjustedISF`; clamp
+  `[pumpISF/autotuneMax, pumpISF/autotuneMin]`. LoopTune preserves the pump's
+  existing time boundaries and does not invent new schedule blocks. A flat
+  profile retains exact single-value oref0 parity.
+- **Carb Ratio (per configured Loop block):** LoopTune's replay has already
+  subtracted the modeled carb effect, so meal deviations are residuals rather
+  than raw carb impact. Absorption residuals stay with the most recent logged
+  meal's time block even when absorption crosses a CR boundary. Within a block
+  it computes the meal-weighted form of
   `CSF_true = replayISF/currentCR + ΣmealResidual/ΣloggedCarbs`, then
   `fullNewCR = tunedISF/CSF_true`, applies the pump-relative 0.7×–1.2× cap,
   and moves 20% toward that value. **Absolute CR bounds use Loop guardrails
@@ -410,8 +413,9 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   unstable on real data.
 - **OQ-3.** UAM handling for Loop: default UAM→basal. Expose as an option?
   nighttune defaults `uam_as_basal = true`. Likely keep as an advanced toggle.
-- **OQ-4.** Tune a full ISF *schedule* (Loop supports 48 entries) vs a single
-  ISF (autotune parity)? v1 = single; schedule is a stretch goal.
+- **OQ-4 (settled).** Tune the existing Loop ISF and carb-ratio schedule blocks
+  independently. Preserve their boundaries, leave sparse blocks unchanged,
+  and keep flat profiles on the fixture-pinned single-value path.
 - **OQ-5 (settled for v1).** Exclude intervals whose override changes insulin
   needs from basal/ISF/CR attribution and report the excluded sample count.
 - **OQ-6.** Write-back to Nightscout as a new profile (nighttune has it). Out of
@@ -420,6 +424,14 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 ---
 
 ## 8. Status log (append-only)
+
+- **2026-08-21:** Time-of-day ISF and carb-ratio tuning. The tuner now keeps
+  the schedule blocks already configured in Loop and tunes each independently.
+  ISF blocks require their own usable evidence; carb residuals follow the meal
+  entry's CR block across absorption boundaries. Chained replay, diagnostics,
+  saved runs, text/JSON output, and the macOS recommendations view all retain
+  the resulting schedules. Older saved runs decode as one-block schedules.
+  157 tests green.
 
 - **2026-07-25** — Whole-application adversarial review completed. Every
   first-party file was read and tracked in

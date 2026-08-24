@@ -137,10 +137,85 @@ public struct BasalHourRecommendation: Sendable, Equatable, Identifiable {
     }
 }
 
+/// One recommended time block for ISF or carb ratio. The nested parameter uses
+/// the same guardrails, unit conversion, and change classification as the
+/// original daily summary.
+public struct ParameterScheduleRecommendation: Sendable, Equatable, Identifiable {
+    public var id: Int { secondsSinceMidnight }
+    /// Full schedule offset in seconds since local midnight.
+    public var secondsSinceMidnight: Int
+    /// Whole minutes since local midnight, for Loop-style display and JSON
+    /// compatibility. Schedule identity and reconstruction use seconds.
+    public var startMinutes: Int { secondsSinceMidnight / 60 }
+    public var parameter: ParameterRecommendation
+    public var untuned: Bool
+    /// Usable ISF samples or logged meals behind this block.
+    public var evidenceCount: Int
+    /// Chained day windows in which this block had no usable evidence.
+    public var daysMissing: Int
+
+    public var timeString: String {
+        let hour = secondsSinceMidnight / 3600
+        let minute = secondsSinceMidnight % 3600 / 60
+        let second = secondsSinceMidnight % 60
+        return second == 0
+            ? String(format: "%02d:%02d", hour, minute)
+            : String(format: "%02d:%02d:%02d", hour, minute, second)
+    }
+
+    public init(
+        secondsSinceMidnight: Int,
+        parameter: ParameterRecommendation,
+        untuned: Bool,
+        evidenceCount: Int = 0,
+        daysMissing: Int = 0
+    ) {
+        self.secondsSinceMidnight = secondsSinceMidnight
+        self.parameter = parameter
+        self.untuned = untuned
+        self.evidenceCount = evidenceCount
+        self.daysMissing = daysMissing
+    }
+
+    /// Compatibility initializer for callers that only have minute offsets.
+    public init(
+        startMinutes: Int,
+        parameter: ParameterRecommendation,
+        untuned: Bool,
+        evidenceCount: Int = 0,
+        daysMissing: Int = 0
+    ) {
+        self.init(
+            secondsSinceMidnight: startMinutes * 60,
+            parameter: parameter,
+            untuned: untuned,
+            evidenceCount: evidenceCount,
+            daysMissing: daysMissing
+        )
+    }
+
+    public func evidenceDescription(_ evidenceName: String) -> String {
+        var description: String
+        if untuned && evidenceCount == 0 {
+            description = "no data"
+        } else if untuned {
+            description = "\(evidenceCount) \(evidenceName), unchanged"
+        } else {
+            description = "\(evidenceCount) \(evidenceName)"
+        }
+        if daysMissing > 0 {
+            description += ", \(daysMissing)d missing"
+        }
+        return description
+    }
+}
+
 /// The full tuning recommendation, ready for presentation.
 public struct TuningRecommendation: Sendable, Equatable {
     public var sensitivity: ParameterRecommendation
     public var carbRatio: ParameterRecommendation
+    public var sensitivitySchedule: [ParameterScheduleRecommendation]
+    public var carbRatioSchedule: [ParameterScheduleRecommendation]
     public var basalHours: [BasalHourRecommendation]
 
     /// Category counts and sample totals for confidence context.
@@ -173,27 +248,73 @@ public struct TuningRecommendation: Sendable, Equatable {
         daysTuned: Int? = nil,
         settingsChanges: [Date] = [],
         excludedOverrideSamples: Int = 0
-    ) {
+    ) throws {
         precondition(
             output.tunedBasalHourly.count == 24 && output.pumpBasalHourly.count == 24 && output.untunedBasalHours.count == 24,
             "TuningOutput basal arrays must each contain 24 hourly entries"
         )
-        self.sensitivity = ParameterRecommendation(
+        try TuningOutput.validate(
+            output.sensitivitySchedule.map(\.secondsSinceMidnight),
+            parameter: .sensitivity
+        )
+        try TuningOutput.validate(
+            output.carbRatioSchedule.map(\.secondsSinceMidnight),
+            parameter: .carbRatio
+        )
+        let sensitivitySchedule = output.sensitivitySchedule.map { entry in
+            ParameterScheduleRecommendation(
+                secondsSinceMidnight: entry.secondsSinceMidnight,
+                parameter: ParameterRecommendation(
+                    name: "Insulin Sensitivity",
+                    unit: "mg/dL/U",
+                    pumpValue: entry.pumpValue,
+                    rawTunedValue: entry.tunedValue,
+                    bounds: LoopGuardrails.sensitivity,
+                    isGlucoseDenominated: true
+                ),
+                untuned: entry.untuned,
+                evidenceCount: entry.evidenceCount,
+                daysMissing: entry.daysMissing
+            )
+        }
+        let carbRatioSchedule = output.carbRatioSchedule.map { entry in
+            ParameterScheduleRecommendation(
+                secondsSinceMidnight: entry.secondsSinceMidnight,
+                parameter: ParameterRecommendation(
+                    name: "Carb Ratio",
+                    unit: "g/U",
+                    pumpValue: entry.pumpValue,
+                    rawTunedValue: entry.tunedValue,
+                    bounds: LoopGuardrails.carbRatio,
+                    isGlucoseDenominated: false
+                ),
+                untuned: entry.untuned,
+                evidenceCount: entry.evidenceCount,
+                daysMissing: entry.daysMissing
+            )
+        }
+        self.sensitivitySchedule = sensitivitySchedule
+        self.carbRatioSchedule = carbRatioSchedule
+        var sensitivity = ParameterRecommendation(
             name: "Insulin Sensitivity",
             unit: "mg/dL/U",
-            pumpValue: output.pumpISF,
+            pumpValue: Self.timeWeightedAverage(sensitivitySchedule, value: { $0.parameter.pumpValue }),
             rawTunedValue: output.tunedISF,
             bounds: LoopGuardrails.sensitivity,
             isGlucoseDenominated: true
         )
-        self.carbRatio = ParameterRecommendation(
+        Self.applyScheduleSummary(&sensitivity, from: sensitivitySchedule)
+        self.sensitivity = sensitivity
+        var carbRatio = ParameterRecommendation(
             name: "Carb Ratio",
             unit: "g/U",
-            pumpValue: output.pumpCarbRatio,
+            pumpValue: Self.timeWeightedAverage(carbRatioSchedule, value: { $0.parameter.pumpValue }),
             rawTunedValue: output.tunedCarbRatio,
             bounds: LoopGuardrails.carbRatio,
             isGlucoseDenominated: false
         )
+        Self.applyScheduleSummary(&carbRatio, from: carbRatioSchedule)
+        self.carbRatio = carbRatio
         self.basalHours = (0..<24).map { hour in
             BasalHourRecommendation(
                 hour: hour,
@@ -211,5 +332,49 @@ public struct TuningRecommendation: Sendable, Equatable {
         self.daysTuned = daysTuned
         self.settingsChanges = settingsChanges
         self.excludedOverrideSamples = excludedOverrideSamples
+    }
+
+    public func recommendedSensitivityDailySchedule() throws -> DailySchedule<Double> {
+        try DailySchedule(entries: sensitivitySchedule.map {
+            .init(secondsSinceMidnight: $0.secondsSinceMidnight, value: $0.parameter.recommendedValue)
+        })
+    }
+
+    public func recommendedCarbRatioDailySchedule() throws -> DailySchedule<Double> {
+        try DailySchedule(entries: carbRatioSchedule.map {
+            .init(secondsSinceMidnight: $0.secondsSinceMidnight, value: $0.parameter.recommendedValue)
+        })
+    }
+
+    private static func timeWeightedAverage(
+        _ schedule: [ParameterScheduleRecommendation],
+        value: (ParameterScheduleRecommendation) -> Double
+    ) -> Double {
+        guard !schedule.isEmpty else { return 0 }
+        var total = 0.0
+        for index in schedule.indices {
+            let start = schedule[index].secondsSinceMidnight
+            let end = index + 1 < schedule.count ? schedule[index + 1].secondsSinceMidnight : 86_400
+            total += value(schedule[index]) * Double(end - start)
+        }
+        return total / 86_400
+    }
+
+    private static func applyScheduleSummary(
+        _ summary: inout ParameterRecommendation,
+        from schedule: [ParameterScheduleRecommendation]
+    ) {
+        summary.recommendedValue = timeWeightedAverage(schedule, value: { $0.parameter.recommendedValue })
+        summary.percentChange = summary.pumpValue == 0
+            ? 0
+            : (summary.recommendedValue - summary.pumpValue) / summary.pumpValue * 100
+        summary.changeTier = ChangeTier.classify(pump: summary.pumpValue, tuned: summary.recommendedValue)
+        if schedule.contains(where: { $0.parameter.guardrailStatus == .atLimit }) {
+            summary.guardrailStatus = .atLimit
+        } else if schedule.contains(where: { $0.parameter.guardrailStatus == .outsideRecommended }) {
+            summary.guardrailStatus = .outsideRecommended
+        } else {
+            summary.guardrailStatus = .ok
+        }
     }
 }

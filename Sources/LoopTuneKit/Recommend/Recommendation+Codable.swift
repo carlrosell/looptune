@@ -41,6 +41,36 @@ extension ParameterRecommendation: Codable {
     }
 }
 
+extension ParameterScheduleRecommendation: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case secondsSinceMidnight, startMinutes
+        case parameter, untuned, evidenceCount, daysMissing
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let seconds = try container.decodeIfPresent(Int.self, forKey: .secondsSinceMidnight) {
+            self.secondsSinceMidnight = seconds
+        } else {
+            self.secondsSinceMidnight = try container.decode(Int.self, forKey: .startMinutes) * 60
+        }
+        self.parameter = try container.decode(ParameterRecommendation.self, forKey: .parameter)
+        self.untuned = try container.decode(Bool.self, forKey: .untuned)
+        self.evidenceCount = try container.decode(Int.self, forKey: .evidenceCount)
+        self.daysMissing = try container.decode(Int.self, forKey: .daysMissing)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(secondsSinceMidnight, forKey: .secondsSinceMidnight)
+        try container.encode(startMinutes, forKey: .startMinutes)
+        try container.encode(parameter, forKey: .parameter)
+        try container.encode(untuned, forKey: .untuned)
+        try container.encode(evidenceCount, forKey: .evidenceCount)
+        try container.encode(daysMissing, forKey: .daysMissing)
+    }
+}
+
 extension BasalHourRecommendation: Codable {
     private enum CodingKeys: String, CodingKey {
         case hour, pumpRate, recommendedRate, changeTier, guardrailStatus, untuned, daysMissing, sampleCount
@@ -73,15 +103,34 @@ extension BasalHourRecommendation: Codable {
 
 extension TuningRecommendation: Codable {
     private enum CodingKeys: String, CodingKey {
-        case sensitivity, carbRatio, basalHours, categoryCounts, totalSamples
+        case sensitivity, carbRatio, sensitivitySchedule, carbRatioSchedule
+        case basalHours, categoryCounts, totalSamples
         case daysAnalyzed, profileGlucoseUnit, daysTuned, settingsChanges
         case excludedOverrideSamples
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.sensitivity = try container.decode(ParameterRecommendation.self, forKey: .sensitivity)
-        self.carbRatio = try container.decode(ParameterRecommendation.self, forKey: .carbRatio)
+        let sensitivity = try container.decode(ParameterRecommendation.self, forKey: .sensitivity)
+        let carbRatio = try container.decode(ParameterRecommendation.self, forKey: .carbRatio)
+        self.sensitivity = sensitivity
+        self.carbRatio = carbRatio
+        self.sensitivitySchedule = try container.decodeIfPresent(
+            [ParameterScheduleRecommendation].self,
+            forKey: .sensitivitySchedule
+        ) ?? [ParameterScheduleRecommendation(
+            startMinutes: 0,
+            parameter: sensitivity,
+            untuned: false
+        )]
+        self.carbRatioSchedule = try container.decodeIfPresent(
+            [ParameterScheduleRecommendation].self,
+            forKey: .carbRatioSchedule
+        ) ?? [ParameterScheduleRecommendation(
+            startMinutes: 0,
+            parameter: carbRatio,
+            untuned: false
+        )]
         self.basalHours = try container.decode([BasalHourRecommendation].self, forKey: .basalHours)
         let counts = try container.decode([String: Int].self, forKey: .categoryCounts)
         self.categoryCounts = Dictionary(uniqueKeysWithValues: counts.compactMap { key, value in
@@ -102,6 +151,8 @@ extension TuningRecommendation: Codable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(sensitivity, forKey: .sensitivity)
         try container.encode(carbRatio, forKey: .carbRatio)
+        try container.encode(sensitivitySchedule, forKey: .sensitivitySchedule)
+        try container.encode(carbRatioSchedule, forKey: .carbRatioSchedule)
         try container.encode(basalHours, forKey: .basalHours)
         let counts = Dictionary(uniqueKeysWithValues: categoryCounts.map { ($0.key.rawValue, $0.value) })
         try container.encode(counts, forKey: .categoryCounts)
