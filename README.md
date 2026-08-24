@@ -48,7 +48,11 @@ drift beyond ±20–30% of your actual settings no matter how many days are
 analyzed. Per-hour **"days missing"** counts show how much real data sits
 behind each basal hour. Profile changes take effect at their exact timestamps,
 and periods where an override changes insulin needs are excluded and reported.
-A recommendation requires at least 12 usable five-minute samples.
+ISF and carb ratio are tuned independently for every time block already
+configured in Loop; blocks without usable evidence stay unchanged. An analysis
+requires at least 12 usable five-minute samples. Within that analysis, each ISF
+block needs 10 usable ISF samples. A carb-ratio block needs at least one eligible
+logged meal and has no separate five-minute-sample threshold.
 
 ## Validation status
 
@@ -91,16 +95,17 @@ swift run LoopTuneApp
 ```
 
 Enter your Nightscout URL, choose a window and insulin type, and click Analyze.
-The results view shows an hourly CGM percentile profile, ISF/CR cards, a
-pump-vs-tuned basal chart, per-hour data coverage, and the full basal table with
-days-missing confidence, plus an app-wide mg/dL ↔ mmol/L preference in the
-window toolbar (defaults to your site's unit until explicitly changed). Your
-access token is stored per host and port in the login Keychain; paths,
-fragments, and pasted query tokens are stripped before the URL is remembered.
+The results view shows an hourly CGM percentile profile, time-of-day ISF and
+carb-ratio tables, a pump-vs-tuned basal chart, per-hour data coverage, and the
+full basal table with days-missing confidence. The window toolbar has an
+app-wide mg/dL ↔ mmol/L preference that defaults to your site's unit until you
+change it. Your access token is stored per host and port in the login Keychain;
+paths, fragments, and pasted query tokens are stripped before the URL is
+remembered.
 
 ## Development
 
-- `swift build` / `swift test` (150 tests across 30 suites)
+- `swift build` / `swift test` (164 tests across 31 suites)
 - `scripts/dev.sh` — watch mode: rebuilds and relaunches the app on every
   save (the app restores its state on launch, so a relaunch is nearly free);
   pass `release` for an optimized build

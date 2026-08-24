@@ -77,8 +77,34 @@ struct ResultsView: View {
                 DisclaimerBanner()
 
                 HStack(spacing: 16) {
-                    ParameterCard(rec: recommendation.sensitivity, displayUnit: displayUnit)
-                    ParameterCard(rec: recommendation.carbRatio, displayUnit: displayUnit)
+                    ParameterCard(
+                        rec: recommendation.sensitivity,
+                        displayUnit: displayUnit,
+                        isDailyAverage: recommendation.sensitivitySchedule.count > 1
+                    )
+                    ParameterCard(
+                        rec: recommendation.carbRatio,
+                        displayUnit: displayUnit,
+                        isDailyAverage: recommendation.carbRatioSchedule.count > 1
+                    )
+                }
+
+                if recommendation.sensitivitySchedule.count > 1 {
+                    ParameterScheduleCard(
+                        title: "Insulin sensitivity by time of day",
+                        entries: recommendation.sensitivitySchedule,
+                        evidenceName: "samples",
+                        displayUnit: displayUnit
+                    )
+                }
+
+                if recommendation.carbRatioSchedule.count > 1 {
+                    ParameterScheduleCard(
+                        title: "Carb ratio by time of day",
+                        entries: recommendation.carbRatioSchedule,
+                        evidenceName: "meals",
+                        displayUnit: displayUnit
+                    )
                 }
 
                 HourlyGlucoseOutcomeView(
@@ -243,11 +269,17 @@ struct MetricBadge: View {
 struct ParameterCard: View {
     let rec: ParameterRecommendation
     let displayUnit: GlucoseUnit
+    var isDailyAverage = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(rec.name)
                 .font(.subheadline.weight(.semibold))
+            if isDailyAverage {
+                Text("Daily average")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(rec.formatted(rec.recommendedValue(in: displayUnit), in: displayUnit))
                     .font(.system(size: 30, weight: .bold, design: .rounded))

@@ -39,6 +39,21 @@ struct RecommendationDTO: Encodable {
         var daysMissing: Int
         var sampleCount: Int
     }
+    struct ParameterScheduleEntry: Encodable {
+        var time: String
+        var secondsSinceMidnight: Int
+        var startMinutes: Int
+        var unit: String
+        var pump: Double
+        var recommended: Double
+        var rawTuned: Double
+        var percentChange: Double
+        var changeTier: String
+        var guardrailStatus: String
+        var untuned: Bool
+        var daysMissing: Int
+        var evidenceCount: Int
+    }
 
     var daysAnalyzed: Int
     var daysTuned: Int?
@@ -50,6 +65,8 @@ struct RecommendationDTO: Encodable {
     var categoryCounts: [String: Int]
     var sensitivity: Parameter
     var carbRatio: Parameter
+    var sensitivitySchedule: [ParameterScheduleEntry]
+    var carbRatioSchedule: [ParameterScheduleEntry]
     var pumpDailyBasal: Double
     var tunedDailyBasal: Double
     var roundedDailyBasal: Double
@@ -76,6 +93,12 @@ struct RecommendationDTO: Encodable {
         categoryCounts = Dictionary(uniqueKeysWithValues: recommendation.categoryCounts.map { ($0.key.rawValue, $0.value) })
         sensitivity = Parameter(recommendation.sensitivity, in: displayUnit)
         carbRatio = Parameter(recommendation.carbRatio, in: displayUnit)
+        sensitivitySchedule = recommendation.sensitivitySchedule.map {
+            ParameterScheduleEntry($0, in: displayUnit)
+        }
+        carbRatioSchedule = recommendation.carbRatioSchedule.map {
+            ParameterScheduleEntry($0, in: displayUnit)
+        }
         pumpDailyBasal = recommendation.pumpDailyBasal
         tunedDailyBasal = recommendation.tunedDailyBasal
         roundedDailyBasal = recommendation.roundedDailyBasal(increment: basalIncrement)
@@ -84,6 +107,27 @@ struct RecommendationDTO: Encodable {
         loopBasalSchedule = recommendation.loopBasalSchedule(increment: basalIncrement).map {
             LoopEntry(time: $0.timeString, startMinutes: $0.startMinutes, rate: $0.rate)
         }
+    }
+}
+
+private extension RecommendationDTO.ParameterScheduleEntry {
+    init(_ entry: ParameterScheduleRecommendation, in unit: GlucoseUnit) {
+        let rec = entry.parameter
+        self.init(
+            time: entry.timeString,
+            secondsSinceMidnight: entry.secondsSinceMidnight,
+            startMinutes: entry.startMinutes,
+            unit: rec.unitLabel(in: unit),
+            pump: rec.pumpValue(in: unit),
+            recommended: rec.recommendedValue(in: unit),
+            rawTuned: rec.rawTunedValue(in: unit),
+            percentChange: rec.percentChange,
+            changeTier: rec.changeTier.rawValue,
+            guardrailStatus: rec.guardrailStatus.rawValue,
+            untuned: entry.untuned,
+            daysMissing: entry.daysMissing,
+            evidenceCount: entry.evidenceCount
+        )
     }
 }
 

@@ -101,10 +101,23 @@ public struct TherapyProfile: Sendable, Equatable {
         case invalidBasalHourlyCount(Int)
     }
 
-    /// A copy of this profile with tuned therapy values substituted — used by
-    /// day-chained tuning, where each day's output seeds the next day's replay.
-    /// ISF and CR become flat single-value schedules (autotune tunes one value).
+    /// A copy of this profile with tuned therapy values substituted, used by
+    /// day-chained tuning where each day's output seeds the next day's replay.
     public func replacing(basalHourly: [Double], isf: Double, carbRatio: Double) throws -> TherapyProfile {
+        try replacing(
+            basalHourly: basalHourly,
+            sensitivitySchedule: DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: isf)]),
+            carbRatioSchedule: DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: carbRatio)])
+        )
+    }
+
+    /// Schedule-aware replacement that preserves the time-of-day ISF and CR
+    /// blocks recommended by the tuner.
+    public func replacing(
+        basalHourly: [Double],
+        sensitivitySchedule: DailySchedule<Double>,
+        carbRatioSchedule: DailySchedule<Double>
+    ) throws -> TherapyProfile {
         guard basalHourly.count == 24 else {
             throw ProfileUpdateError.invalidBasalHourlyCount(basalHourly.count)
         }
@@ -112,8 +125,8 @@ public struct TherapyProfile: Sendable, Equatable {
         copy.basalSchedule = try DailySchedule(entries: (0..<24).map {
             .init(secondsSinceMidnight: $0 * 3600, value: basalHourly[$0])
         })
-        copy.sensitivitySchedule = try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: isf)])
-        copy.carbRatioSchedule = try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: carbRatio)])
+        copy.sensitivitySchedule = sensitivitySchedule
+        copy.carbRatioSchedule = carbRatioSchedule
         return copy
     }
 }

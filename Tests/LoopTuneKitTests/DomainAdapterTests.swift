@@ -95,4 +95,25 @@ struct TherapyProfileTests {
         #expect(target[0].value.lowerBound.doubleValue(for: .milligramsPerDeciliter) == 100)
         #expect(target[0].value.upperBound.doubleValue(for: .milligramsPerDeciliter) == 115)
     }
+
+    @Test("schedule-aware replacement keeps ISF and carb-ratio time blocks")
+    func scheduleAwareReplacement() throws {
+        let sensitivity = try DailySchedule(entries: [
+            .init(secondsSinceMidnight: 0, value: 48.0),
+            .init(secondsSinceMidnight: 8 * 3600, value: 55.0),
+        ])
+        let carbRatio = try DailySchedule(entries: [
+            .init(secondsSinceMidnight: 0, value: 9.0),
+            .init(secondsSinceMidnight: 11 * 3600, value: 11.0),
+        ])
+        let replaced = try makeProfile().replacing(
+            basalHourly: Array(repeating: 0.9, count: 24),
+            sensitivitySchedule: sensitivity,
+            carbRatioSchedule: carbRatio
+        )
+
+        #expect(replaced.sensitivitySchedule == sensitivity)
+        #expect(replaced.carbRatioSchedule == carbRatio)
+        #expect(replaced.basalSchedule.hourlyValues() == Array(repeating: 0.9, count: 24))
+    }
 }

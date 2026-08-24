@@ -4,43 +4,74 @@ import Foundation
 
 @Suite("Recommendation Codable")
 struct RecommendationCodableTests {
-    private func sampleRecommendation() -> TuningRecommendation {
-        let output = TuningOutput(
+    private func sampleRecommendation() throws -> TuningRecommendation {
+        let output = try TuningOutput(
             tunedBasalHourly: Array(repeating: 1.1, count: 24),
             pumpBasalHourly: Array(repeating: 1.0, count: 24),
             untunedBasalHours: Array(repeating: false, count: 24),
-            tunedISF: 48, pumpISF: 50,
-            tunedCarbRatio: 9.5, pumpCarbRatio: 10,
+            sensitivitySchedule: [
+                ScheduleTuningOutput(secondsSinceMidnight: 0, tunedValue: 48, pumpValue: 50, untuned: false, evidenceCount: 20),
+                ScheduleTuningOutput(secondsSinceMidnight: 12 * 3600, tunedValue: 58, pumpValue: 60, untuned: false, evidenceCount: 18),
+            ],
+            carbRatioSchedule: [
+                ScheduleTuningOutput(secondsSinceMidnight: 0, tunedValue: 9.5, pumpValue: 10, untuned: false, evidenceCount: 3),
+                ScheduleTuningOutput(secondsSinceMidnight: 12 * 3600, tunedValue: 11, pumpValue: 12, untuned: false, evidenceCount: 4),
+            ],
             categoryCounts: [.basal: 100, .isf: 20, .csf: 40, .uam: 0],
             totalSamples: 160,
             basalSampleCountByHour: Array(repeating: 5, count: 24)
         )
-        return TuningRecommendation(from: output, daysAnalyzed: 7, profileGlucoseUnit: .millimolesPerLiter, daysTuned: 6)
+        return try TuningRecommendation(from: output, daysAnalyzed: 7, profileGlucoseUnit: .millimolesPerLiter, daysTuned: 6)
     }
 
     @Test("recommendation round-trips through JSON verbatim")
     func roundTrip() throws {
-        let rec = sampleRecommendation()
+        let rec = try sampleRecommendation()
         let data = try JSONEncoder().encode(rec)
         let decoded = try JSONDecoder().decode(TuningRecommendation.self, from: data)
         #expect(decoded == rec)
         #expect(decoded.categoryCounts[.basal] == 100)
         #expect(decoded.profileGlucoseUnit == .millimolesPerLiter)
         #expect(decoded.daysTuned == 6)
+        #expect(decoded.sensitivitySchedule.count == 2)
+        #expect(decoded.carbRatioSchedule[1].startMinutes == 12 * 60)
     }
 
     @Test("recommendations saved before override accounting decode compatibly")
     func legacyDecode() throws {
-        let rec = sampleRecommendation()
+        let rec = try sampleRecommendation()
         let encoded = try JSONEncoder().encode(rec)
         var object = try #require(
             JSONSerialization.jsonObject(with: encoded) as? [String: Any]
         )
         object.removeValue(forKey: "excludedOverrideSamples")
+        object.removeValue(forKey: "sensitivitySchedule")
+        object.removeValue(forKey: "carbRatioSchedule")
         let legacyData = try JSONSerialization.data(withJSONObject: object)
         let decoded = try JSONDecoder().decode(TuningRecommendation.self, from: legacyData)
         #expect(decoded.excludedOverrideSamples == 0)
         #expect(decoded.totalSamples == rec.totalSamples)
+        #expect(decoded.sensitivitySchedule.count == 1)
+        #expect(decoded.sensitivitySchedule[0].parameter == decoded.sensitivity)
+        #expect(decoded.carbRatioSchedule.count == 1)
+    }
+
+    @Test("minute-only schedule entries decode compatibly")
+    func legacyScheduleEntryDecode() throws {
+        let rec = try sampleRecommendation()
+        let encoded = try JSONEncoder().encode(rec)
+        var object = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        var schedule = try #require(object["sensitivitySchedule"] as? [[String: Any]])
+        for index in schedule.indices {
+            schedule[index].removeValue(forKey: "secondsSinceMidnight")
+        }
+        object["sensitivitySchedule"] = schedule
+
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(TuningRecommendation.self, from: legacyData)
+        #expect(decoded.sensitivitySchedule.map(\.secondsSinceMidnight) == [0, 12 * 3_600])
     }
 
     @Test("diagnostics saved before hourly distributions decode compatibly")
@@ -87,7 +118,7 @@ struct RunStoreTests {
         return RunStore(directory: dir, maxRuns: maxRuns)
     }
 
-    private func makeRun(createdAt: Date) -> SavedRun {
+    private func makeRun(createdAt: Date) throws -> SavedRun {
         let output = TuningOutput(
             tunedBasalHourly: Array(repeating: 1.0, count: 24),
             pumpBasalHourly: Array(repeating: 1.0, count: 24),
@@ -95,16 +126,16 @@ struct RunStoreTests {
             tunedISF: 50, pumpISF: 50, tunedCarbRatio: 10, pumpCarbRatio: 10,
             categoryCounts: [:], totalSamples: 10
         )
-        let rec = TuningRecommendation(from: output, daysAnalyzed: 1)
+        let rec = try TuningRecommendation(from: output, daysAnalyzed: 1)
         let diag = RunDiagnostics(glucoseCount: 288, doseCount: 5, carbCount: 2, windowStart: createdAt, windowEnd: createdAt, daySummaries: [], hourlyDeviation: [], meanAbsDeviationBefore: 4, meanAbsDeviationAfter: 3)
         return SavedRun(id: RunStore.makeID(createdAt: createdAt), createdAt: createdAt, siteHost: "site", days: 1, insulinType: .novolog, recommendation: rec, diagnostics: diag)
     }
 
     @Test("saves and lists runs newest-first")
-    func saveAndList() {
+    func saveAndList() throws {
         let store = makeStore()
-        let older = makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
-        let newer = makeRun(createdAt: Date(timeIntervalSince1970: 1_700_100_000))
+        let older = try makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        let newer = try makeRun(createdAt: Date(timeIntervalSince1970: 1_700_100_000))
         store.save(older)
         store.save(newer)
         let all = store.loadAll()
@@ -114,9 +145,9 @@ struct RunStoreTests {
     }
 
     @Test("round-trips a full run with diagnostics")
-    func roundTrip() {
+    func roundTrip() throws {
         let store = makeStore()
-        let run = makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        let run = try makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
         store.save(run)
         let loaded = store.loadAll().first
         #expect(loaded == run)
@@ -124,10 +155,10 @@ struct RunStoreTests {
     }
 
     @Test("enforces the run limit, keeping the newest")
-    func limit() {
+    func limit() throws {
         let store = makeStore(maxRuns: 3)
         for i in 0..<6 {
-            store.save(makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000 + Double(i) * 1000)))
+            store.save(try makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000 + Double(i) * 1000)))
         }
         let all = store.loadAll()
         #expect(all.count == 3)
@@ -136,18 +167,18 @@ struct RunStoreTests {
     }
 
     @Test("delete removes a run")
-    func delete() {
+    func delete() throws {
         let store = makeStore()
-        let run = makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        let run = try makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
         store.save(run)
         store.delete(id: run.id)
         #expect(store.loadAll().isEmpty)
     }
 
     @Test("rejects path-like run IDs")
-    func rejectsUnsafeID() {
+    func rejectsUnsafeID() throws {
         let store = makeStore()
-        var run = makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        var run = try makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
         run.id = "../outside"
         #expect(!store.save(run))
         #expect(!store.delete(id: "../outside"))
@@ -155,10 +186,10 @@ struct RunStoreTests {
     }
 
     @Test("a zero or negative limit retains no runs")
-    func nonPositiveLimit() {
+    func nonPositiveLimit() throws {
         for limit in [0, -5] {
             let store = makeStore(maxRuns: limit)
-            #expect(store.save(makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))))
+            #expect(store.save(try makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))))
             #expect(store.loadAll().isEmpty)
         }
     }
@@ -166,7 +197,7 @@ struct RunStoreTests {
     @Test("saved health-data files are owner-only")
     func privatePermissions() throws {
         let store = makeStore()
-        let run = makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        let run = try makeRun(createdAt: Date(timeIntervalSince1970: 1_700_000_000))
         #expect(store.save(run))
         let file = store.directory.appendingPathComponent(run.id).appendingPathExtension("json")
         let directoryAttributes = try FileManager.default.attributesOfItem(atPath: store.directory.path)
@@ -222,7 +253,7 @@ struct DiagnosticsBuilderTests {
         }
         let inputs = TuningInputs(profile: profile, glucose: glucose, doses: [], carbs: [], analysisStart: base, analysisEnd: glucose.last!.date)
         let rec = try TuningPipeline().run(inputs: inputs, configuration: TuningConfiguration(days: 1))
-        let diag = await DiagnosticsBuilder().build(inputs: inputs, recommendation: rec)
+        let diag = try await DiagnosticsBuilder().build(inputs: inputs, recommendation: rec)
 
         #expect(diag.hourlyDeviation.count == 24)
         #expect(diag.glucoseCount == 288)
@@ -235,6 +266,49 @@ struct DiagnosticsBuilderTests {
                 && $0.median <= $0.p75
                 && $0.p75 <= $0.p90
         } == true)
+    }
+
+    @Test("build propagates an invalid recommended schedule")
+    func buildRejectsInvalidRecommendedSchedule() async throws {
+        let profile = try profile(basal: 1.0)
+        let glucose = (0..<12).map { index in
+            GlucoseSample(
+                date: base.addingTimeInterval(Double(index) * 300),
+                milligramsPerDeciliter: 120
+            )
+        }
+        let inputs = TuningInputs(
+            profile: profile,
+            glucose: glucose,
+            doses: [],
+            carbs: [],
+            analysisStart: base,
+            analysisEnd: glucose.last!.date
+        )
+        let output = TuningOutput(
+            tunedBasalHourly: Array(repeating: 1.0, count: 24),
+            pumpBasalHourly: Array(repeating: 1.0, count: 24),
+            untunedBasalHours: Array(repeating: false, count: 24),
+            tunedISF: 50,
+            pumpISF: 50,
+            tunedCarbRatio: 10,
+            pumpCarbRatio: 10,
+            categoryCounts: [:],
+            totalSamples: 12
+        )
+        let validRecommendation = try TuningRecommendation(from: output, daysAnalyzed: 1)
+        var recommendation = validRecommendation
+        recommendation.sensitivitySchedule = []
+
+        await #expect(throws: DailySchedule<Double>.ScheduleError.empty) {
+            try await DiagnosticsBuilder().build(inputs: inputs, recommendation: recommendation)
+        }
+
+        recommendation = validRecommendation
+        recommendation.carbRatioSchedule = []
+        await #expect(throws: DailySchedule<Double>.ScheduleError.empty) {
+            try await DiagnosticsBuilder().build(inputs: inputs, recommendation: recommendation)
+        }
     }
 
     @Test("hourly charts use conventional interpolated percentiles")
@@ -289,7 +363,7 @@ struct DiagnosticsBuilderTests {
             inputs: inputs,
             configuration: TuningConfiguration(days: 1)
         )
-        let diagnostics = await DiagnosticsBuilder().build(inputs: inputs, recommendation: rec)
+        let diagnostics = try await DiagnosticsBuilder().build(inputs: inputs, recommendation: rec)
         #expect(diagnostics.hourlyDeviation.reduce(0) { $0 + $1.sampleCount } == rec.totalSamples)
     }
 }
