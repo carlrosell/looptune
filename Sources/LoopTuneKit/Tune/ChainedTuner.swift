@@ -128,6 +128,7 @@ public struct ChainedTuner: Sendable {
                 let output = try tuner.tune(
                     deviations: deviations,
                     carbs: inputs.eligibleCarbs(from: segment.start, to: segment.end),
+                    attributionCarbs: trimmed.carbs,
                     currentProfile: evolving,
                     pumpProfile: pumpProfile,
                     analysisStart: segment.start,

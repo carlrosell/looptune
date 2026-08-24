@@ -149,9 +149,13 @@ public struct TuningPipeline: Sendable {
         }
 
         let tuner = LoopTuner(options: options)
+        let attributionStart = inputs.analysisStart.addingTimeInterval(-ReplayEngine.carbLookback)
         let output = try tuner.tune(
             deviations: deviations,
             carbs: inputs.eligibleCarbs(from: inputs.analysisStart, to: inputs.analysisEnd),
+            attributionCarbs: inputs.carbs.filter {
+                $0.date >= attributionStart && $0.date <= inputs.analysisEnd
+            },
             currentProfile: profile,
             pumpProfile: profile,
             analysisStart: inputs.analysisStart,

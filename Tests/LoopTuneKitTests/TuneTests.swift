@@ -351,6 +351,7 @@ struct TunerTests {
         )
         let breakfast = CarbRecord(date: midnight.addingTimeInterval(8 * 3600), grams: 40)
         let dinner = CarbRecord(date: midnight.addingTimeInterval(18 * 3600), grams: 60)
+        let preWindowMeal = CarbRecord(date: midnight.addingTimeInterval(3 * 3600), grams: 30)
 
         func csf(hour: Int, deviation: Double) -> CategorizedSample {
             let datum = DeviationSample(
@@ -374,7 +375,8 @@ struct TunerTests {
         let result = CarbRatioTuner().tuneSchedule(
             // Breakfast is still absorbing after the noon CR boundary.
             samples: [csf(hour: 13, deviation: 20), csf(hour: 19, deviation: -20)],
-            carbs: [breakfast, dinner],
+            eligibleCarbs: [breakfast, dinner],
+            attributionCarbs: [breakfast, dinner],
             currentProfile: profile,
             pumpSchedule: carbRatio,
             tunedSensitivity: [ScheduleTuningOutput(
@@ -397,7 +399,8 @@ struct TunerTests {
                 csf(hour: 13, deviation: 20),
                 csf(hour: 19, deviation: -20),
             ],
-            carbs: [breakfast, dinner],
+            eligibleCarbs: [breakfast, dinner],
+            attributionCarbs: [preWindowMeal, breakfast, dinner],
             currentProfile: profile,
             pumpSchedule: carbRatio,
             tunedSensitivity: [ScheduleTuningOutput(
@@ -407,7 +410,30 @@ struct TunerTests {
                 untuned: false
             )]
         )
-        #expect(resultWithPreMealResidual == result)
+        #expect(resultWithPreMealResidual[0].tunedValue == 10)
+        #expect(resultWithPreMealResidual[1] == result[1])
+        #expect(resultWithPreMealResidual.map(\.evidenceCount) == [1, 1])
+
+        let attributionOnlyMeal = CarbRecord(
+            date: midnight.addingTimeInterval(12 * 3600),
+            grams: 20
+        )
+        let resultAfterAttributionOnlyMeal = CarbRatioTuner().tuneSchedule(
+            samples: [csf(hour: 13, deviation: 1_000)],
+            eligibleCarbs: [breakfast],
+            attributionCarbs: [breakfast, attributionOnlyMeal],
+            currentProfile: profile,
+            pumpSchedule: carbRatio,
+            tunedSensitivity: [ScheduleTuningOutput(
+                secondsSinceMidnight: 0,
+                tunedValue: 50,
+                pumpValue: 50,
+                untuned: false
+            )]
+        )
+        #expect(resultAfterAttributionOnlyMeal[0].tunedValue == 10)
+        #expect(resultAfterAttributionOnlyMeal[0].evidenceCount == 1)
+        #expect(resultAfterAttributionOnlyMeal[1].evidenceCount == 0)
     }
 
     @Test("empty tuned sensitivity is handled safely during carb-ratio tuning")
@@ -445,7 +471,8 @@ struct TunerTests {
 
         let result = CarbRatioTuner().tuneSchedule(
             samples: [sample],
-            carbs: [meal],
+            eligibleCarbs: [meal],
+            attributionCarbs: [meal],
             currentProfile: profile,
             pumpSchedule: carbRatio,
             tunedSensitivity: []

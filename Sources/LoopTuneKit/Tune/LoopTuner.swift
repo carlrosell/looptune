@@ -203,9 +203,12 @@ public struct LoopTuner: Sendable {
     ///   - currentProfile: the profile to adjust (equals `pumpProfile` on a
     ///     fresh run; the evolving profile when chaining days).
     ///   - pumpProfile: the fixed pump baseline used for all safety caps.
+    ///   - attributionCarbs: meals that may explain residuals, including the
+    ///     pre-window lookback. Only `carbs` contribute grams or evidence.
     public func tune(
         deviations: [DeviationSample],
         carbs: [CarbRecord],
+        attributionCarbs: [CarbRecord]? = nil,
         currentProfile: TherapyProfile,
         pumpProfile: TherapyProfile,
         analysisStart: Date,
@@ -238,7 +241,8 @@ public struct LoopTuner: Sendable {
         let crTuner = CarbRatioTuner(caps: caps)
         let carbRatioSchedule = crTuner.tuneSchedule(
             samples: categorized,
-            carbs: mealCarbs,
+            eligibleCarbs: mealCarbs,
+            attributionCarbs: attributionCarbs ?? carbs,
             currentProfile: currentProfile,
             pumpSchedule: pumpProfile.carbRatioSchedule,
             tunedSensitivity: sensitivitySchedule

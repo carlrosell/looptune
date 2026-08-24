@@ -43,15 +43,24 @@ extension CarbRatioTuner {
     /// was entered.
     func tuneSchedule(
         samples: [CategorizedSample],
-        carbs: [CarbRecord],
+        eligibleCarbs: [CarbRecord],
+        attributionCarbs: [CarbRecord],
         currentProfile: TherapyProfile,
         pumpSchedule: DailySchedule<Double>,
         tunedSensitivity: [ScheduleTuningOutput]
     ) -> [ScheduleTuningOutput] {
         let timeZone = currentProfile.timeZone
-        let sortedCarbs = carbs.sorted { $0.date < $1.date }
+        var carbsForAttribution = attributionCarbs
+        for carb in eligibleCarbs where !carbsForAttribution.contains(carb) {
+            carbsForAttribution.append(carb)
+        }
+        let sortedCarbs = carbsForAttribution
+            .map { carb in
+                (carb: carb, isEligible: eligibleCarbs.contains(carb))
+            }
+            .sorted { $0.carb.date < $1.carb.date }
         var carbsBySlot = [[CarbRecord]](repeating: [], count: pumpSchedule.entries.count)
-        for carb in sortedCarbs {
+        for carb in eligibleCarbs {
             let slot = ScheduleSlot.index(for: carb.date, entries: pumpSchedule.entries, timeZone: timeZone)
             carbsBySlot[slot].append(carb)
         }
@@ -64,13 +73,32 @@ extension CarbRatioTuner {
             deviationsBySlot[0] = csfSamples.reduce(0) { $0 + $1.sample.deviation }
         } else {
             var latestCarbIndex = -1
+            var earliestLookbackIndex = 0
+            var attributionOnlyMealsInLookback = 0
             for entry in csfSamples {
                 while latestCarbIndex + 1 < sortedCarbs.count,
-                      sortedCarbs[latestCarbIndex + 1].date <= entry.sample.date {
+                      sortedCarbs[latestCarbIndex + 1].carb.date <= entry.sample.date {
                     latestCarbIndex += 1
+                    if !sortedCarbs[latestCarbIndex].isEligible {
+                        attributionOnlyMealsInLookback += 1
+                    }
+                }
+                while earliestLookbackIndex <= latestCarbIndex,
+                      entry.sample.date.timeIntervalSince(
+                        sortedCarbs[earliestLookbackIndex].carb.date
+                      ) > ReplayEngine.carbLookback {
+                    if !sortedCarbs[earliestLookbackIndex].isEligible {
+                        attributionOnlyMealsInLookback -= 1
+                    }
+                    earliestLookbackIndex += 1
                 }
                 guard latestCarbIndex >= 0 else { continue }
-                let meal = sortedCarbs[latestCarbIndex]
+                // A pre-window or otherwise excluded meal may still explain
+                // this residual, so do not charge it to a newer eligible meal.
+                guard attributionOnlyMealsInLookback == 0 else { continue }
+                let attributedMeal = sortedCarbs[latestCarbIndex]
+                guard attributedMeal.isEligible else { continue }
+                let meal = attributedMeal.carb
                 guard entry.sample.date.timeIntervalSince(meal.date) <= ReplayEngine.carbLookback else {
                     continue
                 }
