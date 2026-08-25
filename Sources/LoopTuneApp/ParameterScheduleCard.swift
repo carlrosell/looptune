@@ -13,7 +13,7 @@ struct ParameterScheduleCard: View {
     var body: some View {
         TableCard(
             title: title,
-            subtitle: "Uses your existing Loop time blocks. Blocks without enough data stay unchanged."
+            subtitle: "Uses your Loop time blocks, or six-hour blocks when Loop has one all-day value. Blocks without enough data stay unchanged."
         ) {
             Table(entries, selection: $selection) {
                 TableColumn("Time") { entry in

@@ -219,8 +219,9 @@ public struct LoopTuner: Sendable {
 
         let currentISF = currentProfile.sensitivitySchedule.timeWeightedAverage()
 
-        // ISF first. Each pump-configured time block is tuned independently,
-        // and CR tuning consumes that tuned schedule.
+        // ISF first. Each pump-configured time block is tuned independently.
+        // A flat pump profile gets conservative six-hour suggestion blocks.
+        // CR tuning then consumes the resulting ISF schedule.
         let isfTuner = SensitivityTuner(caps: caps)
         let sensitivitySchedule = isfTuner.tuneSchedule(
             samples: categorized,

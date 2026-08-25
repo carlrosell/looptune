@@ -269,6 +269,55 @@ struct TunerTests {
         #expect(result.map(\.untuned) == [false, false, true])
     }
 
+    @Test("flat ISF profile receives conservative time-of-day suggestions")
+    func flatISFProfileSuggestsTimeBlocks() throws {
+        let utc = TimeZone(identifier: "UTC")!
+        let midnight = Date(timeIntervalSince1970: 1_699_833_600)
+        let schedule = try DailySchedule(entries: [
+            .init(secondsSinceMidnight: 0, value: 50.0),
+        ])
+
+        func entries(hour: Int, count: Int, deviation: Double) -> [CategorizedSample] {
+            (0..<count).map { index in
+                let datum = DeviationSample(
+                    date: midnight.addingTimeInterval(Double(hour * 3_600 + index * 300)),
+                    glucose: 150,
+                    averageDelta: 0,
+                    insulinEffect: -4,
+                    deviation: deviation,
+                    insulinOnBoard: 1,
+                    carbsOnBoard: 0
+                )
+                return CategorizedSample(
+                    sample: datum,
+                    category: .isf,
+                    scheduledBasal: 1,
+                    scheduledISF: 50
+                )
+            }
+        }
+
+        let samples = entries(hour: 1, count: 10, deviation: 1)
+            + entries(hour: 7, count: 10, deviation: -1)
+            + entries(hour: 13, count: 9, deviation: 1)
+            + entries(hour: 19, count: 10, deviation: 0)
+        let result = SensitivityTuner().tuneSchedule(
+            samples: samples,
+            currentSchedule: schedule,
+            pumpSchedule: schedule,
+            timeZone: utc
+        )
+
+        #expect(result.map(\.secondsSinceMidnight) == [0, 6 * 3_600, 12 * 3_600, 18 * 3_600])
+        #expect(result[0].tunedValue < 50)
+        #expect(result[1].tunedValue > 50)
+        #expect(result[2].tunedValue == 50)
+        #expect(result[3].tunedValue == 50)
+        #expect(result.map(\.evidenceCount) == [10, 10, 9, 10])
+        #expect(result.map(\.untuned) == [false, false, true, false])
+        #expect(result.allSatisfy { $0.pumpValue == 50 })
+    }
+
     @Test("basal tuner raises prior hours when deviations are positive")
     func basalRaisesPriorHours() {
         // All deviations at hour 12 (UTC), positive → basal at hours 9,10,11 rise.

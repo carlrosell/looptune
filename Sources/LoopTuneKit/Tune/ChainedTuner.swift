@@ -65,9 +65,10 @@ public struct ChainedTuner: Sendable {
 
         var daysMissing = [Int](repeating: 0, count: 24)
         var sampleCountByHour = [Int](repeating: 0, count: 24)
-        var sensitivityDaysMissing = [Int](repeating: 0, count: pumpProfile.sensitivitySchedule.entries.count)
+        let sensitivityTuningEntries = SensitivityTuner.tuningEntries(for: pumpProfile.sensitivitySchedule)
+        var sensitivityDaysMissing = [Int](repeating: 0, count: sensitivityTuningEntries.count)
         var carbRatioDaysMissing = [Int](repeating: 0, count: pumpProfile.carbRatioSchedule.entries.count)
-        var sensitivityEvidence = [Int](repeating: 0, count: pumpProfile.sensitivitySchedule.entries.count)
+        var sensitivityEvidence = [Int](repeating: 0, count: sensitivityTuningEntries.count)
         var carbRatioEvidence = [Int](repeating: 0, count: pumpProfile.carbRatioSchedule.entries.count)
         var mergedCategoryCounts: [DeviationCategory: Int] = [:]
         var totalSamples = 0
@@ -191,7 +192,7 @@ public struct ChainedTuner: Sendable {
                 tunedBasalHourly: pumpHourly,
                 pumpBasalHourly: pumpHourly,
                 untunedBasalHours: Array(repeating: true, count: 24),
-                sensitivitySchedule: pumpProfile.sensitivitySchedule.entries.map {
+                sensitivitySchedule: sensitivityTuningEntries.map {
                     ScheduleTuningOutput(
                         secondsSinceMidnight: $0.secondsSinceMidnight,
                         tunedValue: $0.value,

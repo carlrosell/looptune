@@ -413,9 +413,10 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   unstable on real data.
 - **OQ-3.** UAM handling for Loop: default UAM→basal. Expose as an option?
   nighttune defaults `uam_as_basal = true`. Likely keep as an advanced toggle.
-- **OQ-4 (settled).** Tune the existing Loop ISF and carb-ratio schedule blocks
-  independently. Preserve their boundaries, leave sparse blocks unchanged,
-  and keep flat profiles on the fixture-pinned single-value path.
+- **OQ-4 (settled).** Tune existing Loop ISF and carb-ratio schedule blocks
+  independently. Preserve existing boundaries and leave sparse blocks unchanged.
+  When Loop has one all-day ISF, suggest conservative six-hour blocks; keep flat
+  carb-ratio profiles on the fixture-pinned single-value path.
 - **OQ-5 (settled for v1).** Exclude intervals whose override changes insulin
   needs from basal/ISF/CR attribution and report the excluded sample count.
 - **OQ-6.** Write-back to Nightscout as a new profile (nighttune has it). Out of
@@ -424,6 +425,11 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 ---
 
 ## 8. Status log (append-only)
+
+- **2026-08-25:** Flat ISF profiles now receive time-of-day suggestions at
+  00:00, 06:00, 12:00, and 18:00. Each proposed block keeps the existing
+  10-sample minimum and the same pump-relative safety caps. Existing multi-block
+  schedules retain their configured boundaries.
 
 - **2026-08-21:** Time-of-day ISF and carb-ratio tuning. The tuner now keeps
   the schedule blocks already configured in Loop and tunes each independently.

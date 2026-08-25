@@ -1,24 +1,41 @@
 import Foundation
 
 extension SensitivityTuner {
-    /// Tune each ISF block already configured in the pump profile. Keeping the
-    /// pump's boundaries avoids inventing new time-of-day settings from sparse
-    /// retrospective data.
+    /// Six-hour boundaries used to suggest a time-of-day ISF schedule when the
+    /// pump currently has one all-day value. The blocks stay deliberately
+    /// coarse, and the normal per-block evidence minimum still applies.
+    static let suggestedFlatProfileOffsets = [0, 6 * 3_600, 12 * 3_600, 18 * 3_600]
+
+    static func tuningEntries(
+        for pumpSchedule: DailySchedule<Double>
+    ) -> [DailySchedule<Double>.Entry] {
+        guard pumpSchedule.entries.count == 1, let pumpValue = pumpSchedule.entries.first?.value else {
+            return pumpSchedule.entries
+        }
+        return suggestedFlatProfileOffsets.map {
+            DailySchedule<Double>.Entry(secondsSinceMidnight: $0, value: pumpValue)
+        }
+    }
+
+    /// Tune each configured ISF block independently. For an all-day pump ISF,
+    /// propose four six-hour blocks so time-of-day differences remain visible
+    /// without producing a noisy hourly schedule.
     func tuneSchedule(
         samples: [CategorizedSample],
         currentSchedule: DailySchedule<Double>,
         pumpSchedule: DailySchedule<Double>,
         timeZone: TimeZone
     ) -> [ScheduleTuningOutput] {
+        let tuningEntries = Self.tuningEntries(for: pumpSchedule)
         let grouped = Dictionary(grouping: samples.filter { $0.category == .isf }) { entry in
             ScheduleSlot.index(
                 for: entry.sample.date,
-                entries: pumpSchedule.entries,
+                entries: tuningEntries,
                 timeZone: timeZone
             )
         }
 
-        return pumpSchedule.entries.enumerated().map { index, pumpEntry in
+        return tuningEntries.enumerated().map { index, pumpEntry in
             let currentISF = currentSchedule.value(atSecondsSinceMidnight: pumpEntry.secondsSinceMidnight)
             let result = tuneWithEvidence(
                 samples: grouped[index] ?? [],
