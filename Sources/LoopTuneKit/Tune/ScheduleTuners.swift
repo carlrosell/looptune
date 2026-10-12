@@ -54,6 +54,12 @@ extension SensitivityTuner {
 }
 
 extension CarbRatioTuner {
+    /// How long after a meal its residuals are charged to that meal's ratio,
+    /// and how long an excluded earlier meal withholds them from newer ones.
+    /// This attribution heuristic is separate from replay's input retention
+    /// (`ReplayEngine.carbLookback`).
+    static let mealAttributionWindow: TimeInterval = 10 * 3600
+
     /// Tune each carb-ratio block already configured in the pump profile.
     /// Meal residuals follow the most recent logged meal, so absorption that
     /// crosses a schedule boundary stays with the ratio active when the meal
@@ -103,7 +109,7 @@ extension CarbRatioTuner {
                 while earliestLookbackIndex <= latestCarbIndex,
                       entry.sample.date.timeIntervalSince(
                         sortedCarbs[earliestLookbackIndex].carb.date
-                      ) > ReplayEngine.carbLookback {
+                      ) > Self.mealAttributionWindow {
                     if !sortedCarbs[earliestLookbackIndex].isEligible {
                         attributionOnlyMealsInLookback -= 1
                     }
@@ -116,7 +122,7 @@ extension CarbRatioTuner {
                 let attributedMeal = sortedCarbs[latestCarbIndex]
                 guard attributedMeal.isEligible else { continue }
                 let meal = attributedMeal.carb
-                guard entry.sample.date.timeIntervalSince(meal.date) <= ReplayEngine.carbLookback else {
+                guard entry.sample.date.timeIntervalSince(meal.date) <= Self.mealAttributionWindow else {
                     continue
                 }
                 let slot = ScheduleSlot.index(for: meal.date, entries: pumpSchedule.entries, timeZone: timeZone)

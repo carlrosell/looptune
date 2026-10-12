@@ -163,6 +163,8 @@ final class TuningViewModel {
             return "Nightscout has more \(collection) between \(start.formatted()) and \(end.formatted()) than could be retrieved. No recommendation was made."
         case let TuningPipeline.PipelineError.incompleteProfileHistory(requiredFrom):
             return "Nightscout's profile history does not show the settings active at \(requiredFrom.formatted()). No recommendation was made."
+        case let error as TuningPipeline.PipelineError:
+            return error.errorDescription ?? "\(error)"
         default:
             return "\(error)"
         }

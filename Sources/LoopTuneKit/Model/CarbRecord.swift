@@ -12,6 +12,11 @@ public struct CarbRecord: Sendable, Equatable {
     /// Loop's default absorption time when a carb entry omits one.
     public static let defaultAbsorptionTime: TimeInterval = 3 * 3600
 
+    /// The longest entered absorption time replay supports: LoopAlgorithm's
+    /// `CarbMath.maximumAbsorptionTimeInterval`. Replay retention is derived
+    /// from it (ADR 0008), so tuning rejects longer entries.
+    public static let maximumAbsorptionTime: TimeInterval = CarbMath.maximumAbsorptionTimeInterval
+
     public init(date: Date, grams: Double, absorptionTime: TimeInterval = CarbRecord.defaultAbsorptionTime, foodType: String? = nil) {
         self.date = date
         self.grams = grams

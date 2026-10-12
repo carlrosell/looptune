@@ -22,6 +22,10 @@ public struct ReplayEngine: Sendable {
 
     public enum ReplayError: Error, Equatable {
         case insufficientGlucose
+        /// A meal logged at this date has an absorption time above
+        /// `CarbRecord.maximumAbsorptionTime`, which input retention cannot
+        /// keep for its whole modeled span.
+        case unsupportedAbsorptionTime(Date)
     }
 
     /// Compute the deviation timeline over `[analysisStart, analysisEnd]`.
@@ -162,15 +166,45 @@ public struct ReplayEngine: Sendable {
         return result
     }
 
-    /// How far back each input can physically influence deviations inside an
-    /// analysis window, used to trim inputs before replay. Doses act for the
-    /// insulin activity duration (6h10m; padded to oref0's 18h convention);
-    /// carbs absorb for at most 10h (`CarbMath.maximumAbsorptionTimeInterval`);
-    /// glucose is needed 10h back so carbs started before the window still get
-    /// their counteraction-effect attribution.
-    public static let doseLookback: TimeInterval = 18 * 3600
-    public static let carbLookback: TimeInterval = 10 * 3600
-    public static let glucoseLookback: TimeInterval = 10 * 3600
+    /// How long after its start a meal can still absorb in the pinned model:
+    /// the entered absorption time stretched by the 1.5× overrun, plus the
+    /// ten-minute effect delay (`CarbStatusBuilder.maxEndDate`).
+    static func carbAbsorptionSpan(absorptionTime: TimeInterval) -> TimeInterval {
+        absorptionTime * CarbMath.defaultAbsorptionTimeOverrun + CarbMath.defaultEffectDelay
+    }
+
+    /// Slack after a meal's absorption span before it stops affecting a
+    /// window. When observed absorption falls below the modeled minimum, the
+    /// model spreads the rest over a span that already includes the delay, so
+    /// the effect can end one delay later. The first sample's interval can
+    /// begin up to `maximumCGMGap` before the window, and effects are read
+    /// from a five-minute grid.
+    static let carbRetentionMargin: TimeInterval =
+        CarbMath.defaultEffectDelay + maximumCGMGap + GlucoseMath.defaultDelta
+
+    /// How far back each input can influence deviations inside an analysis
+    /// window, used to trim inputs before replay (ADR 0008).
+    ///
+    /// Carbs: a meal with the longest supported absorption time
+    /// (`CarbRecord.maximumAbsorptionTime`, 10h) absorbs for 15h10m, so every
+    /// meal still active in the window starts within 15h45m of it. Keeping
+    /// every meal in that span also keeps earlier meals whose absorption
+    /// overlapped an active one, which matters because the model splits
+    /// observed absorption among concurrently active meals. A meal that began
+    /// before the span is dropped even if it overlapped a retained meal.
+    ///
+    /// Glucose: the earliest retained meal needs counteraction effects from
+    /// its start to attribute its absorption.
+    ///
+    /// Doses: those counteraction effects need the insulin effect at every
+    /// retained glucose sample, so doses are kept eight hours further back.
+    /// Doses act for 6h10m after delivery; the remaining 1h50m allows for a
+    /// dose still being delivered at the cutoff, as the earlier 18h/10h split
+    /// did.
+    public static let carbLookback: TimeInterval =
+        carbAbsorptionSpan(absorptionTime: CarbRecord.maximumAbsorptionTime) + carbRetentionMargin
+    public static let glucoseLookback: TimeInterval = carbLookback
+    public static let doseLookback: TimeInterval = glucoseLookback + 8 * 3600
 
     /// How far before an analysis window replay can read any input. Fetching
     /// derives both its data window and its required profile-history
@@ -183,7 +217,9 @@ public struct ReplayEngine: Sendable {
     /// `[analysisStart, analysisEnd]`. Replaying a day window with trimmed
     /// inputs produces the same deviations as replaying with the full dataset,
     /// but costs O(day) instead of O(window) — the difference between linear
-    /// and quadratic total work for day-chained runs.
+    /// and quadratic total work for day-chained runs. Equivalence assumes
+    /// absorption times within `CarbRecord.maximumAbsorptionTime`;
+    /// `HistoricalReplay` rejects longer ones.
     public static func trimmedInputs(
         glucose: [GlucoseSample],
         doses: [DoseRecord],

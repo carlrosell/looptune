@@ -71,6 +71,13 @@ struct HistoricalReplay: Sendable {
     /// from the segment's activation onward. Inputs that began before the
     /// activation keep the settings recorded for their start.
     func replay(_ segment: ReplaySegment, candidate: TherapyProfile) throws -> SegmentReplay {
+        // Retention keeps carbs for the longest supported absorption span, so
+        // a longer meal could be dropped while still active.
+        if let unsupported = inputs.carbs.first(where: {
+            !($0.absorptionTime <= CarbRecord.maximumAbsorptionTime)
+        }) {
+            throw ReplayEngine.ReplayError.unsupportedAbsorptionTime(unsupported.date)
+        }
         // Trim to the inputs that can influence this segment: replaying with
         // the full multi-day dataset would make chaining quadratic.
         let retained = ReplayEngine.trimmedInputs(

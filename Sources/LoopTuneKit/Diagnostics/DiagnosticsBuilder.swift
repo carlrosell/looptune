@@ -29,7 +29,7 @@ public struct DiagnosticsBuilder: Sendable {
         let replay = HistoricalReplay(inputs: inputs)
         async let beforeTask = deviations(replay: replay) { $0.recorded }
         async let afterTask = deviations(replay: replay) { _ in recommendedProfile }
-        let (before, after) = await (beforeTask, afterTask)
+        let (before, after) = try await (beforeTask, afterTask)
 
         let hourly = hourlyDeviations(before: before, after: after, timeZone: timeZone)
         let glucoseInWindow = inputs.glucose.filter {
@@ -58,12 +58,14 @@ public struct DiagnosticsBuilder: Sendable {
     /// Replay day-by-day with trimmed inputs and concatenate — the same cost
     /// shape as the chained tuner (linear in days), instead of one full-window
     /// replay whose insulin-effect computation is quadratic in window length.
+    /// A segment without enough glucose contributes nothing; other replay
+    /// errors, such as an unsupported absorption time, fail the build.
     private func deviations(
         replay: HistoricalReplay,
         candidate: @Sendable (ReplaySegment) -> TherapyProfile
-    ) -> [DeviationSample] {
-        replay.segmentsByDay().joined().flatMap { segment in
-            (try? replay.replay(segment, candidate: candidate(segment)))?.eligibleDeviations ?? []
+    ) throws -> [DeviationSample] {
+        try replay.segmentsByDay().joined().flatMap { segment in
+            try replay.replay(segment, candidate: candidate(segment)).eligibleDeviations
         }
     }
 
