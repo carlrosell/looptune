@@ -9,10 +9,11 @@ import LoopAlgorithm
 /// entry runs to the end of the day. The first entry must start at midnight
 /// (offset 0), matching Loop/Nightscout requirements.
 ///
-/// Expansion to absolute timelines is DST-correct: boundaries are resolved as
-/// wall-clock components in the target timezone, so a schedule change at 02:00
-/// lands at 02:00 local on every calendar day regardless of daylight-saving
-/// shifts.
+/// Expansion to absolute timelines agrees with `value(at:timeZone:)` at every
+/// instant, including across daylight-saving and other UTC-offset changes. A
+/// local boundary repeated by a backward clock change takes effect at each
+/// occurrence. A boundary skipped by a forward change takes effect at the
+/// transition, where the wall clock passes it.
 public struct DailySchedule<Value: Sendable & Equatable>: Sendable, Equatable {
     public struct Entry: Sendable, Equatable {
         /// Seconds since local midnight, in `[0, 86400)`.
@@ -92,44 +93,40 @@ public struct DailySchedule<Value: Sendable & Equatable>: Sendable, Equatable {
     }
 
     /// Expand into an absolute, contiguous timeline that exactly tiles
-    /// `[start, end]`, suitable for LoopAlgorithm inputs. Adjacent equal-valued
+    /// `[start, end]`, suitable for LoopAlgorithm inputs. Each segment carries
+    /// the value direct lookup gives throughout it. Adjacent equal-valued
     /// segments are merged.
     public func expand(from start: Date, to end: Date, timeZone: TimeZone) -> [AbsoluteScheduleValue<Value>] {
         precondition(start <= end, "start must be <= end")
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
 
-        // Collect boundary instants for each entry across every day that could
-        // influence [start, end]. Include the prior day so the segment covering
-        // `start` has a defined active value.
-        let startDay = calendar.startOfDay(for: start)
-        var day = calendar.date(byAdding: .day, value: -1, to: startDay) ?? startDay
-        var boundaries: [Date] = []
-        while day <= end {
-            let dayComponents = calendar.dateComponents([.year, .month, .day], from: day)
-            for entry in entries {
-                var components = dayComponents
-                components.hour = entry.secondsSinceMidnight / 3600
-                components.minute = (entry.secondsSinceMidnight % 3600) / 60
-                components.second = entry.secondsSinceMidnight % 60
-                if let boundary = calendar.date(from: components) {
-                    boundaries.append(boundary)
+        // Split the window at each UTC-offset transition reported by the time
+        // zone. Within a piece the offset is fixed, so local time is absolute
+        // time shifted by that offset, and every occurrence of a boundary inside
+        // the piece maps to one instant. The transition itself is a cut because
+        // the wall clock jumps there.
+        var cutPoints: [Date] = [start]
+        var pieceStart = start
+        while pieceStart < end {
+            var pieceEnd = end
+            if let transition = timeZone.nextDaylightSavingTimeTransition(after: pieceStart),
+               transition > pieceStart, transition < end {
+                pieceEnd = transition
+            }
+            let offset = TimeInterval(timeZone.secondsFromGMT(for: pieceStart))
+            let firstDay = Int(((pieceStart.timeIntervalSince1970 + offset) / 86_400).rounded(.down))
+            let lastDay = Int(((pieceEnd.timeIntervalSince1970 + offset) / 86_400).rounded(.down))
+            for day in firstDay...lastDay {
+                for entry in entries {
+                    let localSeconds = TimeInterval(day * 86_400 + entry.secondsSinceMidnight)
+                    let boundary = Date(timeIntervalSince1970: localSeconds - offset)
+                    if boundary > pieceStart, boundary < pieceEnd {
+                        cutPoints.append(boundary)
+                    }
                 }
             }
-            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
-            day = next
+            cutPoints.append(pieceEnd)
+            pieceStart = pieceEnd
         }
-
-        boundaries.sort()
-
-        // Clip to (start, end) and frame with the window bounds.
-        var cutPoints: [Date] = [start]
-        for boundary in boundaries where boundary > start && boundary < end {
-            if boundary != cutPoints.last {
-                cutPoints.append(boundary)
-            }
-        }
-        cutPoints.append(end)
 
         var result: [AbsoluteScheduleValue<Value>] = []
         for index in 0..<(cutPoints.count - 1) {
