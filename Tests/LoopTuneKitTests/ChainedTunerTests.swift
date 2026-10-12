@@ -138,3 +138,103 @@ struct ChainedTunerTests {
         #expect(rec.basalHours.allSatisfy { $0.daysMissing >= 0 && $0.daysMissing <= 4 })
     }
 }
+
+@Suite("Chained tuning resets at a therapy change")
+struct ChainedTherapyResetTests {
+    // 2023-11-13 04:00 UTC: the audit window starts at a day boundary.
+    private let start = Date(timeIntervalSince1970: 1_699_833_600 + 4 * 3600)
+
+    private func profile(activeFrom: Date, isf: Double, carbRatio: Double) throws -> TherapyProfile {
+        TherapyProfile(
+            basalSchedule: try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: 1.0)]),
+            sensitivitySchedule: try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: isf)]),
+            carbRatioSchedule: try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: carbRatio)]),
+            targetSchedule: try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: 100...110)]),
+            timeZone: TimeZone(identifier: "UTC")!,
+            glucoseUnit: .milligramsPerDeciliter,
+            activeFrom: activeFrom,
+            insulinType: .novolog
+        )
+    }
+
+    /// The CORE-04 audit scenario: old ISF 100 / CR 30, current ISF 40 / CR 10
+    /// activated `changeHour` hours into a 24-hour window, flat five-minute CGM
+    /// through hour `cgmHours`, no doses or carbs.
+    private func inputs(changeHour: Double, cgmHours: Double) throws -> TuningInputs {
+        let changeDate = start.addingTimeInterval(changeHour * 3600)
+        let old = try profile(activeFrom: start.addingTimeInterval(-86_400), isf: 100, carbRatio: 30)
+        let new = try profile(activeFrom: changeDate, isf: 40, carbRatio: 10)
+        let glucose = (0...Int(cgmHours * 12)).map { i in
+            GlucoseSample(date: start.addingTimeInterval(Double(i) * 300), milligramsPerDeciliter: 120)
+        }
+        return TuningInputs(
+            profile: new,
+            profileHistory: ProfileHistory(timeline: [old, new], current: new),
+            glucose: glucose, doses: [], carbs: [],
+            analysisStart: start,
+            analysisEnd: start.addingTimeInterval(86_400)
+        )
+    }
+
+    @Test("a late change with no later CGM keeps no output or evidence from the old settings")
+    func lateChangeWithoutCGM() throws {
+        let inputs = try inputs(changeHour: 23, cgmHours: 22)
+        let result = try ChainedTuner().run(inputs: inputs)
+
+        #expect(result.settingsChanges == [start.addingTimeInterval(23 * 3600)])
+        // The final settings are reported unchanged and untuned, not the old
+        // ISF 100 / CR 30 tuned under the previous epoch.
+        #expect(result.output.tunedISF == 40)
+        #expect(result.output.tunedCarbRatio == 10)
+        #expect(result.output.totalSamples == 0)
+        #expect(result.output.categoryCounts.isEmpty)
+        #expect(result.output.basalSampleCountByHour.allSatisfy { $0 == 0 })
+        #expect(result.output.untunedBasalHours.allSatisfy { $0 })
+        #expect(result.output.sensitivitySchedule.allSatisfy { $0.untuned && $0.evidenceCount == 0 && $0.daysMissing == 1 })
+        #expect(result.output.carbRatioSchedule.allSatisfy { $0.untuned && $0.evidenceCount == 0 && $0.daysMissing == 1 })
+        #expect(result.daysMissingByHour.allSatisfy { $0 == 1 })
+        #expect(result.daysTuned == 0)
+        #expect(result.dailyISF.isEmpty)
+        #expect(result.dailyCarbRatio.isEmpty)
+    }
+
+    @Test("the pipeline reports insufficient data for a late change with no later CGM")
+    func lateChangePipelineOutcome() throws {
+        #expect(throws: TuningPipeline.PipelineError.insufficientUsableData(minimum: 12, actual: 0)) {
+            _ = try TuningPipeline().run(
+                inputs: try inputs(changeHour: 23, cgmHours: 22),
+                configuration: TuningConfiguration(days: 1)
+            )
+        }
+    }
+
+    @Test("enough evidence after a change produces output from the new settings alone")
+    func adequatePostChangeEvidence() throws {
+        let result = try ChainedTuner().run(inputs: try inputs(changeHour: 12, cgmHours: 24))
+
+        // Tuning only the post-change period from the new settings, with no
+        // history, must give the same recommendation and evidence.
+        let full = try inputs(changeHour: 12, cgmHours: 24)
+        let postChangeOnly = try ChainedTuner().run(inputs: TuningInputs(
+            profile: full.profile,
+            glucose: full.glucose, doses: [], carbs: [],
+            analysisStart: start.addingTimeInterval(12 * 3600),
+            analysisEnd: full.analysisEnd
+        ))
+
+        #expect(result.settingsChanges == [start.addingTimeInterval(12 * 3600)])
+        #expect(result.output.totalSamples > 0)
+        #expect(result.output.totalSamples <= 12 * 12)
+        #expect(result.output.pumpISF == 40)
+        #expect(result.output.pumpCarbRatio == 10)
+        #expect(result.output == postChangeOnly.output)
+        #expect(result.daysMissingByHour == postChangeOnly.daysMissingByHour)
+        #expect(result.daysTuned == 1)
+        #expect(result.dailyISF == postChangeOnly.dailyISF)
+        #expect(result.dailyCarbRatio == postChangeOnly.dailyCarbRatio)
+
+        let recommendation = try TuningPipeline().run(inputs: full, configuration: TuningConfiguration(days: 1))
+        #expect(recommendation.settingsChanges == [start.addingTimeInterval(12 * 3600)])
+        #expect(recommendation.daysTuned == 1)
+    }
+}

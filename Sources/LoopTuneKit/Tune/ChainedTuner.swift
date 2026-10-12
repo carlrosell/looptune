@@ -4,20 +4,22 @@ import Foundation
 public struct ChainedTuningResult: Sendable, Equatable {
     /// The final tuned output. Pump values are the fixed pump baseline;
     /// `categoryCounts`, `totalSamples`, and `basalSampleCountByHour` are
-    /// accumulated across all chained days.
+    /// accumulated across the chained days since the last settings change.
     public var output: TuningOutput
-    /// Per basal hour, the number of day windows in which that hour received no
-    /// tuning data (AutotuneWeb's "days missing" confidence signal).
+    /// Per basal hour, the number of day windows since the last settings change
+    /// in which that hour received no tuning data (AutotuneWeb's "days missing"
+    /// confidence signal).
     public var daysMissingByHour: [Int]
-    /// Number of day windows that were actually tuned.
+    /// Number of day windows since the last settings change that were tuned.
     public var daysTuned: Int
-    /// ISF after each chained day (trajectory, oldest → newest).
+    /// ISF after each chained day since the last settings change (trajectory,
+    /// oldest → newest).
     public var dailyISF: [Double]
-    /// Carb ratio after each chained day.
+    /// Carb ratio after each chained day since the last settings change.
     public var dailyCarbRatio: [Double]
     /// Instants within the window where the user actually changed therapy
     /// settings (from the profile history); the tuning iteration restarted from
-    /// the applied settings at each.
+    /// the applied settings at each, discarding earlier output and evidence.
     public var settingsChanges: [Date] = []
     /// Replay samples excluded because a temporary override changed insulin
     /// needs at that instant.
@@ -63,19 +65,12 @@ public struct ChainedTuner: Sendable {
         var evolving = activeHistorical
         var settingsChanges: [Date] = []
 
-        var daysMissing = [Int](repeating: 0, count: 24)
-        var sampleCountByHour = [Int](repeating: 0, count: 24)
         let sensitivityTuningEntries = SensitivityTuner.tuningEntries(for: pumpProfile.sensitivitySchedule)
-        var sensitivityDaysMissing = [Int](repeating: 0, count: sensitivityTuningEntries.count)
-        var carbRatioDaysMissing = [Int](repeating: 0, count: pumpProfile.carbRatioSchedule.entries.count)
-        var sensitivityEvidence = [Int](repeating: 0, count: sensitivityTuningEntries.count)
-        var carbRatioEvidence = [Int](repeating: 0, count: pumpProfile.carbRatioSchedule.entries.count)
-        var mergedCategoryCounts: [DeviationCategory: Int] = [:]
-        var totalSamples = 0
-        var daysTuned = 0
-        var dailyISF: [Double] = []
-        var dailyCR: [Double] = []
-        var lastOutput: TuningOutput?
+        let freshEpoch = Epoch(
+            sensitivityEntryCount: sensitivityTuningEntries.count,
+            carbRatioEntryCount: pumpProfile.carbRatioSchedule.entries.count
+        )
+        var epoch = freshEpoch
         let tuner = LoopTuner(caps: caps, options: options)
         let replay = ReplayEngine()
 
@@ -84,8 +79,8 @@ public struct ChainedTuner: Sendable {
         for window in windows {
             var windowHadTuning = false
             var tunedHoursInWindow = [Bool](repeating: false, count: 24)
-            var tunedSensitivityInWindow = [Bool](repeating: false, count: sensitivityDaysMissing.count)
-            var tunedCarbRatioInWindow = [Bool](repeating: false, count: carbRatioDaysMissing.count)
+            var tunedSensitivityInWindow = [Bool](repeating: false, count: epoch.sensitivityDaysMissing.count)
+            var tunedCarbRatioInWindow = [Bool](repeating: false, count: epoch.carbRatioDaysMissing.count)
 
             // A settings change can occur at any instant, not only at a 04:00
             // day boundary. Split the day at every profile activation so
@@ -97,6 +92,14 @@ public struct ChainedTuner: Sendable {
                         evolving = nowActive
                         activeHistorical = nowActive
                         settingsChanges.append(nowActive.activeFrom ?? segment.start)
+                        // Output and evidence from the previous settings cannot
+                        // support a recommendation for the new ones, including
+                        // tuning earlier in this window.
+                        epoch = freshEpoch
+                        windowHadTuning = false
+                        tunedHoursInWindow = [Bool](repeating: false, count: 24)
+                        tunedSensitivityInWindow = [Bool](repeating: false, count: tunedSensitivityInWindow.count)
+                        tunedCarbRatioInWindow = [Bool](repeating: false, count: tunedCarbRatioInWindow.count)
                     }
                 }
 
@@ -140,26 +143,26 @@ public struct ChainedTuner: Sendable {
                     if !output.untunedBasalHours[hour] {
                         tunedHoursInWindow[hour] = true
                     }
-                    sampleCountByHour[hour] += output.basalSampleCountByHour[hour]
+                    epoch.sampleCountByHour[hour] += output.basalSampleCountByHour[hour]
                 }
                 for index in output.sensitivitySchedule.indices {
-                    sensitivityEvidence[index] += output.sensitivitySchedule[index].evidenceCount
+                    epoch.sensitivityEvidence[index] += output.sensitivitySchedule[index].evidenceCount
                     if !output.sensitivitySchedule[index].untuned {
                         tunedSensitivityInWindow[index] = true
                     }
                 }
                 for index in output.carbRatioSchedule.indices {
-                    carbRatioEvidence[index] += output.carbRatioSchedule[index].evidenceCount
+                    epoch.carbRatioEvidence[index] += output.carbRatioSchedule[index].evidenceCount
                     if !output.carbRatioSchedule[index].untuned {
                         tunedCarbRatioInWindow[index] = true
                     }
                 }
                 for (category, count) in output.categoryCounts {
-                    mergedCategoryCounts[category, default: 0] += count
+                    epoch.categoryCounts[category, default: 0] += count
                 }
-                totalSamples += output.totalSamples
+                epoch.totalSamples += output.totalSamples
                 windowHadTuning = true
-                lastOutput = output
+                epoch.lastOutput = output
 
                 evolving = try evolving.replacing(
                     basalHourly: output.tunedBasalHourly,
@@ -168,25 +171,28 @@ public struct ChainedTuner: Sendable {
                 )
             }
 
+            epoch.windows += 1
             for hour in 0..<24 where !tunedHoursInWindow[hour] {
-                daysMissing[hour] += 1
+                epoch.daysMissing[hour] += 1
             }
             for index in tunedSensitivityInWindow.indices where !tunedSensitivityInWindow[index] {
-                sensitivityDaysMissing[index] += 1
+                epoch.sensitivityDaysMissing[index] += 1
             }
             for index in tunedCarbRatioInWindow.indices where !tunedCarbRatioInWindow[index] {
-                carbRatioDaysMissing[index] += 1
+                epoch.carbRatioDaysMissing[index] += 1
             }
             if windowHadTuning {
-                daysTuned += 1
-                dailyISF.append(evolving.sensitivitySchedule.timeWeightedAverage())
-                dailyCR.append(evolving.carbRatioSchedule.timeWeightedAverage())
+                epoch.daysTuned += 1
+                epoch.dailyISF.append(evolving.sensitivitySchedule.timeWeightedAverage())
+                epoch.dailyCR.append(evolving.carbRatioSchedule.timeWeightedAverage())
             }
         }
 
-        let totalWindows = windows.count
-        guard var final = lastOutput else {
-            // No tunable day at all: recommend the pump settings unchanged.
+        let totalWindows = epoch.windows
+        guard var final = epoch.lastOutput else {
+            // No tunable segment under the final settings: recommend the pump
+            // settings unchanged with no evidence, which the pipeline reports
+            // as insufficient data.
             let pumpHourly = pumpProfile.basalSchedule.hourlyValues()
             let output = try TuningOutput(
                 tunedBasalHourly: pumpHourly,
@@ -215,7 +221,7 @@ public struct ChainedTuner: Sendable {
             )
             return ChainedTuningResult(
                 output: output,
-                daysMissingByHour: daysMissing,
+                daysMissingByHour: epoch.daysMissing,
                 daysTuned: 0,
                 dailyISF: [],
                 dailyCarbRatio: [],
@@ -225,31 +231,58 @@ public struct ChainedTuner: Sendable {
         }
 
         // Present accumulated coverage on the final output. An hour counts as
-        // untuned overall only if it was missing on every window.
-        final.categoryCounts = mergedCategoryCounts
-        final.totalSamples = totalSamples
-        final.basalSampleCountByHour = sampleCountByHour
-        final.untunedBasalHours = daysMissing.map { $0 >= totalWindows }
+        // untuned overall only if it was missing on every window of the epoch.
+        final.categoryCounts = epoch.categoryCounts
+        final.totalSamples = epoch.totalSamples
+        final.basalSampleCountByHour = epoch.sampleCountByHour
+        final.untunedBasalHours = epoch.daysMissing.map { $0 >= totalWindows }
         for index in final.sensitivitySchedule.indices {
-            final.sensitivitySchedule[index].evidenceCount = sensitivityEvidence[index]
-            final.sensitivitySchedule[index].daysMissing = sensitivityDaysMissing[index]
-            final.sensitivitySchedule[index].untuned = sensitivityDaysMissing[index] >= totalWindows
+            final.sensitivitySchedule[index].evidenceCount = epoch.sensitivityEvidence[index]
+            final.sensitivitySchedule[index].daysMissing = epoch.sensitivityDaysMissing[index]
+            final.sensitivitySchedule[index].untuned = epoch.sensitivityDaysMissing[index] >= totalWindows
         }
         for index in final.carbRatioSchedule.indices {
-            final.carbRatioSchedule[index].evidenceCount = carbRatioEvidence[index]
-            final.carbRatioSchedule[index].daysMissing = carbRatioDaysMissing[index]
-            final.carbRatioSchedule[index].untuned = carbRatioDaysMissing[index] >= totalWindows
+            final.carbRatioSchedule[index].evidenceCount = epoch.carbRatioEvidence[index]
+            final.carbRatioSchedule[index].daysMissing = epoch.carbRatioDaysMissing[index]
+            final.carbRatioSchedule[index].untuned = epoch.carbRatioDaysMissing[index] >= totalWindows
         }
 
         return ChainedTuningResult(
             output: final,
-            daysMissingByHour: daysMissing,
-            daysTuned: daysTuned,
-            dailyISF: dailyISF,
-            dailyCarbRatio: dailyCR,
+            daysMissingByHour: epoch.daysMissing,
+            daysTuned: epoch.daysTuned,
+            dailyISF: epoch.dailyISF,
+            dailyCarbRatio: epoch.dailyCR,
             settingsChanges: settingsChanges,
             excludedOverrideSamples: excludedOverrideSamples
         )
+    }
+
+    /// Output and evidence accumulated under one set of applied therapy
+    /// settings. A settings change starts a new epoch, so only evidence gathered
+    /// under the final settings can support the returned recommendation.
+    private struct Epoch {
+        var lastOutput: TuningOutput?
+        /// Day windows (or the partial window from the change) in this epoch.
+        var windows = 0
+        var daysMissing = [Int](repeating: 0, count: 24)
+        var sampleCountByHour = [Int](repeating: 0, count: 24)
+        var sensitivityDaysMissing: [Int]
+        var carbRatioDaysMissing: [Int]
+        var sensitivityEvidence: [Int]
+        var carbRatioEvidence: [Int]
+        var categoryCounts: [DeviationCategory: Int] = [:]
+        var totalSamples = 0
+        var daysTuned = 0
+        var dailyISF: [Double] = []
+        var dailyCR: [Double] = []
+
+        init(sensitivityEntryCount: Int, carbRatioEntryCount: Int) {
+            sensitivityDaysMissing = [Int](repeating: 0, count: sensitivityEntryCount)
+            carbRatioDaysMissing = [Int](repeating: 0, count: carbRatioEntryCount)
+            sensitivityEvidence = [Int](repeating: 0, count: sensitivityEntryCount)
+            carbRatioEvidence = [Int](repeating: 0, count: carbRatioEntryCount)
+        }
     }
 
     /// Split a day window at each activation that changes replay-relevant
