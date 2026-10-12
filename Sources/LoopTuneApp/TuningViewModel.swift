@@ -158,6 +158,10 @@ final class TuningViewModel {
             return "The selected analysis window is invalid."
         case let TuningPipeline.PipelineError.invalidInput(field):
             return "The \(field) data is invalid, so no recommendation was made."
+        case let TuningPipeline.PipelineError.incompleteRecords(collection, start, end):
+            return "Nightscout has more \(collection) between \(start.formatted()) and \(end.formatted()) than could be retrieved. No recommendation was made."
+        case let TuningPipeline.PipelineError.incompleteProfileHistory(requiredFrom):
+            return "Nightscout's profile history does not show the settings active at \(requiredFrom.formatted()). No recommendation was made."
         default:
             return "\(error)"
         }

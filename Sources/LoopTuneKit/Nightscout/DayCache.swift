@@ -9,12 +9,36 @@ public struct CachedDay: Codable, Sendable {
     public var fetchedAt: Date
     public var entries: [NSEntry]
     public var treatments: [NSTreatment]
+    /// Whether every entry and treatment in the day was retrieved. Days
+    /// written before this was recorded decode as `false`: they came from a
+    /// single count-limited query that may have been truncated.
+    public var isComplete: Bool
 
-    public init(day: String, fetchedAt: Date, entries: [NSEntry], treatments: [NSTreatment]) {
+    public init(
+        day: String,
+        fetchedAt: Date,
+        entries: [NSEntry],
+        treatments: [NSTreatment],
+        isComplete: Bool = false
+    ) {
         self.day = day
         self.fetchedAt = fetchedAt
         self.entries = entries
         self.treatments = treatments
+        self.isComplete = isComplete
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case day, fetchedAt, entries, treatments, isComplete = "complete"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        day = try container.decode(String.self, forKey: .day)
+        fetchedAt = try container.decode(Date.self, forKey: .fetchedAt)
+        entries = try container.decode([NSEntry].self, forKey: .entries)
+        treatments = try container.decode([NSTreatment].self, forKey: .treatments)
+        isComplete = try container.decodeIfPresent(Bool.self, forKey: .isComplete) ?? false
     }
 }
 
@@ -28,6 +52,9 @@ public struct CachedDay: Codable, Sendable {
 /// Days are storage buckets, not analysis windows — the pipeline stitches
 /// consecutive buckets back together, so bucketing in UTC keeps keys stable
 /// even if the profile timezone changes.
+///
+/// The pipeline stores only days whose records were fetched completely and
+/// reuses only days marked complete (ADR 0005).
 ///
 /// A day is only cached once it has been over for `freshnessMargin` (default
 /// 24 h), because Loop edits treatments retroactively (carb edits, temp-basal
