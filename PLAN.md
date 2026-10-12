@@ -583,3 +583,10 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   check the HTTPS or loopback rule on every hop, so credentials never reach
   another site; ADR 0006 is accepted. The audit records the commits and
   verification.
+- **2026-10-12**: Landed CORE-06 (#38) and DATA-04 (#36) from wave 2 of the
+  audit remediation. Replay models every input with the therapy settings
+  recorded at its start, through one historical replay context shared by
+  tuning and diagnostics (ADR 0004). Nightscout fetches subdivide saturated or
+  possibly capped responses and require profile history to reach the earliest
+  replay input, failing instead of truncating (ADR 0005). Both ADRs are
+  accepted, and the audit records the commits and verification.

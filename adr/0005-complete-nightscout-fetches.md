@@ -1,6 +1,6 @@
 # 0005. Fetch complete Nightscout records or fail
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-12
 - **Deciders:** Project owner
 - **Related:** [#11](https://github.com/carlrosell/looptune/issues/11) (DATA-04), [Repository audit](../docs/code-reviews/2026-10-12-repository-audit-review.md#data-04-fixed-fetch-limits-silently-truncate-records-and-profile-history), [ADR 0003](0003-canonical-site-origin.md), [#17](https://github.com/carlrosell/looptune/issues/17) (CORE-06), [#18](https://github.com/carlrosell/looptune/issues/18) (CORE-07)
