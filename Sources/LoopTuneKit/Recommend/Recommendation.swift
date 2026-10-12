@@ -106,34 +106,75 @@ public struct BasalHourRecommendation: Sendable, Equatable, Identifiable {
     /// Basal-categorized samples that informed this scheduled basal hour across
     /// the window. A deviation observed at hour h informs basal hours h−3…h−1.
     public var sampleCount: Int
+    /// Lowest rate the recommendation may take: the pump-relative tuning floor
+    /// or Loop's absolute minimum, whichever is higher.
+    public var minimumRate: Double
+    /// Highest rate the recommendation may take: the pump-relative tuning cap
+    /// or Loop's absolute maximum, whichever is lower. Below `minimumRate` when
+    /// no rate is permitted, as for a zero pump rate.
+    public var maximumRate: Double
 
-    public init(hour: Int, pumpRate: Double, rawTunedRate: Double, untuned: Bool, daysMissing: Int = 0, sampleCount: Int = 0) {
+    /// - Parameter caps: the pump-relative caps the tuner applied. The
+    ///   recommended and rounded rates stay inside them.
+    public init(
+        hour: Int,
+        pumpRate: Double,
+        rawTunedRate: Double,
+        untuned: Bool,
+        daysMissing: Int = 0,
+        sampleCount: Int = 0,
+        caps: TuningCaps = TuningCaps()
+    ) {
         self.hour = hour
         self.pumpRate = pumpRate
+        let limits = Self.limits(pumpRate: pumpRate, caps: caps)
+        self.minimumRate = limits.minimum
+        self.maximumRate = limits.maximum
         let clamped = LoopGuardrails.clamp(rawTunedRate, to: LoopGuardrails.basalRate)
-        self.recommendedRate = clamped.value
-        self.changeTier = ChangeTier.classify(pump: pumpRate, tuned: clamped.value)
-        self.guardrailStatus = clamped.status
+        if limits.minimum <= limits.maximum {
+            self.recommendedRate = min(max(clamped.value, limits.minimum), limits.maximum)
+            self.guardrailStatus = clamped.status
+        } else {
+            // No rate satisfies both the caps and Loop's limits: keep the pump
+            // rate. This preserves zero rates instead of raising them to 0.05.
+            let bounds = LoopGuardrails.basalRate
+            self.recommendedRate = pumpRate
+            self.guardrailStatus = pumpRate < bounds.recommendedMin || pumpRate > bounds.recommendedMax
+                ? .outsideRecommended
+                : .ok
+        }
+        self.changeTier = ChangeTier.classify(pump: pumpRate, tuned: recommendedRate)
         self.untuned = untuned
         self.daysMissing = daysMissing
         self.sampleCount = sampleCount
+    }
+
+    static func limits(pumpRate: Double, caps: TuningCaps) -> (minimum: Double, maximum: Double) {
+        let bounds = LoopGuardrails.basalRate
+        return (
+            max(pumpRate * caps.autotuneMin, bounds.absoluteMin),
+            min(pumpRate * caps.autotuneMax, bounds.absoluteMax)
+        )
     }
 
     /// Loop's scheduled-basal granularity on typical pumps (Omnipod, most
     /// Medtronic models): 0.05 U/hr.
     public static let loopBasalIncrement = 0.05
 
-    /// The recommended rate rounded to the pump's supported increment — the
-    /// value a user can actually enter into Loop. Never rounds an above-zero
-    /// recommendation down to zero.
+    /// The value a user can actually enter into Loop: the recommended rate
+    /// rounded to the nearest pump increment between `minimumRate` and
+    /// `maximumRate`. When no increment lies in that range, the pump rate is
+    /// kept unchanged.
     public func roundedRate(toIncrement increment: Double = Self.loopBasalIncrement) -> Double {
         guard increment.isFinite, increment > 0 else { return recommendedRate }
-        var rounded = (recommendedRate / increment).rounded() * increment
-        if rounded == 0, recommendedRate > 0 {
-            rounded = increment
-        }
+        // Tolerate floating-point error in limits such as 0.15 × 1.2.
+        let tolerance = 1e-9
+        let lowestStep = (minimumRate / increment - tolerance).rounded(.up)
+        let highestStep = (maximumRate / increment + tolerance).rounded(.down)
+        guard lowestStep <= highestStep else { return pumpRate }
+        let step = min(max((recommendedRate / increment).rounded(), lowestStep), highestStep)
         // Shave floating-point dust (e.g. 0.15000000000000002).
-        return (rounded * 10_000).rounded() / 10_000
+        return (step * increment * 10_000).rounded() / 10_000
     }
 }
 
@@ -240,6 +281,8 @@ public struct TuningRecommendation: Sendable, Equatable {
         basalHours.reduce(0) { $0 + $1.roundedRate(toIncrement: increment) }
     }
 
+    /// - Parameter caps: the tuner's pump-relative caps. Final basal rates
+    ///   stay inside them.
     public init(
         from output: TuningOutput,
         daysAnalyzed: Int,
@@ -247,7 +290,8 @@ public struct TuningRecommendation: Sendable, Equatable {
         daysMissingByHour: [Int]? = nil,
         daysTuned: Int? = nil,
         settingsChanges: [Date] = [],
-        excludedOverrideSamples: Int = 0
+        excludedOverrideSamples: Int = 0,
+        caps: TuningCaps = TuningCaps()
     ) throws {
         precondition(
             output.tunedBasalHourly.count == 24 && output.pumpBasalHourly.count == 24 && output.untunedBasalHours.count == 24,
@@ -322,7 +366,8 @@ public struct TuningRecommendation: Sendable, Equatable {
                 rawTunedRate: output.tunedBasalHourly[hour],
                 untuned: output.untunedBasalHours[hour],
                 daysMissing: daysMissingByHour?[hour] ?? (output.untunedBasalHours[hour] ? 1 : 0),
-                sampleCount: output.basalSampleCountByHour[hour]
+                sampleCount: output.basalSampleCountByHour[hour],
+                caps: caps
             )
         }
         self.categoryCounts = output.categoryCounts

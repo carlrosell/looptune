@@ -58,7 +58,7 @@ public enum TuningReport {
             )
         }
 
-        lines.append("Basal schedule [U/hr] — Rounded = nearest \(String(format: "%.3g", basalIncrement)) U/hr (what Loop accepts)")
+        lines.append("Basal schedule [U/hr] — Rounded = nearest \(String(format: "%.3g", basalIncrement)) U/hr step within the tuning limits (what Loop accepts)")
         lines.append(pad("Hour", 8) + pad("Pump", 12) + pad("LoopTune", 12) + pad("Rounded", 10) + pad("Days missing", 14) + "Flag")
         lines.append(String(repeating: "-", count: 62))
         for hour in recommendation.basalHours where hour.pumpRate != hour.recommendedRate || !hour.untuned {

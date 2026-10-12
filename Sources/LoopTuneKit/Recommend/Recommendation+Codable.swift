@@ -74,6 +74,7 @@ extension ParameterScheduleRecommendation: Codable {
 extension BasalHourRecommendation: Codable {
     private enum CodingKeys: String, CodingKey {
         case hour, pumpRate, recommendedRate, changeTier, guardrailStatus, untuned, daysMissing, sampleCount
+        case minimumRate, maximumRate
     }
 
     public init(from decoder: Decoder) throws {
@@ -86,6 +87,10 @@ extension BasalHourRecommendation: Codable {
         self.untuned = try container.decode(Bool.self, forKey: .untuned)
         self.daysMissing = try container.decode(Int.self, forKey: .daysMissing)
         self.sampleCount = try container.decode(Int.self, forKey: .sampleCount)
+        // Runs saved before the limits were stored used the default caps.
+        let limits = Self.limits(pumpRate: pumpRate, caps: TuningCaps())
+        self.minimumRate = try container.decodeIfPresent(Double.self, forKey: .minimumRate) ?? limits.minimum
+        self.maximumRate = try container.decodeIfPresent(Double.self, forKey: .maximumRate) ?? limits.maximum
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -98,6 +103,8 @@ extension BasalHourRecommendation: Codable {
         try container.encode(untuned, forKey: .untuned)
         try container.encode(daysMissing, forKey: .daysMissing)
         try container.encode(sampleCount, forKey: .sampleCount)
+        try container.encode(minimumRate, forKey: .minimumRate)
+        try container.encode(maximumRate, forKey: .maximumRate)
     }
 }
 

@@ -165,7 +165,7 @@ struct ResultsView: View {
     private var basalTable: some View {
         TableCard(
             title: "Basal schedule — hourly detail (U/hr)",
-            subtitle: "Enter into Loop = the raw recommendation rounded to your pump's 0.05 U/hr steps.",
+            subtitle: "Enter into Loop = the recommendation rounded to your pump's 0.05 U/hr steps, within the tuning limits.",
             footer: String(
                 format: "Daily total: pump %.2f U · LoopTune %.2f U · rounded %.2f U",
                 recommendation.pumpDailyBasal,
