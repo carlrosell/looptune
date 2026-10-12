@@ -5,7 +5,8 @@ public struct ScheduleTuningOutput: Sendable, Equatable {
     public var secondsSinceMidnight: Int
     public var tunedValue: Double
     public var pumpValue: Double
-    /// True when this block had too little usable evidence and stayed unchanged.
+    /// True when this block had too little usable evidence to tune. Its value
+    /// carries the current setting forward within the pump-relative caps.
     public var untuned: Bool
     /// Usable ISF samples or logged meals behind this block.
     public var evidenceCount: Int

@@ -31,8 +31,27 @@ public struct SensitivityTuner: Sendable {
         currentISF: Double,
         pumpISF: Double
     ) -> Result {
-        guard currentISF.isFinite, currentISF > 0, pumpISF.isFinite, pumpISF > 0 else {
+        guard pumpISF.isFinite, pumpISF > 0 else {
+            // Without a usable pump baseline there is no relative limit to apply.
             return Result(value: currentISF, usableSampleCount: 0, untuned: true)
+        }
+        // ISF caps are inverted vs basal/CR (a lower autosens ratio → higher ISF).
+        let minISF = pumpISF / caps.autotuneMax
+        let maxISF = pumpISF / caps.autotuneMin
+
+        // Without usable evidence the current value carries forward. It may come
+        // from a historical profile outside the limits anchored to the pump, so
+        // cap it like a tuned value. An unusable current value falls back to
+        // the pump baseline.
+        func untuned(usableSampleCount: Int) -> Result {
+            let value = currentISF.isFinite && currentISF > 0
+                ? TuningMath.clamp(currentISF, minISF, maxISF)
+                : pumpISF
+            return Result(value: value, usableSampleCount: usableSampleCount, untuned: true)
+        }
+
+        guard currentISF.isFinite, currentISF > 0 else {
+            return untuned(usableSampleCount: 0)
         }
         let isfSamples = samples.filter { $0.category == .isf }
 
@@ -51,22 +70,18 @@ public struct SensitivityTuner: Sendable {
         // `.isf` label. Otherwise one valid datum plus nine zero/invalid BGIs can
         // move a medical setting.
         guard ratios.count >= Self.minimumDataPoints else {
-            return Result(value: currentISF, usableSampleCount: ratios.count, untuned: true)
+            return untuned(usableSampleCount: ratios.count)
         }
 
         // oref0 rounds p50ratios to 3 dp before multiplying (autotune/index.js).
         let medianRatio = (TuningMath.median(ratios) * 1000).rounded() / 1000
         let fullNewISF = currentISF * medianRatio
         guard fullNewISF.isFinite, fullNewISF > 0 else {
-            return Result(value: currentISF, usableSampleCount: ratios.count, untuned: true)
+            return untuned(usableSampleCount: ratios.count)
         }
 
         // Optional blend toward pump ISF.
         let adjustedISF = caps.isfAdjustmentFraction * fullNewISF + (1 - caps.isfAdjustmentFraction) * pumpISF
-
-        // ISF caps are inverted vs basal/CR (a lower autosens ratio → higher ISF).
-        let minISF = pumpISF / caps.autotuneMax
-        let maxISF = pumpISF / caps.autotuneMin
         let cappedAdjusted = TuningMath.clamp(adjustedISF, minISF, maxISF)
 
         // Move 20% toward the adjusted value, then re-cap.
