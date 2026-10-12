@@ -51,7 +51,7 @@ remediation; workflow adoption has not fixed or closed any finding.
 | --- | --- | --- | --- | --- |
 | SEC-01 | High | [Remote hostnames can pass the plain HTTP exception](#sec-01-remote-hostnames-can-pass-the-plain-http-exception) | Fixed | [#4](https://github.com/carlrosell/looptune/issues/4) |
 | SEC-03 | High | [Cross-origin redirects forward the API secret](#sec-03-cross-origin-redirects-forward-the-api-secret) | Open | [#6](https://github.com/carlrosell/looptune/issues/6) |
-| DATA-01 | High | [Cache keys mix sites hosted on different ports](#data-01-cache-keys-mix-sites-hosted-on-different-ports) | Open | [#8](https://github.com/carlrosell/looptune/issues/8) |
+| DATA-01 | High | [Cache keys mix sites hosted on different ports](#data-01-cache-keys-mix-sites-hosted-on-different-ports) | Fixed | [#8](https://github.com/carlrosell/looptune/issues/8) |
 | DATA-04 | High | [Fixed fetch limits silently truncate records and profile history](#data-04-fixed-fetch-limits-silently-truncate-records-and-profile-history) | Open | [#11](https://github.com/carlrosell/looptune/issues/11) |
 | CORE-01 | High | [No-evidence parameter paths bypass pump-relative caps](#core-01-no-evidence-parameter-paths-bypass-pump-relative-caps) | Fixed | [#12](https://github.com/carlrosell/looptune/issues/12) |
 | CORE-02 | High | [Final basal rounding and minimums can exceed the tuning limits](#core-02-final-basal-rounding-and-minimums-can-exceed-the-tuning-limits) | Fixed | [#13](https://github.com/carlrosell/looptune/issues/13) |
@@ -154,9 +154,28 @@ connection, DNS, TLS, and timeout errors without exposing token values.
 
 ### DATA-01 Cache keys mix sites hosted on different ports
 
-Severity: high. Status: open.
+Severity: high. Status: fixed.
 
 Tracking: [#8](https://github.com/carlrosell/looptune/issues/8).
+
+Fixed 2026-10-12 in [#28](https://github.com/carlrosell/looptune/pull/28),
+commit `3667208` (`3667208328db181875bb0f20c682a8c5a7565a60`), under [ADR
+0003](../../adr/0003-canonical-site-origin.md). `SiteOrigin` identifies a site
+by scheme, validated host, and effective port; `NightscoutClient` sets it in
+both initializers, and the day cache now lives under
+`DayCache/v2/<scheme>_<host>_<port>/`. Days cached under the hostname-only
+layout are never read; pruning removes only their day-named JSON files and empty
+folders. On c40b778 the pipeline test `cacheIsolatedByPort` failed: the
+`http://localhost:8080` client made no data requests and received the
+`http://localhost:1337` site's glucose. It passes on the merged change.
+`SiteOrigin` returns nil for hosts that cannot round-trip to a URL, so `url` and
+`description` cannot trap; a lander probe confirmed this for encoded space,
+slash, and NUL hosts, and confirmed that pruning does not follow symlinks out of
+the cache root. Integration verified on 2026-10-12 against `main` at c40b778:
+`swift test`, `python3 tools/docs_check.py`, the workflow tool tests, and `swift
+build -c release` passed. Scheme changes on one host (SEC-03), credential
+account keys (SEC-02), and saved-run provenance (APP-02) remain with their own
+findings. The original evidence below is unchanged.
 
 [Sources/LoopTuneKit/Pipeline/TuningPipeline.swift:335](../../Sources/LoopTuneKit/Pipeline/TuningPipeline.swift#L335) keys the day cache using
 only `client.baseURL.host`. `http://localhost:1337` and `http://localhost:8080`

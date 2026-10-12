@@ -569,3 +569,9 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   basal rates, including rounding, stay inside tuning and Loop limits with
   change tiers taken from the entered rate. The audit records commits and
   verification for each. DATA-01 (#28) remains in review.
+- **2026-10-12**: Landed DATA-01 (#28), completing wave 1 of the audit
+  remediation. Sites are identified by canonical origin (scheme, validated
+  host, and effective port), so sites sharing a hostname no longer share
+  cached days; the cache moved to an origin-keyed `v2` layout and older
+  hostname-only entries are refetched once. ADR 0003 is accepted. The audit
+  records the commit and verification.
