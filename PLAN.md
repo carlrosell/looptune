@@ -150,7 +150,7 @@ datum, from LoopAlgorithm, the equivalents of the oref0 quantities:
 |---|---|
 | `BGI` (insulin-only ΔBG/5m) | difference of consecutive `insulinFx` cumulative values |
 | `deviation` | `deviations[i]` (per-interval, already carb-adjusted) |
-| `avgDelta` | mean of last 4 five-min glucose deltas (same as oref0) |
+| `avgDelta` | mean five-min glucose delta over the trailing 20 minutes of CGM time (oref0's four five-min deltas, at any cadence) |
 | `iob.activity`, `iob.iob` | `insulinOnBoardTimeline(…)` + activity via `insulinFx` slope |
 | `basalBGI` | `scheduledBasal(t) × ISF(t) / 60 × 5` (same formula) |
 | COB / CSF | LoopAlgorithm `dynamicCarbsOnBoard` / CarbStatus (Loop's model, replaces oref0's `min_5m_carbimpact` decay) |
@@ -181,8 +181,9 @@ deviations when BG < 80 (post-hypo rebound guard).
 
 Each datum is one CGM interval. Its deviation and BGI are five-minute rates.
 Sums and medians weight each datum by its duration in five-minute intervals,
-and evidence minimums count CGM time in five-minute intervals rather than
-readings ([ADR 0007](adr/0007-measure-tuning-evidence-by-cgm-duration.md)).
+evidence minimums compare CGM time rather than readings, and evidence is
+reported in five-minute intervals
+([ADR 0007](adr/0007-measure-tuning-evidence-by-cgm-duration.md)).
 Regular five-minute data gives every datum weight 1, as in oref0.
 
 - **Basal (per hour, 24 slots):** `basalNeeded(h) = 0.2 × Σdeviations(h) / ISF`.

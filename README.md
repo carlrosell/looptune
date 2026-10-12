@@ -52,10 +52,10 @@ ISF and carb ratio are tuned independently for every time block already
 configured in Loop. When Loop has one all-day ISF, LoopTune suggests four
 six-hour ISF blocks instead. Blocks without usable evidence stay unchanged.
 Evidence is measured in CGM time, so one-minute and five-minute sensors carry
-the same weight. Sample counts are five-minute intervals of CGM time. An
-analysis requires at least one hour (12 intervals) of usable evidence. Within
-that analysis, each ISF block needs 50 minutes (10 intervals) of usable ISF
-evidence. A carb-ratio block needs at least one eligible logged meal and has no
+the same weight, and the trailing glucose trend covers 20 minutes at any
+cadence. Evidence counts are five-minute intervals of CGM time. An analysis
+requires at least one hour of usable evidence. Within that analysis, each ISF
+block needs 50 minutes of usable ISF evidence. A carb-ratio block needs at least one eligible logged meal and has no
 separate duration threshold.
 
 ## Validation status

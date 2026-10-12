@@ -42,9 +42,8 @@ public struct ChainedTuner: Sendable {
 
     /// Local hour at which one tuning day ends and the next begins.
     public static let dayBoundaryHour = 4
-    /// Minimum evidence, in five-minute intervals, for a window to count as
-    /// tuned (1 hour).
-    static let minimumSamplesPerDay = TuningPipeline.minimumUsableSamples
+    /// Minimum CGM evidence for a window to count as tuned (1 hour).
+    static let minimumEvidencePerDay = TuningPipeline.minimumEvidenceDuration
 
     public init(caps: TuningCaps = TuningCaps(), options: CategorizerOptions = CategorizerOptions()) {
         self.caps = caps
@@ -104,7 +103,7 @@ public struct ChainedTuner: Sendable {
                 let deviations = replayed.eligibleDeviations
                 let usableEvidence = DeviationSample.fiveMinuteIntervals(of: deviations)
                 excludedOverrideSamples += DeviationSample.fiveMinuteIntervals(of: replayed.deviations) - usableEvidence
-                guard usableEvidence >= Self.minimumSamplesPerDay else { continue }
+                guard DeviationSample.totalDuration(of: deviations) >= Self.minimumEvidencePerDay else { continue }
 
                 let output = try tuner.tune(
                     deviations: deviations,

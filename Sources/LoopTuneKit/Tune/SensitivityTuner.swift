@@ -12,6 +12,9 @@ public struct SensitivityTuner: Sendable {
     /// Minimum usable ISF-categorized evidence, in five-minute intervals,
     /// required to move ISF.
     public static let minimumDataPoints = 10
+    /// `minimumDataPoints` as CGM time (50 minutes). The check compares this
+    /// duration, not a rounded count.
+    public static let minimumEvidenceDuration = Double(minimumDataPoints) * DeviationSample.standardDuration
 
     struct Result: Sendable, Equatable {
         var value: Double
@@ -64,8 +67,7 @@ public struct SensitivityTuner: Sendable {
         var usableDuration: TimeInterval = 0
         for entry in isfSamples {
             let bgi = entry.sample.insulinEffect
-            guard bgi.isFinite, bgi != 0, entry.sample.deviation.isFinite,
-                  entry.sample.duration.isFinite, entry.sample.duration > 0 else { continue }
+            guard bgi.isFinite, bgi != 0, entry.sample.deviation.isFinite else { continue }
             let ratio = 1 + entry.sample.deviation / bgi
             if ratio.isFinite {
                 ratios.append((ratio, entry.sample.weight))
@@ -76,10 +78,10 @@ public struct SensitivityTuner: Sendable {
         // samples carrying the `.isf` label or their count. Otherwise one valid
         // datum plus nine zero/invalid BGIs, or ten minutes of one-minute CGM,
         // can move a medical setting.
-        let usableIntervals = DeviationSample.fiveMinuteIntervals(in: usableDuration)
-        guard usableIntervals >= Self.minimumDataPoints else {
-            return untuned(usableSampleCount: usableIntervals)
+        guard usableDuration >= Self.minimumEvidenceDuration else {
+            return untuned(usableSampleCount: DeviationSample.completeFiveMinuteIntervals(in: usableDuration))
         }
+        let usableIntervals = DeviationSample.fiveMinuteIntervals(in: usableDuration)
 
         // oref0 rounds p50ratios to 3 dp before multiplying (autotune/index.js).
         let medianRatio = (TuningMath.weightedMedian(ratios) * 1000).rounded() / 1000

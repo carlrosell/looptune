@@ -77,7 +77,7 @@ struct ContentView: View {
 
     private var subtitle: String {
         guard let run = model.selectedRun else { return "" }
-        return "\(run.days) day\(run.days == 1 ? "" : "s") · \(run.recommendation.totalSamples) samples"
+        return "\(run.days) day\(run.days == 1 ? "" : "s") · \(TuningReport.evidenceTime(run.recommendation.totalSamples)) of data"
     }
 }
 

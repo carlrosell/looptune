@@ -255,9 +255,12 @@ public struct LoopTuner: Sendable {
 
         // Evidence is measured in five-minute intervals of CGM time, not
         // readings, so a one-minute sensor does not count five times over.
+        // Category counts are apportioned so they add up to `totalSamples`.
         var durations: [DeviationCategory: TimeInterval] = [:]
         for entry in categorized { durations[entry.category, default: 0] += entry.sample.duration }
-        let counts = durations.mapValues(DeviationSample.fiveMinuteIntervals(in:))
+        let categories = DeviationCategory.allCasesOrdered.filter { durations[$0] != nil }
+        let apportioned = DeviationSample.fiveMinuteIntervals(apportioning: categories.map { durations[$0]! })
+        let counts = Dictionary(uniqueKeysWithValues: zip(categories, apportioned))
 
         return try TuningOutput(
             tunedBasalHourly: basalResult.hourlyRates,

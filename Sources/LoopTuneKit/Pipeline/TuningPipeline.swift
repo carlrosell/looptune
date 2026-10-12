@@ -79,7 +79,8 @@ public struct TuningPipeline: Sendable {
         case noProfile
         case noGlucose
         case invalidAnalysisWindow
-        /// Usable evidence, in five-minute intervals, was below `minimum`.
+        /// Usable evidence was below `minimum`. Both are five-minute intervals;
+        /// `actual` counts only complete intervals, so it is below `minimum`.
         case insufficientUsableData(minimum: Int, actual: Int)
         case invalidInput(String)
         /// Nightscout holds more `collection` records between `start` and
@@ -94,7 +95,8 @@ public struct TuningPipeline: Sendable {
     /// a user-facing recommendation.
     public static let minimumEvidenceDuration: TimeInterval = 3600
     /// `minimumEvidenceDuration` in five-minute intervals, the unit of every
-    /// evidence count. Measured by duration, not CGM readings.
+    /// evidence count. The check itself compares durations, not readings or
+    /// rounded counts.
     public static let minimumUsableSamples = Int(minimumEvidenceDuration / DeviationSample.standardDuration)
 
     /// Records requested by one entries or treatments query.
@@ -146,6 +148,8 @@ public struct TuningPipeline: Sendable {
 
         if days > 1 || hasTherapyChangeInReplay {
             let result = try ChainedTuner(options: options).run(inputs: chainInputs)
+            // Every tuned segment already holds `minimumEvidenceDuration`, so
+            // this rejects only a run in which no segment was tuned.
             guard result.output.totalSamples >= Self.minimumUsableSamples else {
                 throw PipelineError.insufficientUsableData(
                     minimum: Self.minimumUsableSamples,
@@ -173,10 +177,11 @@ public struct TuningPipeline: Sendable {
         )
         let deviations = inputs.eligibleDeviations(allDeviations)
         let usableEvidence = DeviationSample.fiveMinuteIntervals(of: deviations)
-        guard usableEvidence >= Self.minimumUsableSamples else {
+        let usableDuration = DeviationSample.totalDuration(of: deviations)
+        guard usableDuration >= Self.minimumEvidenceDuration else {
             throw PipelineError.insufficientUsableData(
                 minimum: Self.minimumUsableSamples,
-                actual: usableEvidence
+                actual: DeviationSample.completeFiveMinuteIntervals(in: usableDuration)
             )
         }
 
