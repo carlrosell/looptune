@@ -1,6 +1,6 @@
 # 0006. Follow redirects only within the request's origin
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-12
 - **Deciders:** Project owner
 - **Related:** [#6](https://github.com/carlrosell/looptune/issues/6) (SEC-03), [Repository audit](../docs/code-reviews/2026-10-12-repository-audit-review.md#sec-03-cross-origin-redirects-forward-the-api-secret), [ADR 0003](0003-canonical-site-origin.md), [#4](https://github.com/carlrosell/looptune/issues/4) (SEC-01), [#5](https://github.com/carlrosell/looptune/issues/5) (SEC-02), [#7](https://github.com/carlrosell/looptune/issues/7) (SEC-04)

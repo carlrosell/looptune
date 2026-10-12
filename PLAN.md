@@ -575,3 +575,10 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   cached days; the cache moved to an origin-keyed `v2` layout and older
   hostname-only entries are refetched once. ADR 0003 is accepted. The audit
   records the commit and verification.
+- **2026-10-12**: Landed CORE-03 (#32) and SEC-03 (#33) from wave 2 of the
+  audit remediation. Schedule expansion now matches direct lookup through
+  repeated and skipped daylight-saving hours, including 30-minute shifts.
+  Network requests follow redirects only within the original site's origin and
+  check the HTTPS or loopback rule on every hop, so credentials never reach
+  another site; ADR 0006 is accepted. The audit records the commits and
+  verification.
