@@ -50,7 +50,7 @@ remediation; workflow adoption has not fixed or closed any finding.
 | ID | Severity | Finding | Status | Issue |
 | --- | --- | --- | --- | --- |
 | SEC-01 | High | [Remote hostnames can pass the plain HTTP exception](#sec-01-remote-hostnames-can-pass-the-plain-http-exception) | Fixed | [#4](https://github.com/carlrosell/looptune/issues/4) |
-| SEC-03 | High | [Cross-origin redirects forward the API secret](#sec-03-cross-origin-redirects-forward-the-api-secret) | Open | [#6](https://github.com/carlrosell/looptune/issues/6) |
+| SEC-03 | High | [Cross-origin redirects forward the API secret](#sec-03-cross-origin-redirects-forward-the-api-secret) | Fixed | [#6](https://github.com/carlrosell/looptune/issues/6) |
 | DATA-01 | High | [Cache keys mix sites hosted on different ports](#data-01-cache-keys-mix-sites-hosted-on-different-ports) | Fixed | [#8](https://github.com/carlrosell/looptune/issues/8) |
 | DATA-04 | High | [Fixed fetch limits silently truncate records and profile history](#data-04-fixed-fetch-limits-silently-truncate-records-and-profile-history) | Open | [#11](https://github.com/carlrosell/looptune/issues/11) |
 | CORE-01 | High | [No-evidence parameter paths bypass pump-relative caps](#core-01-no-evidence-parameter-paths-bypass-pump-relative-caps) | Fixed | [#12](https://github.com/carlrosell/looptune/issues/12) |
@@ -60,7 +60,7 @@ remediation; workflow adoption has not fixed or closed any finding.
 | SEC-04 | Medium | [Network error messages expose query tokens](#sec-04-network-error-messages-expose-query-tokens) | Open | [#7](https://github.com/carlrosell/looptune/issues/7) |
 | DATA-02 | Medium | [Corrupt legacy schedule offsets can crash history loading](#data-02-corrupt-legacy-schedule-offsets-can-crash-history-loading) | Open | [#9](https://github.com/carlrosell/looptune/issues/9) |
 | DATA-03 | Medium | [Oversized remote timestamps crash cache encoding](#data-03-oversized-remote-timestamps-crash-cache-encoding) | Open | [#10](https://github.com/carlrosell/looptune/issues/10) |
-| CORE-03 | Medium | [Expanded schedules disagree with clock lookup during fall-back](#core-03-expanded-schedules-disagree-with-clock-lookup-during-fall-back) | Open | [#14](https://github.com/carlrosell/looptune/issues/14) |
+| CORE-03 | Medium | [Expanded schedules disagree with clock lookup during fall-back](#core-03-expanded-schedules-disagree-with-clock-lookup-during-fall-back) | Fixed | [#14](https://github.com/carlrosell/looptune/issues/14) |
 | CORE-05 | Medium | [CGM cadence changes tuning weight and the minimum evidence duration](#core-05-cgm-cadence-changes-tuning-weight-and-the-minimum-evidence-duration) | Open | [#16](https://github.com/carlrosell/looptune/issues/16) |
 | CORE-06 | Medium | [Profile changes reinterpret doses from before activation](#core-06-profile-changes-reinterpret-doses-from-before-activation) | Open | [#17](https://github.com/carlrosell/looptune/issues/17) |
 | CORE-07 | Medium | [Fixed carb lookback drops meals still active in the model](#core-07-fixed-carb-lookback-drops-meals-still-active-in-the-model) | Open | [#18](https://github.com/carlrosell/looptune/issues/18) |
@@ -128,9 +128,28 @@ before storing or using the URL. Add credential-bearing URL cases to both tests.
 
 ### SEC-03 Cross-origin redirects forward the API secret
 
-Severity: high. Status: open.
+Severity: high. Status: fixed.
 
 Tracking: [#6](https://github.com/carlrosell/looptune/issues/6).
+
+Fixed 2026-10-12 in [#33](https://github.com/carlrosell/looptune/pull/33),
+commit `14337fb` (`14337fbaf618b780072f94c279066c08e595b953`), under [ADR
+0006](../../adr/0006-same-origin-redirects.md). `URLSessionTransport` checks the
+HTTPS or loopback transport policy before sending, and a per-task redirect
+delegate follows a redirect only when its target has exactly the original
+request's `SiteOrigin`; any other redirect is never requested and fails with
+`NightscoutError.disallowedRedirect`. The rule applies to every request, and a
+same-host `http` to `https` upgrade is refused. A lander probe with the real
+transport on f388919 reproduced `cross_host_secret_received=true
+redirect_fetch_completed=true`; on the merged change the same redirect is
+refused before the second server is contacted. `RedirectPolicyTests` cover
+cross-host and cross-port redirects with an API secret and a token, same-origin
+redirects for both credentials, a two-hop chain, the upgrade, a downgrade,
+remote plain-HTTP and cross-host HTTPS targets, and an initial request outside
+the policy. Verified on 2026-10-12 against `main` at f388919: `swift test`
+passed three times, the redirect suites passed ten consecutive runs, and
+`python3 tools/docs_check.py`, the workflow tool tests, and `swift build -c
+release` passed. The original evidence below is unchanged.
 
 [Sources/LoopTuneKit/Nightscout/NightscoutClient.swift:10](../../Sources/LoopTuneKit/Nightscout/NightscoutClient.swift#L10) uses the shared URL
 session without a redirect policy. A local 302 from `127.0.0.1` to `localhost`
@@ -290,9 +309,27 @@ rates, and test small-rate boundaries against both absolute and relative limits.
 
 ### CORE-03 Expanded schedules disagree with clock lookup during fall-back
 
-Severity: medium. Status: open.
+Severity: medium. Status: fixed.
 
 Tracking: [#14](https://github.com/carlrosell/looptune/issues/14).
+
+Fixed 2026-10-12 in [#32](https://github.com/carlrosell/looptune/pull/32),
+commit `f388919` (`f388919151d1a614f7d953484472128bb1e0f66a`).
+`DailySchedule.expand` now splits the window at every UTC-offset transition and
+takes each segment's value from direct lookup, so a repeated local boundary
+applies at both occurrences and a boundary skipped by a forward change applies
+at the transition. The audit's New York 04:00Z–09:00Z window now expands to 1,
+2, 1, 2, 3, and the second 01:15 gives 1 through both paths. The new
+`DailySchedule` and `ReplayEngine` tests fail on 0ea1742 (140 issues) and pass
+on the merged change. They compare lookup and expansion every minute and at ±1 s
+around each cut for both New York transitions, both Lord Howe 30-minute
+transitions, and a clipped window, and a replay case shows no insulin effect
+from a scheduled-rate temp basal during the repeated hour. A lander probe found
+no mismatch across 305 offset transitions in 12 time zones from 2010 through
+2026. The supported domain is offset changes reported by Foundation's time zone
+data. Verified on 2026-10-12 against `main` at 0ea1742: `swift test`, `python3
+tools/docs_check.py`, the workflow tool tests, and `swift build -c release`
+passed. The original evidence below is unchanged.
 
 [Sources/LoopTuneKit/Model/DailySchedule.swift:110](../../Sources/LoopTuneKit/Model/DailySchedule.swift#L110) resolves only one occurrence
 of repeated local schedule times and omits a cut at the daylight-saving clock
