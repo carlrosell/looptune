@@ -178,7 +178,7 @@ struct DiagnosticsView: View {
                                         label: "Recommended",
                                         value: "\(deviationNumber(hovered.after, signed: true)) \(displayUnit.shortLabel)"
                                     )
-                                    TooltipRow(color: nil, label: "Samples", value: "\(hovered.sampleCount)")
+                                    TooltipRow(color: nil, label: "Data", value: TuningReport.evidenceTime(hovered.sampleCount))
                                 }
                             }
                         }

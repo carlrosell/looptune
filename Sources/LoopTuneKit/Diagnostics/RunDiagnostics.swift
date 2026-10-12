@@ -40,7 +40,7 @@ public struct HourDeviation: Codable, Sendable, Equatable, Identifiable {
     public var before: Double
     /// Mean deviation if the recommended settings had been used (mg/dL).
     public var after: Double
-    /// Deviation samples behind this hour.
+    /// Deviation evidence behind this hour, in five-minute intervals.
     public var sampleCount: Int
 
     public var id: Int { hour }

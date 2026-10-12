@@ -8,7 +8,7 @@ import Foundation
 /// carb-model *residual*. Working in carb-sensitivity space:
 ///
 /// - the replay modeled carbs with `CSF_replay = replayISF / currentCR`,
-/// - the summed residual per gram reveals the true value:
+/// - the duration-weighted residual sum per gram reveals the true value:
 ///   `CSF_true = CSF_replay + Σdeviation / Σcarbs`,
 /// - and the new ratio expresses that against the (possibly retuned) ISF:
 ///   `CR = targetISF / CSF_true`.
@@ -49,7 +49,7 @@ public struct CarbRatioTuner: Sendable {
     ) -> Double {
         let mealDeviations = samples
             .filter { $0.category == .csf }
-            .reduce(0.0) { $0 + $1.sample.deviation }
+            .reduce(0.0) { $0 + $1.sample.deviation * $1.sample.weight }
 
         return tuneWithEvidence(
             mealDeviations: mealDeviations,

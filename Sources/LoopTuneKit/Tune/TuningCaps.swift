@@ -51,6 +51,35 @@ enum TuningMath {
         percentile(values.sorted(), 0.5)
     }
 
+    /// `percentile` generalized to weighted values: each value occupies a span
+    /// of rank equal to its weight instead of one. With every weight equal to
+    /// one this is exactly `percentile`, so oref0 parity is unchanged.
+    static func weightedPercentile(_ values: [(value: Double, weight: Double)], _ p: Double) -> Double {
+        let sorted = values
+            .filter { $0.weight > 0 }
+            .sorted { ($0.value, $0.weight) < ($1.value, $1.weight) }
+        guard !sorted.isEmpty else { return 0 }
+        if sorted.count == 1 { return sorted[0].value }
+        let rank = sorted.reduce(0) { $0 + $1.weight } * p
+        var lowerIndex = 0
+        var lowerStart = 0.0
+        var start = 0.0
+        for index in sorted.indices {
+            guard start <= rank else { break }
+            lowerIndex = index
+            lowerStart = start
+            start += sorted[index].weight
+        }
+        let upperIndex = min(sorted.count - 1, lowerIndex + 1)
+        let fraction = (rank - lowerStart) / sorted[lowerIndex].weight
+        let lower = sorted[lowerIndex].value
+        return lower + (sorted[upperIndex].value - lower) * fraction
+    }
+
+    static func weightedMedian(_ values: [(value: Double, weight: Double)]) -> Double {
+        weightedPercentile(values, 0.5)
+    }
+
     static func clamp(_ value: Double, _ lower: Double, _ upper: Double) -> Double {
         min(max(value, lower), upper)
     }

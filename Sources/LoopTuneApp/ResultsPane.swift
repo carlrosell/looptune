@@ -93,7 +93,7 @@ struct ResultsView: View {
                     ParameterScheduleCard(
                         title: "Insulin sensitivity by time of day",
                         entries: recommendation.sensitivitySchedule,
-                        evidenceName: "samples",
+                        evidenceName: "5-min intervals",
                         displayUnit: displayUnit
                     )
                 }
@@ -134,7 +134,7 @@ struct ResultsView: View {
                 MetricBadge(label: "ISF", percent: recommendation.sensitivity.percentChange)
                 MetricBadge(label: "Carb ratio", percent: recommendation.carbRatio.percentChange)
             }
-            Text("vs your pump settings · \(recommendation.daysAnalyzed) day\(recommendation.daysAnalyzed == 1 ? "" : "s"), \(recommendation.totalSamples) samples")
+            Text("vs your pump settings · \(recommendation.daysAnalyzed) day\(recommendation.daysAnalyzed == 1 ? "" : "s"), \(TuningReport.evidenceTime(recommendation.totalSamples)) of data")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if !recommendation.settingsChanges.isEmpty {
@@ -148,7 +148,7 @@ struct ResultsView: View {
             }
             if recommendation.excludedOverrideSamples > 0 {
                 Label(
-                    "\(recommendation.excludedOverrideSamples) samples during insulin-needs overrides were excluded.",
+                    "\(TuningReport.evidenceTime(recommendation.excludedOverrideSamples)) of data during insulin-needs overrides was excluded.",
                     systemImage: "line.3.horizontal.decrease.circle"
                 )
                 .font(.caption)
@@ -207,7 +207,7 @@ struct ResultsView: View {
                     } else if hour.daysMissing > 0 {
                         Text("\(hour.daysMissing)d missing").foregroundStyle(.tertiary)
                     } else {
-                        Text("\(hour.sampleCount) samples").foregroundStyle(.secondary)
+                        Text(TuningReport.evidenceTime(hour.sampleCount)).foregroundStyle(.secondary)
                     }
                 }
             }

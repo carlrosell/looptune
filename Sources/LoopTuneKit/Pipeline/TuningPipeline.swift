@@ -79,6 +79,8 @@ public struct TuningPipeline: Sendable {
         case noProfile
         case noGlucose
         case invalidAnalysisWindow
+        /// Usable evidence was below `minimum`. Both are five-minute intervals;
+        /// `actual` counts only complete intervals, so it is below `minimum`.
         case insufficientUsableData(minimum: Int, actual: Int)
         case invalidInput(String)
         /// Nightscout holds more `collection` records between `start` and
@@ -89,9 +91,13 @@ public struct TuningPipeline: Sendable {
         case incompleteProfileHistory(requiredFrom: Date)
     }
 
-    /// One hour of five-minute intervals: the smallest evidence set allowed to
-    /// produce a user-facing recommendation.
-    public static let minimumUsableSamples = 12
+    /// One hour of CGM evidence: the smallest evidence set allowed to produce
+    /// a user-facing recommendation.
+    public static let minimumEvidenceDuration: TimeInterval = 3600
+    /// `minimumEvidenceDuration` in five-minute intervals, the unit of every
+    /// evidence count. The check itself compares durations, not readings or
+    /// rounded counts.
+    public static let minimumUsableSamples = Int(minimumEvidenceDuration / DeviationSample.standardDuration)
 
     /// Records requested by one entries or treatments query.
     static let recordPageSize = 1500
@@ -142,6 +148,8 @@ public struct TuningPipeline: Sendable {
 
         if days > 1 || hasTherapyChangeInReplay {
             let result = try ChainedTuner(options: options).run(inputs: chainInputs)
+            // Every tuned segment already holds `minimumEvidenceDuration`, so
+            // this rejects only a run in which no segment was tuned.
             guard result.output.totalSamples >= Self.minimumUsableSamples else {
                 throw PipelineError.insufficientUsableData(
                     minimum: Self.minimumUsableSamples,
@@ -168,10 +176,12 @@ public struct TuningPipeline: Sendable {
             analysisEnd: inputs.analysisEnd
         )
         let deviations = inputs.eligibleDeviations(allDeviations)
-        guard deviations.count >= Self.minimumUsableSamples else {
+        let usableEvidence = DeviationSample.fiveMinuteIntervals(of: deviations)
+        let usableDuration = DeviationSample.totalDuration(of: deviations)
+        guard usableDuration >= Self.minimumEvidenceDuration else {
             throw PipelineError.insufficientUsableData(
                 minimum: Self.minimumUsableSamples,
-                actual: deviations.count
+                actual: DeviationSample.completeFiveMinuteIntervals(in: usableDuration)
             )
         }
 
@@ -193,7 +203,7 @@ public struct TuningPipeline: Sendable {
             from: output,
             daysAnalyzed: days,
             profileGlucoseUnit: profile.glucoseUnit,
-            excludedOverrideSamples: allDeviations.count - deviations.count
+            excludedOverrideSamples: DeviationSample.fiveMinuteIntervals(of: allDeviations) - usableEvidence
         )
     }
 

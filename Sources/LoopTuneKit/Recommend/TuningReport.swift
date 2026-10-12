@@ -22,14 +22,14 @@ public enum TuningReport {
         lines.append("LoopTune recommendations")
         lines.append(String(repeating: "=", count: 60))
         lines.append("")
-        lines.append("Days analyzed: \(recommendation.daysAnalyzed)   Samples: \(recommendation.totalSamples)   Units: \(unit.shortLabel)")
+        lines.append("Days analyzed: \(recommendation.daysAnalyzed)   Evidence: \(evidenceTime(recommendation.totalSamples))   Units: \(unit.shortLabel)")
         lines.append(categoryLine(recommendation.categoryCounts))
         if !recommendation.settingsChanges.isEmpty {
             let dates = recommendation.settingsChanges.map { Self.dayFormatter.string(from: $0) }.joined(separator: ", ")
             lines.append("Settings changed during the window (\(dates)); the analysis restarted from your applied settings at each change.")
         }
         if recommendation.excludedOverrideSamples > 0 {
-            lines.append("\(recommendation.excludedOverrideSamples) samples during insulin-needs overrides were excluded from tuning.")
+            lines.append("\(evidenceTime(recommendation.excludedOverrideSamples)) of data during insulin-needs overrides was excluded from tuning.")
         }
         lines.append("")
 
@@ -43,7 +43,7 @@ public enum TuningReport {
             appendSchedule(
                 recommendation.sensitivitySchedule,
                 title: "Insulin Sensitivity schedule",
-                evidenceName: "samples",
+                evidenceName: "5-min intervals",
                 unit: unit,
                 to: &lines
             )
@@ -88,7 +88,7 @@ public enum TuningReport {
 
     private static func categoryLine(_ counts: [DeviationCategory: Int]) -> String {
         let parts = DeviationCategory.allCasesOrdered.map { "\($0.rawValue.uppercased()): \(counts[$0] ?? 0)" }
-        return "Categorized — " + parts.joined(separator: "  ")
+        return "Categorized 5-min intervals — " + parts.joined(separator: "  ")
     }
 
     private static func parameterRow(_ rec: ParameterRecommendation, unit: GlucoseUnit) -> String {
@@ -96,6 +96,16 @@ public enum TuningReport {
         let pump = "\(rec.formatted(rec.pumpValue(in: unit), in: unit)) \(rec.unitLabel(in: unit))"
         let tuned = rec.formatted(rec.recommendedValue(in: unit), in: unit)
         return pad(rec.name, 22) + pad(pump, 14) + pad(tuned, 14) + change + flagSuffix(tier: rec.changeTier, status: rec.guardrailStatus)
+    }
+
+    /// Evidence counted in five-minute intervals, shown as CGM time: "35 min",
+    /// "3 h" or "3 h 5 min".
+    public static func evidenceTime(_ fiveMinuteIntervals: Int) -> String {
+        let minutes = max(0, fiveMinuteIntervals) * 5
+        let hours = minutes / 60
+        let remainder = minutes % 60
+        if hours == 0 { return "\(remainder) min" }
+        return remainder == 0 ? "\(hours) h" : "\(hours) h \(remainder) min"
     }
 
     private static func appendSchedule(

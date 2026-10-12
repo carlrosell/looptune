@@ -16,7 +16,8 @@ public struct BasalTuner: Sendable {
         public var hourlyRates: [Double]
         /// Whether each hour was left untuned (no data / smoothed from neighbors).
         public var untuned: [Bool]
-        /// Basal-categorized deviation samples observed per hour (data coverage).
+        /// Basal-categorized evidence informing each hour, in five-minute
+        /// intervals (data coverage).
         public var sampleCounts: [Int]
     }
 
@@ -36,16 +37,17 @@ public struct BasalTuner: Sendable {
             return Result(hourlyRates: currentHourly, untuned: Array(repeating: true, count: 24), sampleCounts: Array(repeating: 0, count: 24))
         }
 
-        // Sum basal-categorized deviations per local hour.
+        // Sum basal-categorized deviations per local hour, weighted by the
+        // duration each sample covers so CGM cadence does not change the total.
         var deviationsByHour = [Double](repeating: 0, count: 24)
-        var countByHour = [Int](repeating: 0, count: 24)
-        var evidenceCountByHour = [Int](repeating: 0, count: 24)
+        var durationByHour = [TimeInterval](repeating: 0, count: 24)
+        var evidenceDurationByHour = [TimeInterval](repeating: 0, count: 24)
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         for entry in samples where entry.category == .basal {
             let hour = calendar.component(.hour, from: entry.sample.date)
-            deviationsByHour[hour] += entry.sample.deviation
-            countByHour[hour] += 1
+            deviationsByHour[hour] += entry.sample.deviation * entry.sample.weight
+            durationByHour[hour] += entry.sample.duration
         }
 
         var rates = currentHourly
@@ -56,7 +58,7 @@ public struct BasalTuner: Sendable {
         // hourly deviation sum rounds to 3 dp, basalNeeded to 2 dp, and every
         // intermediate rate to 3 dp.
         for hour in 0..<24 {
-            guard countByHour[hour] > 0 else { continue }
+            guard durationByHour[hour] > 0 else { continue }
             let deviationSum = round3(deviationsByHour[hour])
             let basalNeeded = round2(caps.stepFraction * deviationSum / isf)
             let priorHours = [(hour + 21) % 24, (hour + 22) % 24, (hour + 23) % 24] // h−3, h−2, h−1
@@ -64,7 +66,7 @@ public struct BasalTuner: Sendable {
                 // These samples inform the prior basal hours that are actually
                 // adjusted, not the clock hour in which the resulting deviation
                 // was observed.
-                evidenceCountByHour[h] += countByHour[hour]
+                evidenceDurationByHour[h] += durationByHour[hour]
             }
 
             if basalNeeded > 0 {
@@ -94,7 +96,11 @@ public struct BasalTuner: Sendable {
         // to preserve the safety invariant across settings changes.
         capRates(&rates, against: pumpHourly)
 
-        return Result(hourlyRates: rates.map(round3), untuned: touched.map { !$0 }, sampleCounts: evidenceCountByHour)
+        return Result(
+            hourlyRates: rates.map(round3),
+            untuned: touched.map { !$0 },
+            sampleCounts: evidenceDurationByHour.map(DeviationSample.fiveMinuteIntervals(in:))
+        )
     }
 
     /// oref0's unused-basal smoothing: a forward pass over the hours, where the

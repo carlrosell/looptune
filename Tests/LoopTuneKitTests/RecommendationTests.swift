@@ -430,7 +430,7 @@ struct PipelineIntegrationTests {
         )
         #expect(rec.excludedOverrideSamples == 19)
         #expect(rec.totalSamples + rec.excludedOverrideSamples == 59)
-        #expect(TuningReport.render(rec).contains("19 samples during insulin-needs overrides"))
+        #expect(TuningReport.render(rec).contains("1 h 35 min of data during insulin-needs overrides"))
         #expect(try RecommendationJSON.encode(rec).contains("\"excludedOverrideSamples\" : 19"))
     }
 

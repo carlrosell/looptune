@@ -106,8 +106,9 @@ public struct BasalHourRecommendation: Sendable, Equatable, Identifiable {
     /// Day windows in which this hour received no tuning data (confidence:
     /// higher = less real data behind the recommendation for this hour).
     public var daysMissing: Int
-    /// Basal-categorized samples that informed this scheduled basal hour across
-    /// the window. A deviation observed at hour h informs basal hours h−3…h−1.
+    /// Basal-categorized evidence, in five-minute intervals, that informed this
+    /// scheduled basal hour across the window. A deviation observed at hour h
+    /// informs basal hours h−3…h−1.
     public var sampleCount: Int
     /// Lowest rate the recommendation may take: the pump-relative tuning floor
     /// or Loop's absolute minimum, whichever is higher.
@@ -280,7 +281,8 @@ public struct TuningRecommendation: Sendable, Equatable {
     public var carbRatioSchedule: [ParameterScheduleRecommendation]
     public var basalHours: [BasalHourRecommendation]
 
-    /// Category counts and sample totals for confidence context.
+    /// Category counts and sample totals for confidence context. Every
+    /// evidence count is in five-minute intervals of CGM time, not readings.
     public var categoryCounts: [DeviationCategory: Int]
     public var totalSamples: Int
     public var daysAnalyzed: Int
@@ -291,7 +293,8 @@ public struct TuningRecommendation: Sendable, Equatable {
     /// Therapy settings changes detected inside the window (from the profile
     /// history). The tuner restarted from the applied settings at each.
     public var settingsChanges: [Date]
-    /// Samples excluded because a temporary override changed insulin needs.
+    /// Evidence, in five-minute intervals, excluded because a temporary
+    /// override changed insulin needs.
     public var excludedOverrideSamples: Int
 
     /// Sum of tuned basal over 24 hours (daily total, U).

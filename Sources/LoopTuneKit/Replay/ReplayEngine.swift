@@ -15,7 +15,7 @@ public struct ReplayEngine: Sendable {
     /// window start still contribute effects.
     static let insulinActivityDuration: TimeInterval = InsulinMath.defaultInsulinActivityDuration
     /// Tuning thresholds and oref0 parity are expressed per five-minute datum.
-    static let standardInterval: TimeInterval = 5 * 60
+    static let standardInterval: TimeInterval = DeviationSample.standardDuration
     static let maximumCGMGap: TimeInterval = 20 * 60
 
     public init() {}
@@ -124,10 +124,11 @@ public struct ReplayEngine: Sendable {
             let intervalSeconds = current.date.timeIntervalSince(previous.date)
             guard intervalSeconds > 0, intervalSeconds <= Self.maximumCGMGap else { continue }
 
-            // Nightscout timestamps have jitter and can occasionally miss one or
-            // more readings. The tuner and categorizer thresholds are defined in
-            // mg/dL per five minutes, so normalize every accepted interval rather
-            // than counting (for example) a 15-minute change at triple weight.
+            // CGM cadence varies (one-minute sensors, jitter, missed readings),
+            // and the categorizer thresholds are defined in mg/dL per five
+            // minutes, so express every change as a five-minute rate. The
+            // interval duration travels with the sample: tuners weight sums and
+            // evidence by it, so cadence changes neither the rate nor the weight.
             let intervalScale = Self.standardInterval / intervalSeconds
             let observedDelta = (current.milligramsPerDeciliter - previous.milligramsPerDeciliter) * intervalScale
             let insulinDelta = (
@@ -154,7 +155,8 @@ public struct ReplayEngine: Sendable {
                 insulinEffect: insulinDelta,
                 deviation: deviation,
                 insulinOnBoard: iob,
-                carbsOnBoard: cob
+                carbsOnBoard: cob,
+                duration: intervalSeconds
             ))
         }
         return result
@@ -199,26 +201,43 @@ public struct ReplayEngine: Sendable {
         )
     }
 
-    /// Mean five-minute glucose delta over up to four contiguous recent
-    /// intervals. Uses elapsed time rather than sample count so timestamp jitter
-    /// and short missing-sample gaps do not change the unit.
+    /// oref0's `avgDelta` horizon: four five-minute intervals.
+    static let averageDeltaHorizon: TimeInterval = 4 * standardInterval
+
+    /// Mean five-minute glucose delta over the trailing `averageDeltaHorizon`.
+    ///
+    /// The horizon is elapsed time, not a reading count, so the same trajectory
+    /// gives the same value at any CGM cadence: four readings span 4 minutes of
+    /// one-minute CGM but an hour of fifteen-minute CGM. When the horizon falls
+    /// between two readings, glucose there is interpolated between them. The
+    /// walk back stops at a gap longer than `maximumCGMGap`, so a shorter
+    /// contiguous history uses its earliest reading. On a regular five-minute
+    /// grid the horizon lands on the fourth prior reading, as in oref0.
     static func averageDelta(in glucose: [GlucoseSample], endingAt index: Int) -> Double {
         guard index > 0, index < glucose.count else { return 0 }
+        let current = glucose[index]
+        let horizonStart = current.date.addingTimeInterval(-averageDeltaHorizon)
         var startIndex = index
-        var acceptedIntervals = 0
-        while startIndex > 0, acceptedIntervals < 4 {
+        while startIndex > 0, glucose[startIndex].date > horizonStart {
             let gap = glucose[startIndex].date.timeIntervalSince(glucose[startIndex - 1].date)
             guard gap > 0, gap <= Self.maximumCGMGap else { break }
             startIndex -= 1
-            acceptedIntervals += 1
         }
         guard startIndex < index else { return 0 }
-        let current = glucose[index]
-        let past = glucose[startIndex]
-        let span = current.date.timeIntervalSince(past.date)
+
+        var pastDate = glucose[startIndex].date
+        var pastGlucose = glucose[startIndex].milligramsPerDeciliter
+        if pastDate < horizonStart {
+            // The reading after `startIndex` is inside the horizon, and the
+            // accepted interval between them spans its start.
+            let later = glucose[startIndex + 1]
+            let fraction = horizonStart.timeIntervalSince(pastDate) / later.date.timeIntervalSince(pastDate)
+            pastGlucose += (later.milligramsPerDeciliter - pastGlucose) * fraction
+            pastDate = horizonStart
+        }
+        let span = current.date.timeIntervalSince(pastDate)
         guard span > 0 else { return 0 }
-        return (current.milligramsPerDeciliter - past.milligramsPerDeciliter)
-            * Self.standardInterval / span
+        return (current.milligramsPerDeciliter - pastGlucose) * Self.standardInterval / span
     }
 }
 

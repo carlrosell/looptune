@@ -414,8 +414,8 @@ struct BasalChartView: View {
     }
 }
 
-/// Per-hour basal data coverage: how many deviation samples informed each
-/// scheduled basal hour after the tuner's three-hour lookback.
+/// Per-hour basal data coverage: how much CGM time, in five-minute intervals,
+/// informed each scheduled basal hour after the tuner's three-hour lookback.
 /// Hours with no direct evidence appear as gaps (and are flagged in the table).
 struct CoverageChartView: View {
     let hours: [BasalHourRecommendation]
@@ -430,13 +430,13 @@ struct CoverageChartView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Data coverage — samples informing each basal hour")
+            Text("Data coverage — CGM time informing each basal hour")
                 .font(.subheadline.weight(.semibold))
             Chart {
                 ForEach(hours, id: \.hour) { entry in
                     BarMark(
                         x: .value("Hour", entry.hour),
-                        y: .value("Samples", entry.sampleCount),
+                        y: .value("5-min intervals", entry.sampleCount),
                         width: .fixed(8)
                     )
                     .foregroundStyle(ChartPalette.tuned(colorScheme))
@@ -454,8 +454,8 @@ struct CoverageChartView: View {
                             ChartTooltip(title: String(format: "%02d:00", hovered.hour)) {
                                 TooltipRow(
                                     color: ChartPalette.tuned(colorScheme),
-                                    label: "Samples",
-                                    value: hovered.sampleCount > 0 ? "\(hovered.sampleCount)" : "no data"
+                                    label: "Data",
+                                    value: hovered.sampleCount > 0 ? TuningReport.evidenceTime(hovered.sampleCount) : "no data"
                                 )
                                 if hovered.daysMissing > 0 {
                                     TooltipRow(color: nil, label: "Days missing", value: "\(hovered.daysMissing)")
