@@ -80,7 +80,7 @@ valid to enter into Loop's therapy settings.
 │                          LoopTuneKit                             │
 │                                                                   │
 │  Nightscout/    HTTP client, auth (token/api-secret/JWT), DTOs,   │
-│                 per-day windowed fetch, redirect normalization    │
+│                 per-day windowed fetch, same-origin redirects     │
 │      │                                                            │
 │      ▼                                                            │
 │  Ingest/        NS DTO → domain model; profile schedule expansion │

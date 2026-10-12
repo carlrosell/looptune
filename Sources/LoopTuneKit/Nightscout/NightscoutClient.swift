@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Abstraction over the network so the client can be exercised with stubbed
 /// responses in tests.
@@ -7,6 +8,13 @@ public protocol NightscoutTransport: Sendable {
 }
 
 /// Default transport backed by `URLSession`.
+///
+/// Every hop must satisfy the transport policy: HTTPS, or plain HTTP to a
+/// loopback host. Redirects are followed only within the origin of the
+/// original request; any other redirect is refused before the new request is
+/// sent, so credentials never reach another site, and the call fails with
+/// `NightscoutError.disallowedRedirect`. Certificate validation is the
+/// session's default. See ADR 0006.
 public struct URLSessionTransport: NightscoutTransport {
     private let session: URLSession
     public init(session: URLSession = .shared) {
@@ -14,7 +22,16 @@ public struct URLSessionTransport: NightscoutTransport {
     }
 
     public func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let (data, response) = try await session.data(for: request)
+        guard let url = request.url,
+              let origin = SiteOrigin(url: url),
+              TransportPolicy.permits(url) else {
+            throw NightscoutError.invalidURL
+        }
+        let redirects = RedirectGuard(origin: origin)
+        let (data, response) = try await session.data(for: request, delegate: redirects)
+        guard !redirects.rejected else {
+            throw NightscoutError.disallowedRedirect
+        }
         guard let http = response as? HTTPURLResponse else {
             throw NightscoutError.invalidResponse
         }
@@ -22,9 +39,40 @@ public struct URLSessionTransport: NightscoutTransport {
     }
 }
 
+/// Per-task delegate that applies `TransportPolicy.permitsRedirect` to each
+/// redirect. Refusing a redirect makes the session return the redirect
+/// response itself, so the refusal is recorded for the transport to report.
+private final class RedirectGuard: NSObject, URLSessionTaskDelegate, Sendable {
+    private let origin: SiteOrigin
+    private let refused = OSAllocatedUnfairLock(initialState: false)
+
+    init(origin: SiteOrigin) {
+        self.origin = origin
+    }
+
+    var rejected: Bool {
+        refused.withLock { $0 }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest
+    ) async -> URLRequest? {
+        guard let url = request.url, TransportPolicy.permitsRedirect(to: url, from: origin) else {
+            refused.withLock { $0 = true }
+            return nil
+        }
+        return request
+    }
+}
+
 public enum NightscoutError: Error, Equatable {
     case invalidURL
     case invalidResponse
+    /// A redirect left the request's origin or the transport policy.
+    case disallowedRedirect
     case unauthorized
     case httpStatus(Int)
     case decoding(String)
@@ -38,6 +86,8 @@ extension NightscoutError: LocalizedError {
             return "Invalid Nightscout URL. Use HTTPS (plain HTTP is allowed only for localhost)."
         case .invalidResponse:
             return "Nightscout returned a non-HTTP response."
+        case .disallowedRedirect:
+            return "Nightscout redirected to a different scheme, host, or port, so the request was stopped. Enter the site's final address."
         case .unauthorized:
             return "Nightscout rejected the supplied credentials."
         case .httpStatus(let code):
@@ -92,7 +142,7 @@ public struct NightscoutClient: Sendable {
             return nil
         }
         let scheme = components.scheme?.lowercased() ?? "https"
-        guard scheme == "https" || (scheme == "http" && Self.isLoopback(host)) else {
+        guard scheme == "https" || (scheme == "http" && TransportPolicy.permitsPlainHTTP(host: host)) else {
             return nil
         }
         components.scheme = scheme
@@ -101,45 +151,6 @@ public struct NightscoutClient: Sendable {
         components.fragment = nil
         if components.scheme == nil { components.scheme = "https" }
         return components.url
-    }
-
-    /// Whether `host` may use plain HTTP. Only `localhost`, a canonical dotted-quad
-    /// literal in 127.0.0.0/8, or the bracketed IPv6 loopback literal qualify.
-    /// Any other name could resolve to a remote server, so `127.example.com`,
-    /// shorthand such as `127.1`, and leading zeros (read as octal by some
-    /// resolvers) are rejected rather than reinterpreted.
-    private static func isLoopback(_ host: String) -> Bool {
-        let normalized = host.lowercased()
-        if normalized == "localhost" { return true }
-        if normalized.hasPrefix("[") && normalized.hasSuffix("]") {
-            return isIPv6Loopback(String(normalized.dropFirst().dropLast()))
-        }
-        return isIPv4Loopback(normalized)
-    }
-
-    private static func isIPv4Loopback(_ host: String) -> Bool {
-        let octets = host.split(separator: ".", omittingEmptySubsequences: false)
-        guard octets.count == 4 else { return false }
-        for octet in octets {
-            guard (1...3).contains(octet.count),
-                  octet.allSatisfy({ $0 >= "0" && $0 <= "9" }),
-                  octet == "0" || octet.first != "0",
-                  let value = Int(octet), value <= 255 else {
-                return false
-            }
-        }
-        return octets[0] == "127"
-    }
-
-    /// Accepts any spelling of `::1`. Zone IDs and embedded IPv4 notation are
-    /// rejected up front because `inet_pton` ignores text after `%`.
-    private static func isIPv6Loopback(_ address: String) -> Bool {
-        guard address.allSatisfy({ $0 == ":" || $0.isHexDigit }) else { return false }
-        var parsed = in6_addr()
-        guard inet_pton(AF_INET6, address, &parsed) == 1 else { return false }
-        return withUnsafeBytes(of: &parsed) { bytes in
-            bytes.dropLast().allSatisfy { $0 == 0 } && bytes.last == 1
-        }
     }
 
     // MARK: - Request building
