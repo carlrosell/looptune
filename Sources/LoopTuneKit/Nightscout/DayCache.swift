@@ -20,7 +20,11 @@ public struct CachedDay: Codable, Sendable {
 
 /// Persistent per-day cache of fetched Nightscout data.
 ///
-/// Layout: `<directory>/<site-host>/<yyyy-MM-dd>.json`, one file per UTC day.
+/// Layout: `<directory>/v2/<site-origin>/<yyyy-MM-dd>.json`, one file per UTC
+/// day, keyed by the site's full `SiteOrigin` (ADR 0003). The original layout,
+/// `<directory>/<site-host>/<yyyy-MM-dd>.json`, ignored scheme and port and so
+/// mixed sites on one host; its entries are never read and are deleted on prune.
+///
 /// Days are storage buckets, not analysis windows — the pipeline stitches
 /// consecutive buckets back together, so bucketing in UTC keeps keys stable
 /// even if the profile timezone changes.
@@ -37,6 +41,9 @@ public struct DayCache: Sendable {
 
     /// Seconds in a UTC day (no DST in UTC).
     static let dayLength: TimeInterval = 86_400
+
+    /// Subdirectory holding the current origin-keyed layout.
+    static let layoutDirectoryName = "v2"
 
     public init(
         directory: URL? = nil,
@@ -56,9 +63,9 @@ public struct DayCache: Sendable {
 
     // MARK: - Load / store
 
-    public func load(host: String, dayKey: String) -> CachedDay? {
+    public func load(origin: SiteOrigin, dayKey: String) -> CachedDay? {
         guard Self.isValidDayKey(dayKey) else { return nil }
-        let url = fileURL(host: host, dayKey: dayKey)
+        let url = fileURL(origin: origin, dayKey: dayKey)
         guard let data = try? Data(contentsOf: url) else { return nil }
         guard let cached = try? JSONDecoder().decode(CachedDay.self, from: data) else {
             // Corrupt or outdated format: drop it so it refetches.
@@ -68,9 +75,9 @@ public struct DayCache: Sendable {
         return cached
     }
 
-    public func store(_ cachedDay: CachedDay, host: String) {
+    public func store(_ cachedDay: CachedDay, origin: SiteOrigin) {
         guard Self.isValidDayKey(cachedDay.day) else { return }
-        let url = fileURL(host: host, dayKey: cachedDay.day)
+        let url = fileURL(origin: origin, dayKey: cachedDay.day)
         do {
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(),
@@ -96,23 +103,44 @@ public struct DayCache: Sendable {
 
     // MARK: - Eviction
 
-    /// Delete every cached day older than `maxAgeDays`, across all hosts.
+    /// Delete every cached day older than `maxAgeDays`, across all sites, and
+    /// every day stored in the hostname-only layout.
     public func pruneExpired(now: Date = Date()) {
-        let fileManager = FileManager.default
-        guard let hosts = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else {
-            return
-        }
         let cutoff = now.addingTimeInterval(-TimeInterval(maxAgeDays) * Self.dayLength)
-        for hostDirectory in hosts {
-            guard let files = try? fileManager.contentsOfDirectory(at: hostDirectory, includingPropertiesForKeys: nil) else {
-                continue
+        for siteDirectory in subdirectories(of: layoutDirectory) {
+            removeDayFiles(in: siteDirectory) { $0 < cutoff }
+        }
+        removeLegacyEntries()
+    }
+
+    /// Delete day files from the hostname-only layout. Only day-named JSON
+    /// files and the directories they leave empty are removed.
+    private func removeLegacyEntries() {
+        for hostDirectory in subdirectories(of: directory)
+        where hostDirectory.lastPathComponent != Self.layoutDirectoryName {
+            removeDayFiles(in: hostDirectory) { _ in true }
+            let remaining = try? FileManager.default.contentsOfDirectory(atPath: hostDirectory.path)
+            if remaining?.isEmpty == true {
+                try? FileManager.default.removeItem(at: hostDirectory)
             }
-            for file in files where file.pathExtension == "json" {
-                let key = file.deletingPathExtension().lastPathComponent
-                guard let dayStart = Self.parseDayKey(key) else { continue }
-                if dayStart < cutoff {
-                    try? fileManager.removeItem(at: file)
-                }
+        }
+    }
+
+    private func subdirectories(of url: URL) -> [URL] {
+        let contents = (try? FileManager.default.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey]
+        )) ?? []
+        return contents.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+    }
+
+    private func removeDayFiles(in directory: URL, where shouldRemove: (Date) -> Bool) {
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        for file in files where file.pathExtension == "json" {
+            let key = file.deletingPathExtension().lastPathComponent
+            guard Self.isValidDayKey(key), let dayStart = Self.parseDayKey(key) else { continue }
+            if shouldRemove(dayStart) {
+                try? FileManager.default.removeItem(at: file)
             }
         }
     }
@@ -158,17 +186,25 @@ public struct DayCache: Sendable {
         return dayKey(for: date) == key
     }
 
-    func fileURL(host: String, dayKey: String) -> URL {
-        directory
-            .appendingPathComponent(Self.sanitize(host), isDirectory: true)
+    var layoutDirectory: URL {
+        directory.appendingPathComponent(Self.layoutDirectoryName, isDirectory: true)
+    }
+
+    func fileURL(origin: SiteOrigin, dayKey: String) -> URL {
+        layoutDirectory
+            .appendingPathComponent(Self.directoryName(for: origin), isDirectory: true)
             .appendingPathComponent(dayKey)
             .appendingPathExtension("json")
     }
 
-    /// Make a host string safe as a directory name.
-    static func sanitize(_ host: String) -> String {
-        String(host.lowercased().map { character in
-            character.isLetter || character.isNumber || character == "." || character == "-" ? character : "_"
-        })
+    /// A readable directory name that is distinct for every origin, such as
+    /// `http_localhost_1337`. The host keeps only `a-z`, `0-9`, `.`, and `-`;
+    /// other bytes are percent-encoded, so `_` separates the parts unambiguously.
+    static func directoryName(for origin: SiteOrigin) -> String {
+        let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789.-".utf8)
+        let host = origin.host.utf8.map { byte in
+            allowed.contains(byte) ? String(UnicodeScalar(byte)) : String(format: "%%%02X", byte)
+        }.joined()
+        return "\(origin.scheme)_\(host)_\(origin.port)"
     }
 }

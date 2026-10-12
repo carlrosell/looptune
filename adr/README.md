@@ -38,3 +38,4 @@ retroactive approvals for them.
 | [0000](0000-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0001](0001-coordinate-work-through-issues-and-pull-requests.md) | Coordinate work through issues and pull requests | Accepted |
 | [0002](0002-verify-changes-at-the-appropriate-boundary.md) | Verify changes at the appropriate boundary | Accepted |
+| [0003](0003-canonical-site-origin.md) | Identify sites by canonical origin | Proposed |

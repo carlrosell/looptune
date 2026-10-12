@@ -332,12 +332,11 @@ public struct TuningPipeline: Sendable {
         let fetchStart = analysisStart.addingTimeInterval(-DayCache.dayLength)
         let fetchEnd = end.addingTimeInterval(6 * 3600)
         let buckets = DayCache.utcDayBuckets(covering: fetchStart, to: fetchEnd)
-        let host = client.baseURL.host ?? "unknown"
 
         var entries: [NSEntry] = []
         var treatments: [NSTreatment] = []
         for bucket in buckets {
-            if let cache, let cached = cache.load(host: host, dayKey: bucket.key) {
+            if let cache, let cached = cache.load(origin: client.origin, dayKey: bucket.key) {
                 entries += cached.entries
                 treatments += cached.treatments
                 continue
@@ -349,7 +348,7 @@ public struct TuningPipeline: Sendable {
             if let cache, cache.shouldStore(dayEnd: bucket.interval.end) {
                 cache.store(
                     CachedDay(day: bucket.key, fetchedAt: Date(), entries: dayEntries, treatments: dayTreatments),
-                    host: host
+                    origin: client.origin
                 )
             }
         }
