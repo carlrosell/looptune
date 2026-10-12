@@ -52,7 +52,7 @@ remediation; workflow adoption has not fixed or closed any finding.
 | SEC-01 | High | [Remote hostnames can pass the plain HTTP exception](#sec-01-remote-hostnames-can-pass-the-plain-http-exception) | Fixed | [#4](https://github.com/carlrosell/looptune/issues/4) |
 | SEC-03 | High | [Cross-origin redirects forward the API secret](#sec-03-cross-origin-redirects-forward-the-api-secret) | Fixed | [#6](https://github.com/carlrosell/looptune/issues/6) |
 | DATA-01 | High | [Cache keys mix sites hosted on different ports](#data-01-cache-keys-mix-sites-hosted-on-different-ports) | Fixed | [#8](https://github.com/carlrosell/looptune/issues/8) |
-| DATA-04 | High | [Fixed fetch limits silently truncate records and profile history](#data-04-fixed-fetch-limits-silently-truncate-records-and-profile-history) | Open | [#11](https://github.com/carlrosell/looptune/issues/11) |
+| DATA-04 | High | [Fixed fetch limits silently truncate records and profile history](#data-04-fixed-fetch-limits-silently-truncate-records-and-profile-history) | Fixed | [#11](https://github.com/carlrosell/looptune/issues/11) |
 | CORE-01 | High | [No-evidence parameter paths bypass pump-relative caps](#core-01-no-evidence-parameter-paths-bypass-pump-relative-caps) | Fixed | [#12](https://github.com/carlrosell/looptune/issues/12) |
 | CORE-02 | High | [Final basal rounding and minimums can exceed the tuning limits](#core-02-final-basal-rounding-and-minimums-can-exceed-the-tuning-limits) | Fixed | [#13](https://github.com/carlrosell/looptune/issues/13) |
 | CORE-04 | High | [A final settings change can leave the previous recommendation active](#core-04-a-final-settings-change-can-leave-the-previous-recommendation-active) | Fixed | [#15](https://github.com/carlrosell/looptune/issues/15) |
@@ -62,7 +62,7 @@ remediation; workflow adoption has not fixed or closed any finding.
 | DATA-03 | Medium | [Oversized remote timestamps crash cache encoding](#data-03-oversized-remote-timestamps-crash-cache-encoding) | Open | [#10](https://github.com/carlrosell/looptune/issues/10) |
 | CORE-03 | Medium | [Expanded schedules disagree with clock lookup during fall-back](#core-03-expanded-schedules-disagree-with-clock-lookup-during-fall-back) | Fixed | [#14](https://github.com/carlrosell/looptune/issues/14) |
 | CORE-05 | Medium | [CGM cadence changes tuning weight and the minimum evidence duration](#core-05-cgm-cadence-changes-tuning-weight-and-the-minimum-evidence-duration) | Open | [#16](https://github.com/carlrosell/looptune/issues/16) |
-| CORE-06 | Medium | [Profile changes reinterpret doses from before activation](#core-06-profile-changes-reinterpret-doses-from-before-activation) | Open | [#17](https://github.com/carlrosell/looptune/issues/17) |
+| CORE-06 | Medium | [Profile changes reinterpret doses from before activation](#core-06-profile-changes-reinterpret-doses-from-before-activation) | Fixed | [#17](https://github.com/carlrosell/looptune/issues/17) |
 | CORE-07 | Medium | [Fixed carb lookback drops meals still active in the model](#core-07-fixed-carb-lookback-drops-meals-still-active-in-the-model) | Open | [#18](https://github.com/carlrosell/looptune/issues/18) |
 | APP-01 | Medium | [Run completion persists settings edited after the run started](#app-01-run-completion-persists-settings-edited-after-the-run-started) | Open | [#19](https://github.com/carlrosell/looptune/issues/19) |
 | APP-02 | Medium | [Saved results do not identify their source site](#app-02-saved-results-do-not-identify-their-source-site) | Open | [#20](https://github.com/carlrosell/looptune/issues/20) |
@@ -234,9 +234,27 @@ server response must throw, and optional caching must not turn it into a trap.
 
 ### DATA-04 Fixed fetch limits silently truncate records and profile history
 
-Severity: high. Status: open.
+Severity: high. Status: fixed.
 
 Tracking: [#11](https://github.com/carlrosell/looptune/issues/11).
+
+Fixed 2026-10-12 in [#36](https://github.com/carlrosell/looptune/pull/36),
+commit `456941f` (`456941fdcc1b914dbf959cc3e6b3a96802a15476`), under [ADR
+0005](../../adr/0005-complete-nightscout-fetches.md). Entries and treatments are
+fetched per UTC day with `count=1500`; a response of 1,000 or more records is
+treated as possibly capped and its date range is bisected and requeried, with
+overlap duplicates removed. An unsplittable full range or more than 64 queries
+per day throws `incompleteRecords`. Profile history is requested from 100 up to
+3,200 documents until it covers the profile active at the earliest replay input;
+a capped or count-ignoring response throws `incompleteProfileHistory`. Only
+complete days are cached. On 876b5d2 an adapted copy of `CompleteFetchTests`
+failed: 1,501 doses and readings were truncated to 1,500 and the 101-profile
+history was not extended. With the capped-response and count-probe mitigations
+disabled, five of the merged tests fail. Verified on 2026-10-12 against `main`
+at a075b1c: `swift test`, `python3 tools/docs_check.py`, the workflow tool
+tests, and `swift build -c release` passed. A server that caps below 1,000
+records remains a documented residual risk in ADR 0005. The original evidence
+below is unchanged.
 
 [Sources/LoopTuneKit/Pipeline/TuningPipeline.swift:322](../../Sources/LoopTuneKit/Pipeline/TuningPipeline.swift#L322) requests only 100
 profiles; lines 345 to 346 request only 1,500 entries and treatments per day.
@@ -386,9 +404,32 @@ evidence checks. Test equivalent trajectories at different sampling cadences.
 
 ### CORE-06 Profile changes reinterpret doses from before activation
 
-Severity: medium. Status: open.
+Severity: medium. Status: fixed.
 
 Tracking: [#17](https://github.com/carlrosell/looptune/issues/17).
+
+Fixed 2026-10-12 in [#38](https://github.com/carlrosell/looptune/pull/38),
+commit `a075b1c` (`a075b1cbc9f200879938c9c7f66c23b927632aa6`), under [ADR
+0004](../../adr/0004-historical-replay-context.md). `TherapyTimeline` composes
+recorded profile history with the candidate profile, expanding each period in
+its own time zone and keeping a cut at every settings-period boundary, and
+`HistoricalReplay` is the single replay context for chained tuning and
+diagnostics. Inputs that began before an activation keep their recorded
+settings; inputs after it, including the post-change part of a crossing temp
+basal, use the candidate. The pipeline uses chained replay when a change falls
+in the input lookback before the window. The audit bolus now gives -1.076170
+after activation. A lander probe through `ChainedTuner` showed that on 876b5d2 a
+pre-change 1 U bolus was read with the new ISF 80, while the merged change gives
+exactly the result of the 0.5 U ISF-80 equivalent; a temp basal crossing an
+ISF-only change matches its explicitly split equivalent (it differed by up to
+1.13 mg/dL per 5 min before the fix round). `HistoricalReplayTests` cover
+pre-change basal, crossing temp basals for basal-, ISF-, CR-, and combined
+changes, pre-change meals, post-change boluses, target-only uploads, A to B to A
+history, another time zone, and per-period insulin type. History that does not
+reach the earliest input is rejected at the pipeline boundary by DATA-04.
+Verified on 2026-10-12 against `main` at 876b5d2: `swift test`, `python3
+tools/docs_check.py`, the workflow tool tests, and `swift build -c release`
+passed. The original evidence below is unchanged.
 
 [Sources/LoopTuneKit/Tune/ChainedTuner.swift:114](../../Sources/LoopTuneKit/Tune/ChainedTuner.swift#L114) passes one profile to replay,
 and [Sources/LoopTuneKit/Replay/ReplayEngine.swift:54](../../Sources/LoopTuneKit/Replay/ReplayEngine.swift#L54) expands it over the complete input lookback.

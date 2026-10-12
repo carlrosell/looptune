@@ -1,6 +1,6 @@
 # 0004. Replay inputs with the settings recorded at their start
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-12
 - **Deciders:** Project owner
 - **Related:** [#17](https://github.com/carlrosell/looptune/issues/17) (CORE-06), [Repository audit](../docs/code-reviews/2026-10-12-repository-audit-review.md#core-06-profile-changes-reinterpret-doses-from-before-activation), [#18](https://github.com/carlrosell/looptune/issues/18) (CORE-07), [#11](https://github.com/carlrosell/looptune/issues/11) (DATA-04), [#15](https://github.com/carlrosell/looptune/issues/15) (CORE-04)
