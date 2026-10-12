@@ -133,7 +133,7 @@ extension CarbRatioTuner {
             guard totalCarbs > 0 else {
                 return ScheduleTuningOutput(
                     secondsSinceMidnight: pumpEntry.secondsSinceMidnight,
-                    tunedValue: fallbackCurrentCR,
+                    tunedValue: untunedResult(currentCR: fallbackCurrentCR, pumpCR: pumpEntry.value).value,
                     pumpValue: pumpEntry.value,
                     untuned: true
                 )

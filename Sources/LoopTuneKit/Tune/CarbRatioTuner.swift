@@ -69,30 +69,46 @@ public struct CarbRatioTuner: Sendable {
         currentCR: Double,
         pumpCR: Double
     ) -> Result {
-
         guard totalMealCarbs.isFinite, totalMealCarbs > 0,
               replayISF.isFinite, replayISF > 0,
               targetISF.isFinite, targetISF > 0,
               currentCR.isFinite, currentCR > 0,
               pumpCR.isFinite, pumpCR > 0,
               mealDeviations.isFinite else {
-            return Result(value: currentCR, untuned: true)
+            return untunedResult(currentCR: currentCR, pumpCR: pumpCR)
         }
 
         let csfReplay = replayISF / currentCR
         let csfTrue = csfReplay + mealDeviations / totalMealCarbs
         guard csfTrue.isFinite, csfTrue > 0 else {
-            return Result(value: currentCR, untuned: true)
+            return untunedResult(currentCR: currentCR, pumpCR: pumpCR)
         }
 
         let fullNewCR = targetISF / csfTrue
 
-        let minCR = max(absoluteMinCR, pumpCR * caps.autotuneMin)
-        let maxCR = min(absoluteMaxCR, pumpCR * caps.autotuneMax)
+        let (minCR, maxCR) = limits(pumpCR: pumpCR)
         let cappedFull = TuningMath.clamp(fullNewCR, minCR, maxCR)
 
         let newCR = (1 - caps.stepFraction) * currentCR + caps.stepFraction * cappedFull
         let value = (TuningMath.clamp(newCR, minCR, maxCR) * 1000).rounded() / 1000
         return Result(value: value, untuned: false)
+    }
+
+    /// Without usable evidence the current value carries forward. It may come
+    /// from a historical profile outside the limits anchored to the pump, so
+    /// cap it like a tuned value. An unusable current value falls back to the
+    /// pump baseline.
+    func untunedResult(currentCR: Double, pumpCR: Double) -> Result {
+        guard pumpCR.isFinite, pumpCR > 0 else {
+            // Without a usable pump baseline there is no relative limit to apply.
+            return Result(value: currentCR, untuned: true)
+        }
+        let (minCR, maxCR) = limits(pumpCR: pumpCR)
+        let value = currentCR.isFinite && currentCR > 0 ? currentCR : pumpCR
+        return Result(value: TuningMath.clamp(value, minCR, maxCR), untuned: true)
+    }
+
+    private func limits(pumpCR: Double) -> (lower: Double, upper: Double) {
+        (max(absoluteMinCR, pumpCR * caps.autotuneMin), min(absoluteMaxCR, pumpCR * caps.autotuneMax))
     }
 }
