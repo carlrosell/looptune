@@ -103,6 +103,112 @@ struct NightscoutClientRequestTests {
     }
 }
 
+@Suite("NightscoutClient plain-HTTP loopback exception")
+struct NightscoutClientLoopbackTests {
+    private func normalized(_ raw: String) -> String? {
+        NightscoutClient.normalizeBaseURL(raw)?.absoluteString
+    }
+
+    @Test("hostnames that merely start with a loopback prefix are rejected over HTTP")
+    func numericPrefixHostnames() {
+        for raw in [
+            "http://127.remote.example.com",
+            "http://127.0.0.1.remote.example.com",
+            "http://127.0.0.1.nip.io",
+            "http://127.example:8080",
+            "http://localhost.example.com",
+            "http://app.localhost",
+        ] {
+            #expect(normalized(raw) == nil, "\(raw)")
+        }
+        // HTTPS is unaffected: the exception only governs plain HTTP.
+        #expect(normalized("https://127.remote.example.com") == "https://127.remote.example.com")
+    }
+
+    @Test("malformed or non-canonical IPv4 literals are rejected over HTTP")
+    func malformedIPv4() {
+        for raw in [
+            "http://127.1",
+            "http://127.0.1",
+            "http://127.0.0.256",
+            "http://127.0.0.1.1",
+            "http://127.0.0.1.",
+            "http://127..0.1",
+            "http://0127.0.0.1",
+            "http://127.0.0.01",
+            "http://0x7f.0.0.1",
+            "http://2130706433",
+        ] {
+            #expect(normalized(raw) == nil, "\(raw)")
+        }
+    }
+
+    @Test("dotted-quad addresses in 127.0.0.0/8 are accepted")
+    func ipv4Loopback() {
+        #expect(normalized("http://127.0.0.1") == "http://127.0.0.1")
+        #expect(normalized("http://127.0.0.1:8080/api/v1/entries.json") == "http://127.0.0.1:8080")
+        #expect(normalized("http://127.10.20.30:1337") == "http://127.10.20.30:1337")
+        #expect(normalized("http://127.255.255.254") == "http://127.255.255.254")
+    }
+
+    @Test("localhost is accepted case-insensitively")
+    func localhost() {
+        #expect(normalized("http://localhost:1337") == "http://localhost:1337")
+        #expect(normalized("http://LocalHost:1337") != nil)
+    }
+
+    @Test("bracketed IPv6 loopback is accepted; other IPv6 addresses are not")
+    func ipv6Loopback() {
+        #expect(normalized("http://[::1]:1337") == "http://[::1]:1337")
+        #expect(normalized("http://[::1]") == "http://[::1]")
+        #expect(normalized("http://[0:0:0:0:0:0:0:1]:1337") != nil)
+        for raw in [
+            "http://[::2]",
+            "http://[::]",
+            "http://[fe80::1]",
+            "http://[::ffff:127.0.0.1]",
+            "http://[::1%25lo0]:1337",
+            "http://[::0.0.0.1]",
+        ] {
+            #expect(normalized(raw) == nil, "\(raw)")
+        }
+    }
+
+    @Test("private-network and unspecified addresses still require HTTPS")
+    func privateNetworks() {
+        for raw in [
+            "http://10.0.0.5",
+            "http://192.168.1.2:1337",
+            "http://169.254.1.1",
+            "http://0.0.0.0:1337",
+        ] {
+            #expect(normalized(raw) == nil, "\(raw)")
+        }
+    }
+
+    @Test("a rejected HTTP URL never produces a request carrying credentials")
+    func rejectedURLSendsNothing() async throws {
+        let stub = StubTransport()
+        for raw in ["http://127.remote.example.com", "http://127.0.0.256", "http://[::2]:1337"] {
+            #expect(throws: NightscoutError.invalidURL) {
+                _ = try NightscoutClient(rawURLString: raw, credentials: .token("synthetic-token"), transport: stub)
+            }
+            let url = try #require(URL(string: raw))
+            #expect(throws: NightscoutError.invalidURL) {
+                _ = try NightscoutClient(baseURL: url, credentials: .apiSecret("synthetic-secret"), transport: stub)
+            }
+        }
+        #expect(stub.lastRequest == nil)
+
+        let accepted = try NightscoutClient(rawURLString: "http://[::1]:1337", credentials: .token("synthetic-token"), transport: stub)
+        _ = try await accepted.fetchEntries(from: Date(timeIntervalSince1970: 0), to: Date(timeIntervalSince1970: 300))
+        let sent = try #require(stub.lastRequest?.url)
+        #expect(sent.host == "::1" || sent.host == "[::1]")
+        #expect(sent.port == 1337)
+        #expect(sent.absoluteString.contains("token=synthetic-token"))
+    }
+}
+
 @Suite("Nightscout DTO decoding")
 struct NightscoutDTODecodingTests {
     private func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {

@@ -97,11 +97,43 @@ public struct NightscoutClient: Sendable {
         return components.url
     }
 
+    /// Whether `host` may use plain HTTP. Only `localhost`, a canonical dotted-quad
+    /// literal in 127.0.0.0/8, or the bracketed IPv6 loopback literal qualify.
+    /// Any other name could resolve to a remote server, so `127.example.com`,
+    /// shorthand such as `127.1`, and leading zeros (read as octal by some
+    /// resolvers) are rejected rather than reinterpreted.
     private static func isLoopback(_ host: String) -> Bool {
         let normalized = host.lowercased()
-        return normalized == "localhost"
-            || normalized == "::1"
-            || normalized.hasPrefix("127.")
+        if normalized == "localhost" { return true }
+        if normalized.hasPrefix("[") && normalized.hasSuffix("]") {
+            return isIPv6Loopback(String(normalized.dropFirst().dropLast()))
+        }
+        return isIPv4Loopback(normalized)
+    }
+
+    private static func isIPv4Loopback(_ host: String) -> Bool {
+        let octets = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard octets.count == 4 else { return false }
+        for octet in octets {
+            guard (1...3).contains(octet.count),
+                  octet.allSatisfy({ $0 >= "0" && $0 <= "9" }),
+                  octet == "0" || octet.first != "0",
+                  let value = Int(octet), value <= 255 else {
+                return false
+            }
+        }
+        return octets[0] == "127"
+    }
+
+    /// Accepts any spelling of `::1`. Zone IDs and embedded IPv4 notation are
+    /// rejected up front because `inet_pton` ignores text after `%`.
+    private static func isIPv6Loopback(_ address: String) -> Bool {
+        guard address.allSatisfy({ $0 == ":" || $0.isHexDigit }) else { return false }
+        var parsed = in6_addr()
+        guard inet_pton(AF_INET6, address, &parsed) == 1 else { return false }
+        return withUnsafeBytes(of: &parsed) { bytes in
+            bytes.dropLast().allSatisfy { $0 == 0 } && bytes.last == 1
+        }
     }
 
     // MARK: - Request building
