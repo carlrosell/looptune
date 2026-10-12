@@ -10,6 +10,10 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Check workflow documentation
+        run: python3 tools/docs_check.py
+      - name: Test workflow tools
+        run: python3 -m unittest discover -s tools/tests -p 'test_*.py'
       - name: Show Swift version
         run: swift --version
       - name: Build

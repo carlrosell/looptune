@@ -106,6 +106,12 @@ remembered.
 
 ## Development
 
+- Work coordination uses repo-local [coordinator, worker, and lander skills](AGENTS.md),
+  [GitHub task issues](https://github.com/carlrosell/looptune/issues?q=is%3Aissue%20is%3Aopen%20label%3Atask),
+  and [architecture decision records](adr/README.md). Read the
+  [workflow](docs/coordination.md) and run `python3 tools/status.py --no-local`
+  for current task state. The [repository audit](docs/code-reviews/2026-10-12-repository-audit-review.md)
+  links each finding to its remediation issue.
 - `swift build` / `swift test` (166 tests across 31 suites)
 - `scripts/dev.sh` — watch mode: rebuilds and relaunches the app on every
   save (the app restores its state on launch, so a relaunch is nearly free);

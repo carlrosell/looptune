@@ -4,6 +4,11 @@
 > status table and the phase checklists as work lands. Keep the "Status log"
 > at the bottom append-only so we can always see how we got here.
 
+Task ownership and PR state follow the [coordination workflow](docs/coordination.md).
+Durable decisions live in [ADRs](adr/README.md). The
+[2026-10-12 audit](docs/code-reviews/2026-10-12-repository-audit-review.md) links
+all 20 findings to their remediation issues; those findings remain open.
+
 ---
 
 ## 1. Vision
@@ -551,3 +556,8 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   indefinite-override resolution), and `GlucoseIngest` (filter/sort/dedupe). 53
   tests green. Profile-history alignment and basal-gap filling deferred to the
   Phase 4 window builder where they're actually consumed.
+- **2026-10-12**: Recorded the full repository audit and linked all 20 findings
+  to GitHub remediation issues. Added shared coordinator, worker, and lander
+  skills, issue and PR templates, ADRs 0000 through 0002, read-only status
+  tooling, documentation checks, and CI coverage for the workflow tools.
+  All findings remain open; no application behavior changed.

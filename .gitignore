@@ -16,3 +16,6 @@ references/
 # Local dev
 *.log
 .env
+
+# Python workflow tools
+__pycache__/
