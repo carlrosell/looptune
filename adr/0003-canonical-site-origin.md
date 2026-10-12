@@ -26,10 +26,19 @@ recovered.
 normalized host, and effective port:
 
 - The scheme is `http` or `https`, lowercased. Other schemes have no origin.
-- The host is lowercased. Internationalized names use the punycode form
-  returned by `URL`. IPv6 literals are stored unbracketed in compressed form;
-  zone IDs are rejected. A trailing dot is kept, so `example.com.` and
-  `example.com` are distinct.
+- The host is percent-decoded and lowercased. Internationalized names use the
+  punycode form returned by `URL`. IPv6 literals are stored unbracketed in
+  compressed form; zone IDs are rejected. A trailing dot is kept, so
+  `example.com.` and `example.com` are distinct.
+- A host other than an IPv6 literal must be a name: dot-separated labels of
+  1…63 characters from `a-z`, `0-9`, `-`, and `_`, not starting or ending
+  with `-`, with at most 253 characters before an optional trailing dot. If
+  the last label is numeric (decimal, or `0x` hex), the host must be a
+  canonical dotted-quad IPv4 literal without a trailing dot. Decoded spaces,
+  control characters, `/`, `@`, `#`, `?`, `%`, empty labels, and IPv4
+  shorthand such as `127.1` leave a URL without an origin.
+- An origin exists only if its canonical URL parses back to the same scheme,
+  host, and port, so `url` and `description` are always available.
 - The port is explicit or the scheme default (443 or 80) and must be in
   1…65535. `https://example.com` and `https://example.com:443` are equal.
 - User information, path, query, and fragment are not part of the origin and
@@ -76,6 +85,7 @@ display a run's origin. Those changes remain their own tasks. The client's
 `baseURL` normalizer and the app's credential account key are unchanged here.
 
 Verification: `SiteOriginTests` covers default ports, host case, IPv6
-spellings, rejected URLs, and canonical URLs. Pipeline tests use a
+spellings, rejected URLs and hosts, canonical URLs, and the round trip from
+each accepted origin through its canonical URL. Pipeline tests use a
 deterministic transport and temporary cache to show port isolation and that a
 seeded hostname-only entry is refetched and deleted.

@@ -49,13 +49,83 @@ struct SiteOriginTests {
         }
     }
 
+    @Test("hosts that are not names or IP literals have no origin")
+    func rejectsMalformedHosts() {
+        let longLabel = String(repeating: "a", count: 64)
+        for string in [
+            "https://exa%20mple.com",
+            "https://ex%2Fample.com",
+            "https://a%00b.com",
+            "https://a%0Ab.com",
+            "https://a%40b.com",
+            "https://a%23b.com",
+            "https://a%3Fb.com",
+            "https://a%25b.com",
+            "https://a..b.com",
+            "https://.example.com",
+            "https://example.com..",
+            "https://-example.com",
+            "https://example-.com",
+            "https://\(longLabel).com",
+            "https://127.1",
+            "https://127.000.0.1",
+            "https://256.0.0.1",
+            "https://0x7f.0.0.1",
+            "https://127.0.0.1.",
+        ] {
+            #expect(origin(string) == nil, "\(string)")
+            #expect(throws: NightscoutError.invalidURL, "\(string)") {
+                try NightscoutClient(rawURLString: string)
+            }
+            if let url = URL(string: string) {
+                #expect(throws: NightscoutError.invalidURL, "\(string)") {
+                    try NightscoutClient(baseURL: url)
+                }
+            }
+        }
+    }
+
+    @Test("names, IPv4 and IPv6 literals, and decoded escapes are accepted")
+    func acceptsValidHosts() {
+        #expect(origin("https://ex%41mple.com") == origin("https://example.com"))
+        #expect(origin("https://192.0.2.10")?.host == "192.0.2.10")
+        #expect(origin("https://my_site.example")?.host == "my_site.example")
+        #expect(origin("https://example.com.")?.host == "example.com.")
+        #expect(origin("https://example.com.") != origin("https://example.com"))
+        #expect(origin("https://[::ffff:192.0.2.10]")?.host == "::ffff:192.0.2.10")
+    }
+
+    @Test("every valid origin round-trips through its canonical URL and description")
+    func roundTrip() throws {
+        for string in [
+            "https://example.com",
+            "HTTPS://user:synthetic@Example.com:443/api?token=x",
+            "https://example.com:8443",
+            "https://example.com.",
+            "https://bücher.example",
+            "https://my_site.example",
+            "https://ex%41mple.com",
+            "https://192.0.2.10",
+            "http://localhost",
+            "http://localhost:1337",
+            "https://localhost",
+            "http://127.0.0.1:1337",
+            "http://[::1]:1337",
+            "http://[0:0:0:0:0:0:0:1]:1337",
+            "https://[::ffff:192.0.2.10]",
+            "http://example.com:443",
+        ] {
+            let parsed = try #require(origin(string), "\(string)")
+            #expect(SiteOrigin(url: parsed.url) == parsed, "\(string)")
+            #expect(origin(parsed.description) == parsed, "\(string)")
+        }
+    }
+
     @Test("the canonical URL omits default ports and credentials")
     func canonicalURL() {
         #expect(origin("HTTPS://user:synthetic@Example.com:443/api?token=x")?.description == "https://example.com")
         #expect(origin("http://LocalHost:1337/")?.description == "http://localhost:1337")
         #expect(origin("http://[0:0:0:0:0:0:0:1]:1337")?.description == "http://[::1]:1337")
-        let roundTrip = origin("http://[::1]:1337").flatMap { SiteOrigin(url: $0.url) }
-        #expect(roundTrip == origin("http://[::1]:1337"))
     }
 
     @Test("the client exposes the origin of its normalized base URL")
