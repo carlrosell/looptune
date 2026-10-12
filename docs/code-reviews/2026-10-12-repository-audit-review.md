@@ -49,13 +49,13 @@ remediation; workflow adoption has not fixed or closed any finding.
 
 | ID | Severity | Finding | Status | Issue |
 | --- | --- | --- | --- | --- |
-| SEC-01 | High | [Remote hostnames can pass the plain HTTP exception](#sec-01-remote-hostnames-can-pass-the-plain-http-exception) | Open | [#4](https://github.com/carlrosell/looptune/issues/4) |
+| SEC-01 | High | [Remote hostnames can pass the plain HTTP exception](#sec-01-remote-hostnames-can-pass-the-plain-http-exception) | Fixed | [#4](https://github.com/carlrosell/looptune/issues/4) |
 | SEC-03 | High | [Cross-origin redirects forward the API secret](#sec-03-cross-origin-redirects-forward-the-api-secret) | Open | [#6](https://github.com/carlrosell/looptune/issues/6) |
 | DATA-01 | High | [Cache keys mix sites hosted on different ports](#data-01-cache-keys-mix-sites-hosted-on-different-ports) | Open | [#8](https://github.com/carlrosell/looptune/issues/8) |
 | DATA-04 | High | [Fixed fetch limits silently truncate records and profile history](#data-04-fixed-fetch-limits-silently-truncate-records-and-profile-history) | Open | [#11](https://github.com/carlrosell/looptune/issues/11) |
-| CORE-01 | High | [No-evidence parameter paths bypass pump-relative caps](#core-01-no-evidence-parameter-paths-bypass-pump-relative-caps) | Open | [#12](https://github.com/carlrosell/looptune/issues/12) |
-| CORE-02 | High | [Final basal rounding and minimums can exceed the tuning limits](#core-02-final-basal-rounding-and-minimums-can-exceed-the-tuning-limits) | Open | [#13](https://github.com/carlrosell/looptune/issues/13) |
-| CORE-04 | High | [A final settings change can leave the previous recommendation active](#core-04-a-final-settings-change-can-leave-the-previous-recommendation-active) | Open | [#15](https://github.com/carlrosell/looptune/issues/15) |
+| CORE-01 | High | [No-evidence parameter paths bypass pump-relative caps](#core-01-no-evidence-parameter-paths-bypass-pump-relative-caps) | Fixed | [#12](https://github.com/carlrosell/looptune/issues/12) |
+| CORE-02 | High | [Final basal rounding and minimums can exceed the tuning limits](#core-02-final-basal-rounding-and-minimums-can-exceed-the-tuning-limits) | Fixed | [#13](https://github.com/carlrosell/looptune/issues/13) |
+| CORE-04 | High | [A final settings change can leave the previous recommendation active](#core-04-a-final-settings-change-can-leave-the-previous-recommendation-active) | Fixed | [#15](https://github.com/carlrosell/looptune/issues/15) |
 | SEC-02 | Medium | [URL user information survives sanitization](#sec-02-url-user-information-survives-sanitization) | Open | [#5](https://github.com/carlrosell/looptune/issues/5) |
 | SEC-04 | Medium | [Network error messages expose query tokens](#sec-04-network-error-messages-expose-query-tokens) | Open | [#7](https://github.com/carlrosell/looptune/issues/7) |
 | DATA-02 | Medium | [Corrupt legacy schedule offsets can crash history loading](#data-02-corrupt-legacy-schedule-offsets-can-crash-history-loading) | Open | [#9](https://github.com/carlrosell/looptune/issues/9) |
@@ -87,9 +87,22 @@ remediation; workflow adoption has not fixed or closed any finding.
 
 ### SEC-01 Remote hostnames can pass the plain HTTP exception
 
-Severity: high. Status: open.
+Severity: high. Status: fixed.
 
 Tracking: [#4](https://github.com/carlrosell/looptune/issues/4).
+
+Fixed 2026-10-12 in [#25](https://github.com/carlrosell/looptune/pull/25),
+commit `ccefc07` (`ccefc070d7070b8a7a8b0c5b98eeca214b665fcf`). Plain HTTP is now
+accepted only for `localhost`, canonical dotted-quad 127.0.0.0/8 literals, and
+the bracketed IPv6 loopback. `NightscoutClientLoopbackTests` fail on 97f0ab2 (7
+tests, 19 issues: `http://127.remote.example.com` and malformed IPv4 accepted,
+`http://[::1]:1337` rejected) and pass on the merged change, including no
+request for a rejected token-bearing URL through either initializer. `swift
+test` and `python3 tools/docs_check.py` passed. Redirect targets remain open
+under SEC-03. Integration verified on 2026-10-12 against `main` with the other
+wave-1 changes: `swift test`, `python3 tools/docs_check.py`, the workflow tool
+tests, and `swift build -c release` passed. The original evidence below is
+unchanged.
 
 [Sources/LoopTuneKit/Nightscout/NightscoutClient.swift:100](../../Sources/LoopTuneKit/Nightscout/NightscoutClient.swift#L100) accepts every hostname
 starting with `127.` as loopback. An isolated executable using the actual source
@@ -200,9 +213,23 @@ complete. Test saturated responses and a missing historical baseline.
 
 ### CORE-01 No-evidence parameter paths bypass pump-relative caps
 
-Severity: high. Status: open.
+Severity: high. Status: fixed.
 
 Tracking: [#12](https://github.com/carlrosell/looptune/issues/12).
+
+Fixed 2026-10-12 in [#26](https://github.com/carlrosell/looptune/pull/26),
+commit `e248eb2` (`e248eb2e3adc932d0082be4aef1e3fb38ce2f7ed`). No-evidence and
+rejected-computation ISF and CR paths now carry the current value forward
+clamped to the pump-relative caps, fall back to the pump value when the current
+value is unusable, and stay untuned with their actual evidence count.
+`NoEvidenceCapTests` fail on ccefc07 (23 issues; ISF 100 against cap 57.143, CR
+30 against cap 12) and pass on the merged change, covering scalar and schedule
+tuners, `TuningRecommendation(from:)`, and a historical-profile `TuningPipeline`
+run. The tuned path still rounds to 3 dp after clamping, a documented tolerance
+of 0.0005. `swift test` passed. Integration verified on 2026-10-12 against
+`main` with the other wave-1 changes: `swift test`, `python3
+tools/docs_check.py`, the workflow tool tests, and `swift build -c release`
+passed. The original evidence below is unchanged.
 
 [Sources/LoopTuneKit/Tune/SensitivityTuner.swift:53](../../Sources/LoopTuneKit/Tune/SensitivityTuner.swift#L53) and [Sources/LoopTuneKit/Tune/ScheduleTuners.swift:133](../../Sources/LoopTuneKit/Tune/ScheduleTuners.swift#L133) can return historical
 ISF or carb-ratio values unchanged when a block lacks eligible evidence. Those
@@ -214,9 +241,26 @@ return path. Add history-change cases with no eligible block evidence.
 
 ### CORE-02 Final basal rounding and minimums can exceed the tuning limits
 
-Severity: high. Status: open.
+Severity: high. Status: fixed.
 
 Tracking: [#13](https://github.com/carlrosell/looptune/issues/13).
+
+Fixed 2026-10-12 in [#29](https://github.com/carlrosell/looptune/pull/29),
+commit `9395a52` (`9395a52a72970c387c2a1c280c92fcc14f59ecc8`). Each basal hour
+now carries a minimum and maximum rate (0.7–1.2× pump, narrowed to Loop's
+0.05–30 U/hr). The recommended rate is clamped into that range and the entered
+rate is the nearest in-range pump increment; when no increment fits, the pump
+rate is kept, so a zero rate stays zero. Change tiers and guardrail status in
+the text report, JSON, app table, and run-history headline describe the rounded
+rate. On 8ee760f, pump 0.15/raw 0.18 entered 0.20 (`large`) and a zero rate
+became 0.05; on the merged change they enter 0.15 (`minimal`) and 0.00.
+`BasalLimitTests` cover zero, 0.15/0.18 at 0.05 and 0.025 increments, no fitting
+increment, and limit-adjacent values through the struct, JSON, and text output.
+Integration verified on 2026-10-12 against `main` with the other wave-1 changes:
+`swift test`, `python3 tools/docs_check.py`, the workflow tool tests, and `swift
+build -c release` passed, and a rendered `ResultsView` with synthetic data
+showed the rounded values and tier highlighting. The original evidence below is
+unchanged.
 
 [Sources/LoopTuneKit/Recommend/Recommendation.swift:110](../../Sources/LoopTuneKit/Recommend/Recommendation.swift#L110) and
 [Sources/LoopTuneKit/Recommend/LoopGuardrails.swift:19](../../Sources/LoopTuneKit/Recommend/LoopGuardrails.swift#L19) apply an absolute minimum and round after tuning caps.
@@ -241,9 +285,23 @@ through both DST transitions.
 
 ### CORE-04 A final settings change can leave the previous recommendation active
 
-Severity: high. Status: open.
+Severity: high. Status: fixed.
 
 Tracking: [#15](https://github.com/carlrosell/looptune/issues/15).
+
+Fixed 2026-10-12 in [#27](https://github.com/carlrosell/looptune/pull/27),
+commit `8ee760f` (`8ee760fe824544172fa8a191f606f2d6b4ff894e`). `ChainedTuner`
+now resets output and evidence at each therapy change, so samples, evidence
+counts, untuned flags, days missing, `daysTuned`, and trajectories describe only
+the final settings. The audit scenario now throws
+`insufficientUsableData(minimum: 12, actual: 0)` through `TuningPipeline`; a
+change at hour 12 with CGM through hour 24 equals a post-change-only run. The
+new `ChainedTunerTests` suite fails on ccefc07 (11 issues) and passes on the
+merged change. `excludedOverrideSamples` still counts the whole window. `swift
+test` and `swift build -c release` passed. Integration verified on 2026-10-12
+against `main` with the other wave-1 changes: `swift test`, `python3
+tools/docs_check.py`, the workflow tool tests, and `swift build -c release`
+passed. The original evidence below is unchanged.
 
 [Sources/LoopTuneKit/Tune/ChainedTuner.swift:94](../../Sources/LoopTuneKit/Tune/ChainedTuner.swift#L94) resets `evolving` at a therapy
 change but retains `lastOutput` and accumulated evidence. If fewer than 12
