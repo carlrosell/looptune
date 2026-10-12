@@ -61,9 +61,9 @@ remediation; workflow adoption has not fixed or closed any finding.
 | DATA-02 | Medium | [Corrupt legacy schedule offsets can crash history loading](#data-02-corrupt-legacy-schedule-offsets-can-crash-history-loading) | Open | [#9](https://github.com/carlrosell/looptune/issues/9) |
 | DATA-03 | Medium | [Oversized remote timestamps crash cache encoding](#data-03-oversized-remote-timestamps-crash-cache-encoding) | Open | [#10](https://github.com/carlrosell/looptune/issues/10) |
 | CORE-03 | Medium | [Expanded schedules disagree with clock lookup during fall-back](#core-03-expanded-schedules-disagree-with-clock-lookup-during-fall-back) | Fixed | [#14](https://github.com/carlrosell/looptune/issues/14) |
-| CORE-05 | Medium | [CGM cadence changes tuning weight and the minimum evidence duration](#core-05-cgm-cadence-changes-tuning-weight-and-the-minimum-evidence-duration) | Open | [#16](https://github.com/carlrosell/looptune/issues/16) |
+| CORE-05 | Medium | [CGM cadence changes tuning weight and the minimum evidence duration](#core-05-cgm-cadence-changes-tuning-weight-and-the-minimum-evidence-duration) | Fixed | [#16](https://github.com/carlrosell/looptune/issues/16) |
 | CORE-06 | Medium | [Profile changes reinterpret doses from before activation](#core-06-profile-changes-reinterpret-doses-from-before-activation) | Fixed | [#17](https://github.com/carlrosell/looptune/issues/17) |
-| CORE-07 | Medium | [Fixed carb lookback drops meals still active in the model](#core-07-fixed-carb-lookback-drops-meals-still-active-in-the-model) | Open | [#18](https://github.com/carlrosell/looptune/issues/18) |
+| CORE-07 | Medium | [Fixed carb lookback drops meals still active in the model](#core-07-fixed-carb-lookback-drops-meals-still-active-in-the-model) | Fixed | [#18](https://github.com/carlrosell/looptune/issues/18) |
 | APP-01 | Medium | [Run completion persists settings edited after the run started](#app-01-run-completion-persists-settings-edited-after-the-run-started) | Open | [#19](https://github.com/carlrosell/looptune/issues/19) |
 | APP-02 | Medium | [Saved results do not identify their source site](#app-02-saved-results-do-not-identify-their-source-site) | Open | [#20](https://github.com/carlrosell/looptune/issues/20) |
 | ARC-01 | Low | [An unused connection form duplicates the live sidebar](#arc-01-an-unused-connection-form-duplicates-the-live-sidebar) | Open | [#21](https://github.com/carlrosell/looptune/issues/21) |
@@ -389,9 +389,31 @@ late profile change with no subsequent CGM.
 
 ### CORE-05 CGM cadence changes tuning weight and the minimum evidence duration
 
-Severity: medium. Status: open.
+Severity: medium. Status: fixed.
 
 Tracking: [#16](https://github.com/carlrosell/looptune/issues/16).
+
+Fixed 2026-10-12 in [#34](https://github.com/carlrosell/looptune/pull/34),
+commit `a1322c6` (`a1322c652c875cd60dd626d88ddd6cfba9c78b86`), under [ADR
+0007](../../adr/0007-measure-tuning-evidence-by-cgm-duration.md). Each deviation
+carries the duration of its CGM interval; basal sums, meal residuals, the ISF
+median, and diagnostic means are weighted by it, evidence counts measure CGM
+time in five-minute intervals, the minimums compare actual duration (one hour
+for the pipeline and each segment, 50 minutes for ISF), and the trailing-delta
+horizon spans a fixed 20 minutes. Five-minute results and the oref0 parity
+fixtures are unchanged. A lander probe on 7af9ec4 with a three-hour rise gave
+hour-3 basal 1.200, 1.052, and 1.027 U/h with evidence 180, 36, and 12 at 60,
+300, and 900 s; the merged change gives 1.045, 1.052, and 1.070 with evidence 36
+at each cadence, all entering 1.05, and rejects 12 minutes of one-minute
+readings that 7af9ec4 accepted. `CadenceIndependenceTests` cover equivalence,
+jitter, supported and rejected gaps, the per-block carb-ratio path, and the
+single-pass and chained entry points. A rendered `ResultsView` with synthetic
+data showed the evidence labels in CGM time. Verified on 2026-10-12 against
+`main` at 7af9ec4: `swift test`, `python3 tools/docs_check.py`, the workflow
+tool tests, and `swift build -c release` passed, and CI passed on Swift 6.1.2.
+Cadence can still shift a rate by up to a few hundredths of a unit per hour
+where glucose changes direction on an hour boundary, as ADR 0007 records. The
+original evidence below is unchanged.
 
 [Sources/LoopTuneKit/Replay/ReplayEngine.swift:110](../../Sources/LoopTuneKit/Replay/ReplayEngine.swift#L110) normalizes each interval to
 five minutes, but [Sources/LoopTuneKit/Tune/BasalTuner.swift:45](../../Sources/LoopTuneKit/Tune/BasalTuner.swift#L45) and the meal residual calculations
@@ -443,9 +465,25 @@ diagnostics tests. Splitting the analysis at activation alone does not fix this.
 
 ### CORE-07 Fixed carb lookback drops meals still active in the model
 
-Severity: medium. Status: open.
+Severity: medium. Status: fixed.
 
 Tracking: [#18](https://github.com/carlrosell/looptune/issues/18).
+
+Fixed 2026-10-12 in [#39](https://github.com/carlrosell/looptune/pull/39),
+commit `fb5d320` (`fb5d3202da038eb9391368033eaf68f29083577a`), under [ADR
+0008](../../adr/0008-carb-retention-bound.md). Entered absorption time is
+bounded at the model's 10-hour maximum; a longer entry stops the analysis with a
+message naming the entry, its time, and the limit. Carb and glucose retention
+cover the longest modeled absorption span plus margin (15h45m) and doses reach
+23h45m before a segment, while carb-ratio attribution stays at 10 hours. On the
+merged change a trimmed replay of the audit case equals the full replay within
+1e-9; restoring the previous 10, 10, and 18 hour lookbacks makes 8 of the 10
+`CarbRetentionTests` fail with 222 issues. Diagnostics now propagate replay
+errors other than insufficient glucose, and the only new one is rejected earlier
+by input validation. A synthetic 14-day chained run took about 5.4 s against 4.0
+s before in a debug build. Verified on 2026-10-12 against `main` at a1322c6:
+`swift test`, `python3 tools/docs_check.py`, the workflow tool tests, and `swift
+build -c release` passed. The original evidence below is unchanged.
 
 [Sources/LoopTuneKit/Replay/ReplayEngine.swift:149](../../Sources/LoopTuneKit/Replay/ReplayEngine.swift#L149) assumes ten hours bounds
 carbohydrate activity and drops older meals at lines 166 to 170. The pinned
