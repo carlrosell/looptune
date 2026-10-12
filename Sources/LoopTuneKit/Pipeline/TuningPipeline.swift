@@ -79,6 +79,7 @@ public struct TuningPipeline: Sendable {
         case noProfile
         case noGlucose
         case invalidAnalysisWindow
+        /// Usable evidence, in five-minute intervals, was below `minimum`.
         case insufficientUsableData(minimum: Int, actual: Int)
         case invalidInput(String)
         /// Nightscout holds more `collection` records between `start` and
@@ -89,9 +90,12 @@ public struct TuningPipeline: Sendable {
         case incompleteProfileHistory(requiredFrom: Date)
     }
 
-    /// One hour of five-minute intervals: the smallest evidence set allowed to
-    /// produce a user-facing recommendation.
-    public static let minimumUsableSamples = 12
+    /// One hour of CGM evidence: the smallest evidence set allowed to produce
+    /// a user-facing recommendation.
+    public static let minimumEvidenceDuration: TimeInterval = 3600
+    /// `minimumEvidenceDuration` in five-minute intervals, the unit of every
+    /// evidence count. Measured by duration, not CGM readings.
+    public static let minimumUsableSamples = Int(minimumEvidenceDuration / DeviationSample.standardDuration)
 
     /// Records requested by one entries or treatments query.
     static let recordPageSize = 1500
@@ -168,10 +172,11 @@ public struct TuningPipeline: Sendable {
             analysisEnd: inputs.analysisEnd
         )
         let deviations = inputs.eligibleDeviations(allDeviations)
-        guard deviations.count >= Self.minimumUsableSamples else {
+        let usableEvidence = DeviationSample.fiveMinuteIntervals(of: deviations)
+        guard usableEvidence >= Self.minimumUsableSamples else {
             throw PipelineError.insufficientUsableData(
                 minimum: Self.minimumUsableSamples,
-                actual: deviations.count
+                actual: usableEvidence
             )
         }
 
@@ -193,7 +198,7 @@ public struct TuningPipeline: Sendable {
             from: output,
             daysAnalyzed: days,
             profileGlucoseUnit: profile.glucoseUnit,
-            excludedOverrideSamples: allDeviations.count - deviations.count
+            excludedOverrideSamples: DeviationSample.fiveMinuteIntervals(of: allDeviations) - usableEvidence
         )
     }
 

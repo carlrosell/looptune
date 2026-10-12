@@ -8,7 +8,8 @@ public struct ScheduleTuningOutput: Sendable, Equatable {
     /// True when this block had too little usable evidence to tune. Its value
     /// carries the current setting forward within the pump-relative caps.
     public var untuned: Bool
-    /// Usable ISF samples or logged meals behind this block.
+    /// Usable ISF evidence in five-minute intervals, or logged meals, behind
+    /// this block.
     public var evidenceCount: Int
     /// Chained day windows in which this block had no usable tuning evidence.
     public var daysMissing: Int
@@ -59,11 +60,13 @@ public struct TuningOutput: Sendable, Equatable {
     public var tunedCarbRatio: Double { Self.timeWeightedAverage(carbRatioSchedule, keyPath: \.tunedValue) }
     public var pumpCarbRatio: Double { Self.timeWeightedAverage(carbRatioSchedule, keyPath: \.pumpValue) }
 
-    /// Count of categorized samples per category (for confidence reporting).
+    /// Categorized evidence per category in five-minute intervals (for
+    /// confidence reporting).
     public var categoryCounts: [DeviationCategory: Int]
-    /// Total categorized samples analyzed.
+    /// Total categorized evidence analyzed, in five-minute intervals.
     public var totalSamples: Int
-    /// Basal-categorized samples per local hour (data coverage, for charts).
+    /// Basal-categorized evidence per local hour in five-minute intervals
+    /// (data coverage, for charts).
     public var basalSampleCountByHour: [Int]
 
     public init(
@@ -250,8 +253,11 @@ public struct LoopTuner: Sendable {
             tunedSensitivity: sensitivitySchedule
         )
 
-        var counts: [DeviationCategory: Int] = [:]
-        for entry in categorized { counts[entry.category, default: 0] += 1 }
+        // Evidence is measured in five-minute intervals of CGM time, not
+        // readings, so a one-minute sensor does not count five times over.
+        var durations: [DeviationCategory: TimeInterval] = [:]
+        for entry in categorized { durations[entry.category, default: 0] += entry.sample.duration }
+        let counts = durations.mapValues(DeviationSample.fiveMinuteIntervals(in:))
 
         return try TuningOutput(
             tunedBasalHourly: basalResult.hourlyRates,
@@ -260,7 +266,7 @@ public struct LoopTuner: Sendable {
             sensitivitySchedule: sensitivitySchedule,
             carbRatioSchedule: carbRatioSchedule,
             categoryCounts: counts,
-            totalSamples: categorized.count,
+            totalSamples: DeviationSample.fiveMinuteIntervals(of: deviations),
             basalSampleCountByHour: basalResult.sampleCounts
         )
     }

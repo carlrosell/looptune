@@ -15,7 +15,7 @@ public struct ReplayEngine: Sendable {
     /// window start still contribute effects.
     static let insulinActivityDuration: TimeInterval = InsulinMath.defaultInsulinActivityDuration
     /// Tuning thresholds and oref0 parity are expressed per five-minute datum.
-    static let standardInterval: TimeInterval = 5 * 60
+    static let standardInterval: TimeInterval = DeviationSample.standardDuration
     static let maximumCGMGap: TimeInterval = 20 * 60
 
     public init() {}
@@ -124,10 +124,11 @@ public struct ReplayEngine: Sendable {
             let intervalSeconds = current.date.timeIntervalSince(previous.date)
             guard intervalSeconds > 0, intervalSeconds <= Self.maximumCGMGap else { continue }
 
-            // Nightscout timestamps have jitter and can occasionally miss one or
-            // more readings. The tuner and categorizer thresholds are defined in
-            // mg/dL per five minutes, so normalize every accepted interval rather
-            // than counting (for example) a 15-minute change at triple weight.
+            // CGM cadence varies (one-minute sensors, jitter, missed readings),
+            // and the categorizer thresholds are defined in mg/dL per five
+            // minutes, so express every change as a five-minute rate. The
+            // interval duration travels with the sample: tuners weight sums and
+            // evidence by it, so cadence changes neither the rate nor the weight.
             let intervalScale = Self.standardInterval / intervalSeconds
             let observedDelta = (current.milligramsPerDeciliter - previous.milligramsPerDeciliter) * intervalScale
             let insulinDelta = (
@@ -154,7 +155,8 @@ public struct ReplayEngine: Sendable {
                 insulinEffect: insulinDelta,
                 deviation: deviation,
                 insulinOnBoard: iob,
-                carbsOnBoard: cob
+                carbsOnBoard: cob,
+                duration: intervalSeconds
             ))
         }
         return result

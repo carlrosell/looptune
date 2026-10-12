@@ -153,7 +153,8 @@ final class TuningViewModel {
         case TuningPipeline.PipelineError.noGlucose:
             return "Not enough glucose data in the selected window."
         case let TuningPipeline.PipelineError.insufficientUsableData(minimum, actual):
-            return "Only \(actual) usable samples remained; at least \(minimum) are required. No recommendation was made."
+            // Evidence is counted in five-minute intervals of CGM time.
+            return "Only \(actual * 5) minutes of usable data remained; at least \(minimum * 5) are required. No recommendation was made."
         case TuningPipeline.PipelineError.invalidAnalysisWindow:
             return "The selected analysis window is invalid."
         case let TuningPipeline.PipelineError.invalidInput(field):

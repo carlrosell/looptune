@@ -9,11 +9,13 @@ public struct SensitivityTuner: Sendable {
         self.caps = caps
     }
 
-    /// Minimum number of ISF-categorized data points required to move ISF.
+    /// Minimum usable ISF-categorized evidence, in five-minute intervals,
+    /// required to move ISF.
     public static let minimumDataPoints = 10
 
     struct Result: Sendable, Equatable {
         var value: Double
+        /// Usable evidence in five-minute intervals.
         var usableSampleCount: Int
         var untuned: Bool
     }
@@ -56,28 +58,34 @@ public struct SensitivityTuner: Sendable {
         let isfSamples = samples.filter { $0.category == .isf }
 
         // Per-datum autosens-style ratio: 1 + deviation/BGI (BGI is negative when
-        // insulin is active; positive deviations pull the ratio below 1).
-        var ratios: [Double] = []
+        // insulin is active; positive deviations pull the ratio below 1). Each
+        // ratio is weighted by the duration its sample covers.
+        var ratios: [(value: Double, weight: Double)] = []
+        var usableDuration: TimeInterval = 0
         for entry in isfSamples {
             let bgi = entry.sample.insulinEffect
-            guard bgi.isFinite, bgi != 0, entry.sample.deviation.isFinite else { continue }
+            guard bgi.isFinite, bgi != 0, entry.sample.deviation.isFinite,
+                  entry.sample.duration.isFinite, entry.sample.duration > 0 else { continue }
             let ratio = 1 + entry.sample.deviation / bgi
             if ratio.isFinite {
-                ratios.append(ratio)
+                ratios.append((ratio, entry.sample.weight))
+                usableDuration += entry.sample.duration
             }
         }
-        // The minimum applies to usable ratios, not merely samples carrying the
-        // `.isf` label. Otherwise one valid datum plus nine zero/invalid BGIs can
-        // move a medical setting.
-        guard ratios.count >= Self.minimumDataPoints else {
-            return untuned(usableSampleCount: ratios.count)
+        // The minimum applies to the duration of usable ratios, not merely
+        // samples carrying the `.isf` label or their count. Otherwise one valid
+        // datum plus nine zero/invalid BGIs, or ten minutes of one-minute CGM,
+        // can move a medical setting.
+        let usableIntervals = DeviationSample.fiveMinuteIntervals(in: usableDuration)
+        guard usableIntervals >= Self.minimumDataPoints else {
+            return untuned(usableSampleCount: usableIntervals)
         }
 
         // oref0 rounds p50ratios to 3 dp before multiplying (autotune/index.js).
-        let medianRatio = (TuningMath.median(ratios) * 1000).rounded() / 1000
+        let medianRatio = (TuningMath.weightedMedian(ratios) * 1000).rounded() / 1000
         let fullNewISF = currentISF * medianRatio
         guard fullNewISF.isFinite, fullNewISF > 0 else {
-            return untuned(usableSampleCount: ratios.count)
+            return untuned(usableSampleCount: usableIntervals)
         }
 
         // Optional blend toward pump ISF.
@@ -87,6 +95,6 @@ public struct SensitivityTuner: Sendable {
         // Move 20% toward the adjusted value, then re-cap.
         let newISF = (1 - caps.stepFraction) * currentISF + caps.stepFraction * cappedAdjusted
         let value = (TuningMath.clamp(newISF, minISF, maxISF) * 1000).rounded() / 1000
-        return Result(value: value, usableSampleCount: ratios.count, untuned: false)
+        return Result(value: value, usableSampleCount: usableIntervals, untuned: false)
     }
 }

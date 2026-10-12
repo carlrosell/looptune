@@ -67,33 +67,45 @@ public struct DiagnosticsBuilder: Sendable {
         }
     }
 
+    /// Duration-weighted, so CGM cadence does not change the mean.
     private func meanAbsolute(_ samples: [DeviationSample]) -> Double {
-        guard !samples.isEmpty else { return 0 }
-        return samples.reduce(0) { $0 + abs($1.deviation) } / Double(samples.count)
+        let totalWeight = samples.reduce(0) { $0 + $1.weight }
+        guard totalWeight > 0 else { return 0 }
+        return samples.reduce(0) { $0 + abs($1.deviation) * $1.weight } / totalWeight
     }
 
     private func hourlyDeviations(before: [DeviationSample], after: [DeviationSample], timeZone: TimeZone) -> [HourDeviation] {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
 
-        func bucket(_ samples: [DeviationSample]) -> (sums: [Double], counts: [Int]) {
+        // Means are duration-weighted and counts are five-minute intervals,
+        // matching the tuner's evidence, so CGM cadence changes neither.
+        func bucket(_ samples: [DeviationSample]) -> (sums: [Double], durations: [TimeInterval]) {
             var sums = [Double](repeating: 0, count: 24)
-            var counts = [Int](repeating: 0, count: 24)
+            var durations = [TimeInterval](repeating: 0, count: 24)
             for sample in samples {
                 let hour = calendar.component(.hour, from: sample.date)
-                sums[hour] += sample.deviation
-                counts[hour] += 1
+                sums[hour] += sample.deviation * sample.weight
+                durations[hour] += sample.duration
             }
-            return (sums, counts)
+            return (sums, durations)
         }
 
         let beforeBuckets = bucket(before)
         let afterBuckets = bucket(after)
 
+        func mean(_ buckets: (sums: [Double], durations: [TimeInterval]), _ hour: Int) -> Double {
+            let weight = buckets.durations[hour] / DeviationSample.standardDuration
+            return weight > 0 ? buckets.sums[hour] / weight : 0
+        }
+
         return (0..<24).map { hour in
-            let beforeMean = beforeBuckets.counts[hour] > 0 ? beforeBuckets.sums[hour] / Double(beforeBuckets.counts[hour]) : 0
-            let afterMean = afterBuckets.counts[hour] > 0 ? afterBuckets.sums[hour] / Double(afterBuckets.counts[hour]) : 0
-            return HourDeviation(hour: hour, before: beforeMean, after: afterMean, sampleCount: beforeBuckets.counts[hour])
+            HourDeviation(
+                hour: hour,
+                before: mean(beforeBuckets, hour),
+                after: mean(afterBuckets, hour),
+                sampleCount: DeviationSample.fiveMinuteIntervals(in: beforeBuckets.durations[hour])
+            )
         }
     }
 

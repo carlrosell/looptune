@@ -42,8 +42,9 @@ public struct ChainedTuner: Sendable {
 
     /// Local hour at which one tuning day ends and the next begins.
     public static let dayBoundaryHour = 4
-    /// Minimum deviation samples for a window to count as tuned (1 hour).
-    static let minimumSamplesPerDay = 12
+    /// Minimum evidence, in five-minute intervals, for a window to count as
+    /// tuned (1 hour).
+    static let minimumSamplesPerDay = TuningPipeline.minimumUsableSamples
 
     public init(caps: TuningCaps = TuningCaps(), options: CategorizerOptions = CategorizerOptions()) {
         self.caps = caps
@@ -101,8 +102,9 @@ public struct ChainedTuner: Sendable {
                 // activation; earlier inputs keep their recorded settings.
                 let replayed = try replay.replay(segment, candidate: evolving)
                 let deviations = replayed.eligibleDeviations
-                excludedOverrideSamples += replayed.deviations.count - deviations.count
-                guard deviations.count >= Self.minimumSamplesPerDay else { continue }
+                let usableEvidence = DeviationSample.fiveMinuteIntervals(of: deviations)
+                excludedOverrideSamples += DeviationSample.fiveMinuteIntervals(of: replayed.deviations) - usableEvidence
+                guard usableEvidence >= Self.minimumSamplesPerDay else { continue }
 
                 let output = try tuner.tune(
                     deviations: deviations,

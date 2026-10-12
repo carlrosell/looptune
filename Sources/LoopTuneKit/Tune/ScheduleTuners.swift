@@ -87,7 +87,7 @@ extension CarbRatioTuner {
         if pumpSchedule.entries.count == 1 {
             // Preserve the original whole-day calculation exactly for flat CR
             // profiles, including meal absorption that began before a segment.
-            deviationsBySlot[0] = csfSamples.reduce(0) { $0 + $1.sample.deviation }
+            deviationsBySlot[0] = csfSamples.reduce(0) { $0 + $1.sample.deviation * $1.sample.weight }
         } else {
             var latestCarbIndex = -1
             var earliestLookbackIndex = 0
@@ -120,7 +120,7 @@ extension CarbRatioTuner {
                     continue
                 }
                 let slot = ScheduleSlot.index(for: meal.date, entries: pumpSchedule.entries, timeZone: timeZone)
-                deviationsBySlot[slot] += entry.sample.deviation
+                deviationsBySlot[slot] += entry.sample.deviation * entry.sample.weight
             }
         }
 
