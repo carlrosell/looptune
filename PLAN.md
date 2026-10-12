@@ -313,6 +313,7 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 - [x] Injectable `NightscoutTransport` + stub-based tests (39 tests green)
 - [ ] devicestatus endpoint + JWT (deferred — not needed for core tuning)
 - [x] Per-day fetch orchestration with dose/carb/glucose lookback padding (implemented in pipeline/cache)
+- [x] Complete fetches: saturated range queries are split, profile history reaches the earliest replay input, and incomplete data fails the run ([ADR 0005](adr/0005-complete-nightscout-fetches.md))
 
 ### Phase 3 — Ingest ✅ (core)
 - [x] Profile doc → `TherapyProfile` (store[defaultProfile], TZ incl. ETC/GMT sign inversion, mmol→mg/dL for ISF/targets/suspend threshold)

@@ -82,11 +82,20 @@ LOOPTUNE_TOKEN='<access-token>' \
 `looptune fetch <url>` prints a diagnostic summary (sample counts, timezone,
 units, auth status) without tuning.
 
+Each run retrieves every glucose entry and treatment in its window, splitting
+any query that returns 1,000 or more records in case a server capped it, and
+fetches profile history back to the settings active at the earliest replay
+input. If either cannot be retrieved completely, the run fails instead of
+analyzing partial data
+([ADR 0005](adr/0005-complete-nightscout-fetches.md)).
+
 Fetched days are cached locally (`~/Library/Application Support/LoopTune/DayCache`,
 one JSON file per site and UTC day). Sites are kept apart by scheme, host, and
 port, so `http://localhost:1337` and `http://localhost:8080` never share cached
 data. Days cached by older versions, which were keyed by hostname alone, are
-deleted on the next run and refetched. A day is cached once it has been over for
+deleted on the next run and refetched. Only completely retrieved days are
+cached; days cached before completeness was recorded are refetched once. A day
+is cached once it has been over for
 24 hours — Loop edits treatments retroactively for about a day — and cached
 days older than 30 days are deleted automatically. Pass `--no-cache` to bypass
 the cache; delete the directory to reset it. Cache and run-history directories

@@ -229,11 +229,17 @@ public struct NightscoutClient: Sendable {
         try await fetch(NSStatus.self, path: "/api/v1/status.json", queryItems: [])
     }
 
+    /// Steps per second the entry range filter can express (milliseconds).
+    static let entriesRangeStepsPerSecond: Double = 1000
+    /// Steps per second the treatment range filter can express: `iso(_:)`
+    /// formats whole seconds.
+    static let treatmentsRangeStepsPerSecond: Double = 1
+
     /// CGM entries in `[start, end]`. `date` is UTC epoch milliseconds.
     public func fetchEntries(from start: Date, to end: Date, count: Int = 1500) async throws -> [NSEntry] {
         let items = [
-            URLQueryItem(name: "find[date][$gte]", value: String(Int(start.timeIntervalSince1970 * 1000))),
-            URLQueryItem(name: "find[date][$lte]", value: String(Int(end.timeIntervalSince1970 * 1000))),
+            URLQueryItem(name: "find[date][$gte]", value: Self.epochMilliseconds(start)),
+            URLQueryItem(name: "find[date][$lte]", value: Self.epochMilliseconds(end)),
             URLQueryItem(name: "count", value: String(count)),
         ]
         return try await fetchArray(NSEntry.self, path: "/api/v1/entries/sgv.json", queryItems: items)
@@ -264,5 +270,11 @@ public struct NightscoutClient: Sendable {
 
     static func iso(_ date: Date) -> String {
         isoFormatter.string(from: date)
+    }
+
+    /// Rounded rather than truncated, so a bound computed on the millisecond
+    /// grid is not moved one step down by floating-point error.
+    static func epochMilliseconds(_ date: Date) -> String {
+        String(Int((date.timeIntervalSince1970 * 1000).rounded()))
     }
 }

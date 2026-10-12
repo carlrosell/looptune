@@ -81,11 +81,32 @@ public struct TuningPipeline: Sendable {
         case invalidAnalysisWindow
         case insufficientUsableData(minimum: Int, actual: Int)
         case invalidInput(String)
+        /// Nightscout holds more `collection` records between `start` and
+        /// `end` than the range queries could retrieve (ADR 0005).
+        case incompleteRecords(collection: String, start: Date, end: Date)
+        /// The profile history does not reach the settings active at
+        /// `requiredFrom`, the earliest instant replay reads (ADR 0005).
+        case incompleteProfileHistory(requiredFrom: Date)
     }
 
     /// One hour of five-minute intervals: the smallest evidence set allowed to
     /// produce a user-facing recommendation.
     public static let minimumUsableSamples = 12
+
+    /// Records requested by one entries or treatments query.
+    static let recordPageSize = 1500
+    /// A response at least this long may have been cut off by a server or
+    /// proxy cap below the requested count; API v3 and common proxies cap at
+    /// 1,000. Such a response is treated like a full one.
+    static let possiblyCappedCount = 1000
+    /// Queries allowed to retrieve one collection for one day bucket.
+    static let maximumQueriesPerDay = 64
+    /// Profile documents requested first, doubled until the history covers
+    /// the earliest replay input, up to `maximumProfileCount`.
+    static let initialProfileCount = 100
+    static let maximumProfileCount = 3200
+    /// What Nightscout returns when a request's `count` is dropped.
+    static let defaultProfileCount = 10
 
     /// Run tuning against already-assembled inputs (offline path).
     ///
@@ -309,11 +330,15 @@ public struct TuningPipeline: Sendable {
 
     /// Fetch and assemble inputs from Nightscout, day-bucket by day-bucket.
     ///
-    /// The window is tiled with UTC day buckets (plus one lead-in day so doses
-    /// within the insulin tail before the window are present, and a trailing
-    /// margin covering the carb-ratio timeline). With a `cache`, each finished
-    /// bucket is served from disk when available and stored after fetching;
-    /// the current (unfinished) day is always fetched live and never stored.
+    /// The window is tiled with UTC day buckets (plus a lead-in covering the
+    /// replay lookback, and a trailing margin covering the carb-ratio
+    /// timeline). With a `cache`, each finished bucket is served from disk
+    /// when available and stored after fetching; the current (unfinished)
+    /// day is always fetched live and never stored.
+    ///
+    /// Every record in each bucket and the profile active at the earliest
+    /// replay input are retrieved, or the fetch throws `incompleteRecords` or
+    /// `incompleteProfileHistory` (ADR 0005).
     public func fetchInputs(
         client: NightscoutClient,
         configuration: TuningConfiguration,
@@ -321,11 +346,12 @@ public struct TuningPipeline: Sendable {
         cache: DayCache? = nil
     ) async throws -> TuningInputs {
         let analysisStart = end.addingTimeInterval(-Double(configuration.days) * 86_400)
+        let earliestReplayInput = analysisStart.addingTimeInterval(-ReplayEngine.inputLookback)
 
         // Profile history: always fetched fresh. Loop uploads a new document on
         // every settings change, so the history lets each day replay against
         // the settings that were actually active then.
-        let profileDocs = try await client.fetchProfiles(count: 100)
+        let profileDocs = try await Self.fetchProfiles(client: client, coveringFrom: earliestReplayInput)
         guard !profileDocs.isEmpty else { throw PipelineError.noProfile }
         let history = try ProfileIngest.makeHistory(from: profileDocs)
         var profile = history.current
@@ -333,27 +359,48 @@ public struct TuningPipeline: Sendable {
 
         cache?.pruneExpired()
 
-        // One lead-in day covers the 18h treatment lookback and the 30-min
+        // At least one lead-in day covers the replay lookback and the 30-min
         // glucose delta lead; 6h trailing margin covers carb-ratio coverage.
-        let fetchStart = analysisStart.addingTimeInterval(-DayCache.dayLength)
+        let fetchStart = analysisStart.addingTimeInterval(-max(DayCache.dayLength, ReplayEngine.inputLookback))
         let fetchEnd = end.addingTimeInterval(6 * 3600)
         let buckets = DayCache.utcDayBuckets(covering: fetchStart, to: fetchEnd)
 
         var entries: [NSEntry] = []
         var treatments: [NSTreatment] = []
         for bucket in buckets {
-            if let cache, let cached = cache.load(origin: client.origin, dayKey: bucket.key) {
+            // Days cached before completeness was recorded may be truncated.
+            if let cache, let cached = cache.load(origin: client.origin, dayKey: bucket.key), cached.isComplete {
                 entries += cached.entries
                 treatments += cached.treatments
                 continue
             }
-            let dayEntries = try await client.fetchEntries(from: bucket.interval.start, to: bucket.interval.end, count: 1500)
-            let dayTreatments = try await client.fetchTreatments(from: bucket.interval.start, to: bucket.interval.end, count: 1500)
+            let dayEntries = try await Self.fetchAll(
+                collection: "entries",
+                in: bucket.interval,
+                stepsPerSecond: NightscoutClient.entriesRangeStepsPerSecond,
+                key: Self.entryKey
+            ) { start, end, count in
+                try await client.fetchEntries(from: start, to: end, count: count)
+            }
+            let dayTreatments = try await Self.fetchAll(
+                collection: "treatments",
+                in: bucket.interval,
+                stepsPerSecond: NightscoutClient.treatmentsRangeStepsPerSecond,
+                key: Self.treatmentKey
+            ) { start, end, count in
+                try await client.fetchTreatments(from: start, to: end, count: count)
+            }
             entries += dayEntries
             treatments += dayTreatments
             if let cache, cache.shouldStore(dayEnd: bucket.interval.end) {
                 cache.store(
-                    CachedDay(day: bucket.key, fetchedAt: Date(), entries: dayEntries, treatments: dayTreatments),
+                    CachedDay(
+                        day: bucket.key,
+                        fetchedAt: Date(),
+                        entries: dayEntries,
+                        treatments: dayTreatments,
+                        isComplete: true
+                    ),
                     origin: client.origin
                 )
             }
@@ -374,32 +421,150 @@ public struct TuningPipeline: Sendable {
         )
     }
 
+    /// Profile documents, newest first, reaching back to the one active at
+    /// `boundary` when the site has it. The endpoint accepts only `count` and
+    /// returns the newest documents by `startDate`, so a full response is
+    /// requested again with a larger count until it covers `boundary` or
+    /// comes back short, which means the site has no older documents.
+    static func fetchProfiles(
+        client: NightscoutClient,
+        coveringFrom boundary: Date
+    ) async throws -> [NSProfileDocument] {
+        var count = initialProfileCount
+        while true {
+            let documents = try await client.fetchProfiles(count: count)
+            if covers(documents, boundary) {
+                return documents
+            }
+            if documents.count < count {
+                guard try await isWholeProfileHistory(documents, client: client) else {
+                    throw PipelineError.incompleteProfileHistory(requiredFrom: boundary)
+                }
+                return documents
+            }
+            guard count < maximumProfileCount else {
+                throw PipelineError.incompleteProfileHistory(requiredFrom: boundary)
+            }
+            count = min(count * 2, maximumProfileCount)
+        }
+    }
+
+    /// Whether a response shorter than requested is the site's whole profile
+    /// history. A server that drops `count` returns Nightscout's default of
+    /// 10, and a capped one returns its cap, so neither length proves the
+    /// history ends there. Ten documents are accepted once a smaller request
+    /// shows that `count` is honored.
+    static func isWholeProfileHistory(
+        _ documents: [NSProfileDocument],
+        client: NightscoutClient
+    ) async throws -> Bool {
+        if documents.count >= possiblyCappedCount {
+            return false
+        }
+        if documents.count == defaultProfileCount {
+            return try await client.fetchProfiles(count: 1).count < defaultProfileCount
+        }
+        return true
+    }
+
+    /// Whether a full profile response shows the settings active at
+    /// `boundary`. Documents sharing the oldest returned start date may have
+    /// been cut off at the limit, so only a newer one at or before `boundary`
+    /// proves it.
+    static func covers(_ documents: [NSProfileDocument], _ boundary: Date) -> Bool {
+        let starts = documents.compactMap(\.startDate)
+        guard let oldest = starts.min() else { return false }
+        return starts.contains { $0 > oldest && $0 <= boundary }
+    }
+
+    /// Every record in `interval` from a range query capped at `pageSize`.
+    /// A response that fills the page, or holds at least `possiblyCapped`
+    /// records, may be truncated, so its range is split in two and both
+    /// halves are queried again, newer half first. The halves share their
+    /// inclusive midpoint, and records returned twice are dropped by `key`. This relies only on the range filter and `count`, not on
+    /// which matches the server returns first. Bounds lie on the filter's
+    /// `stepsPerSecond` grid; a full range that cannot be split, or running
+    /// out of queries, throws `incompleteRecords`.
+    static func fetchAll<Record>(
+        collection: String,
+        in interval: DateInterval,
+        stepsPerSecond: Double,
+        pageSize: Int = recordPageSize,
+        possiblyCapped: Int = possiblyCappedCount,
+        maximumQueries: Int = maximumQueriesPerDay,
+        key: (Record) -> String,
+        fetch: (Date, Date, Int) async throws -> [Record]
+    ) async throws -> [Record] {
+        func date(_ step: Int64) -> Date {
+            Date(timeIntervalSince1970: Double(step) / stepsPerSecond)
+        }
+        var pending = [(
+            low: Int64((interval.start.timeIntervalSince1970 * stepsPerSecond).rounded(.down)),
+            high: Int64((interval.end.timeIntervalSince1970 * stepsPerSecond).rounded(.up))
+        )]
+        var pages: [[Record]] = []
+        var queries = 0
+        while let range = pending.popLast() {
+            guard queries < maximumQueries else {
+                throw PipelineError.incompleteRecords(collection: collection, start: interval.start, end: interval.end)
+            }
+            queries += 1
+            let page = try await fetch(date(range.low), date(range.high), pageSize)
+            guard page.count >= min(pageSize, possiblyCapped) else {
+                pages.append(page)
+                continue
+            }
+            guard range.high - range.low >= 2 else {
+                throw PipelineError.incompleteRecords(
+                    collection: collection,
+                    start: date(range.low),
+                    end: date(range.high)
+                )
+            }
+            let middle = range.low + (range.high - range.low) / 2
+            pending.append((range.low, middle))
+            pending.append((middle, range.high))
+        }
+        guard pages.count > 1 else { return pages.first ?? [] }
+        return dedupe(pages.flatMap { $0 }, key: key)
+    }
+
     /// Nightscout range queries are inclusive at both ends, so a document with
     /// a timestamp exactly on a bucket boundary appears in two buckets. Drop
     /// exact duplicates before ingestion (boluses would otherwise double).
     static func dedupeAcrossBuckets(_ treatments: [NSTreatment]) -> [NSTreatment] {
+        dedupe(treatments, key: treatmentKey)
+    }
+
+    static func dedupe<Record>(_ records: [Record], key: (Record) -> String) -> [Record] {
         var seen = Set<String>()
-        var result: [NSTreatment] = []
-        for treatment in treatments {
-            let key: String
-            if let syncIdentifier = treatment.syncIdentifier, !syncIdentifier.isEmpty {
-                key = "sync:\(syncIdentifier)"
-            } else if let identifier = treatment.identifier, !identifier.isEmpty {
-                key = "id:\(identifier)"
-            } else {
-                // Some Nightscout versions omit stable IDs. In that case use
-                // every decoded field, not a medically incomplete subset:
-                // `amount`, `absolute`, override scale/range, and insulin type
-                // can all distinguish treatments that share a timestamp.
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.sortedKeys]
-                let data = (try? encoder.encode(treatment)) ?? Data()
-                key = "document:\(data.base64EncodedString())"
-            }
-            if seen.insert(key).inserted {
-                result.append(treatment)
-            }
+        return records.filter { seen.insert(key($0)).inserted }
+    }
+
+    static func treatmentKey(_ treatment: NSTreatment) -> String {
+        if let syncIdentifier = treatment.syncIdentifier, !syncIdentifier.isEmpty {
+            return "sync:\(syncIdentifier)"
         }
-        return result
+        if let identifier = treatment.identifier, !identifier.isEmpty {
+            return "id:\(identifier)"
+        }
+        // Some Nightscout versions omit stable IDs. In that case use every
+        // decoded field, not a medically incomplete subset: `amount`,
+        // `absolute`, override scale/range, and insulin type can all
+        // distinguish treatments that share a timestamp.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = (try? encoder.encode(treatment)) ?? Data()
+        return "document:\(data.base64EncodedString())"
+    }
+
+    /// Entries carry no stable ID, so every decoded field is the key.
+    static func entryKey(_ entry: NSEntry) -> String {
+        [
+            String(entry.date.timeIntervalSince1970.bitPattern),
+            String(entry.sgv.bitPattern),
+            String(reflecting: entry.type),
+            String(reflecting: entry.device),
+        ].joined(separator: "|")
     }
 }
