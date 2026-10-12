@@ -4,6 +4,8 @@ import Foundation
 
 @Suite("DayCache")
 struct DayCacheTests {
+    private let site = SiteOrigin(url: URL(string: "https://my-site.example.com")!)!
+
     private func makeTempCache(maxAgeDays: Int = 30) -> DayCache {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("looptune-cache-tests-\(UUID().uuidString)", isDirectory: true)
@@ -32,14 +34,16 @@ struct DayCacheTests {
         let cache = makeTempCache()
         let entry = try JSONDecoder().decode(NSEntry.self, from: Data(#"{"date":1700000000000,"sgv":120}"#.utf8))
         let day = CachedDay(day: "2023-11-14", fetchedAt: Date(), entries: [entry], treatments: [])
-        cache.store(day, host: "my-site.example.com")
+        cache.store(day, origin: site)
 
-        let loaded = cache.load(host: "my-site.example.com", dayKey: "2023-11-14")
+        let loaded = cache.load(origin: site, dayKey: "2023-11-14")
         #expect(loaded?.entries == [entry])
         #expect(loaded?.treatments.isEmpty == true)
-        // Different host or day misses.
-        #expect(cache.load(host: "other.example.com", dayKey: "2023-11-14") == nil)
-        #expect(cache.load(host: "my-site.example.com", dayKey: "2023-11-15") == nil)
+        // Different origin or day misses.
+        for other in ["https://other.example.com", "https://my-site.example.com:8443", "http://my-site.example.com"] {
+            #expect(cache.load(origin: SiteOrigin(url: URL(string: other)!)!, dayKey: "2023-11-14") == nil)
+        }
+        #expect(cache.load(origin: site, dayKey: "2023-11-15") == nil)
     }
 
     @Test("prune deletes days older than maxAgeDays and keeps recent ones")
@@ -48,13 +52,13 @@ struct DayCacheTests {
         let now = Date()
         let recentKey = DayCache.dayKey(for: DayCache.floorToUTCDay(now.addingTimeInterval(-5 * 86_400)))
         let oldKey = DayCache.dayKey(for: DayCache.floorToUTCDay(now.addingTimeInterval(-40 * 86_400)))
-        cache.store(CachedDay(day: recentKey, fetchedAt: now, entries: [], treatments: []), host: "site")
-        cache.store(CachedDay(day: oldKey, fetchedAt: now, entries: [], treatments: []), host: "site")
+        cache.store(CachedDay(day: recentKey, fetchedAt: now, entries: [], treatments: []), origin: site)
+        cache.store(CachedDay(day: oldKey, fetchedAt: now, entries: [], treatments: []), origin: site)
 
         cache.pruneExpired(now: now)
 
-        #expect(cache.load(host: "site", dayKey: recentKey) != nil)
-        #expect(cache.load(host: "site", dayKey: oldKey) == nil)
+        #expect(cache.load(origin: site, dayKey: recentKey) != nil)
+        #expect(cache.load(origin: site, dayKey: oldKey) == nil)
     }
 
     @Test("shouldStore requires the day to be over for the freshness margin")
@@ -85,25 +89,52 @@ struct DayCacheTests {
     @Test("corrupt cache files are dropped and treated as misses")
     func corruptFile() throws {
         let cache = makeTempCache()
-        let url = cache.fileURL(host: "site", dayKey: "2023-11-14")
+        let url = cache.fileURL(origin: site, dayKey: "2023-11-14")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("not json".utf8).write(to: url)
-        #expect(cache.load(host: "site", dayKey: "2023-11-14") == nil)
+        #expect(cache.load(origin: site, dayKey: "2023-11-14") == nil)
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 
-    @Test("host names are sanitized for the filesystem")
-    func sanitize() {
-        #expect(DayCache.sanitize("My-Site.Example.com") == "my-site.example.com")
-        #expect(DayCache.sanitize("host:1337/path") == "host_1337_path")
+    @Test("origin directory names are readable and distinct")
+    func directoryNames() {
+        func name(_ string: String) -> String {
+            DayCache.directoryName(for: SiteOrigin(url: URL(string: string)!)!)
+        }
+        #expect(name("https://My-Site.Example.com") == "https_my-site.example.com_443")
+        #expect(name("http://localhost:1337") == "http_localhost_1337")
+        #expect(name("http://[::1]:1337") == "http_%3A%3A1_1337")
+        // An underscore in the host cannot imitate the separator.
+        #expect(name("https://a_b:1") == "https_a%5Fb_1")
+        #expect(name("https://a_b:1") != name("https://a:1"))
+    }
+
+    @Test("prune deletes hostname-only entries without touching other files")
+    func pruneLegacyLayout() throws {
+        let cache = makeTempCache()
+        let legacyDirectory = cache.directory.appendingPathComponent("localhost", isDirectory: true)
+        let unrelatedDirectory = cache.directory.appendingPathComponent("notes", isDirectory: true)
+        try FileManager.default.createDirectory(at: legacyDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: unrelatedDirectory, withIntermediateDirectories: true)
+        let legacyDay = legacyDirectory.appendingPathComponent("2023-11-14.json")
+        let unrelatedFile = unrelatedDirectory.appendingPathComponent("keep.txt")
+        try JSONEncoder().encode(CachedDay(day: "2023-11-14", fetchedAt: Date(), entries: [], treatments: []))
+            .write(to: legacyDay)
+        try Data("keep".utf8).write(to: unrelatedFile)
+
+        cache.pruneExpired()
+
+        #expect(!FileManager.default.fileExists(atPath: legacyDay.path))
+        #expect(!FileManager.default.fileExists(atPath: legacyDirectory.path))
+        #expect(FileManager.default.fileExists(atPath: unrelatedFile.path))
     }
 
     @Test("invalid day keys cannot traverse outside the cache")
     func invalidDayKey() {
         let cache = makeTempCache()
         let invalid = CachedDay(day: "../escape", fetchedAt: Date(), entries: [], treatments: [])
-        cache.store(invalid, host: "site")
-        #expect(cache.load(host: "site", dayKey: "../escape") == nil)
+        cache.store(invalid, origin: site)
+        #expect(cache.load(origin: site, dayKey: "../escape") == nil)
         #expect(!FileManager.default.fileExists(
             atPath: cache.directory.appendingPathComponent("escape.json").path
         ))
@@ -113,8 +144,8 @@ struct DayCacheTests {
     func privatePermissions() throws {
         let cache = makeTempCache()
         let day = CachedDay(day: "2023-11-14", fetchedAt: Date(), entries: [], treatments: [])
-        cache.store(day, host: "site")
-        let file = cache.fileURL(host: "site", dayKey: day.day)
+        cache.store(day, origin: site)
+        let file = cache.fileURL(origin: site, dayKey: day.day)
         let directoryAttributes = try FileManager.default.attributesOfItem(
             atPath: file.deletingLastPathComponent().path
         )
@@ -124,9 +155,16 @@ struct DayCacheTests {
     }
 }
 
-/// Routes stubbed responses by path and counts data requests.
+/// Routes stubbed responses by path and counts data requests. With a
+/// `glucoseValue`, each entries request returns one reading at the start of
+/// the requested range so tests can tell which site supplied the data.
 final class RoutingStubTransport: NightscoutTransport, @unchecked Sendable {
     private(set) var dataRequestCount = 0
+    private let glucoseValue: Double?
+
+    init(glucoseValue: Double? = nil) {
+        self.glucoseValue = glucoseValue
+    }
 
     private static let profileJSON = #"""
     [{"defaultProfile":"Default","units":"mg/dL","store":{"Default":{
@@ -144,6 +182,11 @@ final class RoutingStubTransport: NightscoutTransport, @unchecked Sendable {
         let body: String
         if path.contains("profile") {
             body = Self.profileJSON
+        } else if path.contains("entries"), let glucoseValue {
+            dataRequestCount += 1
+            let start = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "find[date][$gte]" }?.value ?? "0"
+            body = #"[{"date":\#(start),"sgv":\#(glucoseValue),"type":"sgv"}]"#
         } else {
             dataRequestCount += 1
             body = "[]"
@@ -174,6 +217,58 @@ struct PipelineCachingTests {
         let secondClient = try NightscoutClient(rawURLString: "https://site.example.com", transport: secondTransport)
         _ = try await TuningPipeline().fetchInputs(client: secondClient, configuration: config, endingAt: end, cache: cache)
         #expect(secondTransport.dataRequestCount == 0)
+    }
+
+    @Test("sites on the same host but different ports do not share cached days")
+    func cacheIsolatedByPort() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("looptune-pipeline-cache-\(UUID().uuidString)", isDirectory: true)
+        let cache = DayCache(directory: dir)
+        let end = Date().addingTimeInterval(-5 * 86_400)
+        let config = TuningConfiguration(days: 2)
+
+        let firstTransport = RoutingStubTransport(glucoseValue: 111)
+        let firstClient = try NightscoutClient(rawURLString: "http://localhost:1337", transport: firstTransport)
+        let first = try await TuningPipeline().fetchInputs(client: firstClient, configuration: config, endingAt: end, cache: cache)
+        #expect(!first.glucose.isEmpty)
+        #expect(first.glucose.allSatisfy { $0.milligramsPerDeciliter == 111 })
+
+        let secondTransport = RoutingStubTransport(glucoseValue: 222)
+        let secondClient = try NightscoutClient(rawURLString: "http://localhost:8080", transport: secondTransport)
+        let second = try await TuningPipeline().fetchInputs(client: secondClient, configuration: config, endingAt: end, cache: cache)
+        #expect(secondTransport.dataRequestCount == firstTransport.dataRequestCount)
+        #expect(!second.glucose.isEmpty)
+        #expect(second.glucose.allSatisfy { $0.milligramsPerDeciliter == 222 })
+    }
+
+    @Test("days cached under the hostname-only layout are refetched")
+    func legacyHostnameCacheIgnored() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("looptune-pipeline-cache-\(UUID().uuidString)", isDirectory: true)
+        let cache = DayCache(directory: dir)
+        let end = Date().addingTimeInterval(-5 * 86_400)
+        let config = TuningConfiguration(days: 2)
+
+        // Seed every bucket the run needs as the previous layout stored it,
+        // with a reading the live site never returns.
+        let legacyDirectory = dir.appendingPathComponent("localhost", isDirectory: true)
+        try FileManager.default.createDirectory(at: legacyDirectory, withIntermediateDirectories: true)
+        let fetchStart = end.addingTimeInterval(-Double(config.days + 1) * 86_400)
+        let buckets = DayCache.utcDayBuckets(covering: fetchStart, to: end.addingTimeInterval(6 * 3600))
+        for bucket in buckets {
+            let entry = NSEntry(date: bucket.interval.start, sgv: 333, type: "sgv", device: nil)
+            let day = CachedDay(day: bucket.key, fetchedAt: Date(), entries: [entry], treatments: [])
+            try JSONEncoder().encode(day).write(to: legacyDirectory.appendingPathComponent("\(bucket.key).json"))
+        }
+
+        let transport = RoutingStubTransport(glucoseValue: 111)
+        let client = try NightscoutClient(rawURLString: "http://localhost:1337", transport: transport)
+        let inputs = try await TuningPipeline().fetchInputs(client: client, configuration: config, endingAt: end, cache: cache)
+
+        #expect(transport.dataRequestCount == buckets.count * 2)
+        #expect(!inputs.glucose.isEmpty)
+        #expect(inputs.glucose.allSatisfy { $0.milligramsPerDeciliter == 111 })
+        #expect(!FileManager.default.fileExists(atPath: legacyDirectory.path))
     }
 
     @Test("without a cache every run fetches from the network")

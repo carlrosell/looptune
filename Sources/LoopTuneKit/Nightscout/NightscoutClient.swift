@@ -53,25 +53,31 @@ extension NightscoutError: LocalizedError {
 /// A read-only client for a Nightscout site.
 public struct NightscoutClient: Sendable {
     public let baseURL: URL
+    /// The site identity used to keep data from different sites apart.
+    public let origin: SiteOrigin
     public let credentials: NightscoutCredentials
     private let transport: NightscoutTransport
 
     /// Normalize a user-entered URL down to scheme + host (+ port), stripping any
     /// pasted path/query (users routinely paste `.../api/v1/...` or `?token=`).
     public init(rawURLString: String, credentials: NightscoutCredentials = .none, transport: NightscoutTransport = URLSessionTransport()) throws {
-        guard let normalized = Self.normalizeBaseURL(rawURLString) else {
+        guard let normalized = Self.normalizeBaseURL(rawURLString),
+              let origin = SiteOrigin(url: normalized) else {
             throw NightscoutError.invalidURL
         }
         self.baseURL = normalized
+        self.origin = origin
         self.credentials = credentials
         self.transport = transport
     }
 
     public init(baseURL: URL, credentials: NightscoutCredentials = .none, transport: NightscoutTransport = URLSessionTransport()) throws {
-        guard let normalized = Self.normalizeBaseURL(baseURL.absoluteString) else {
+        guard let normalized = Self.normalizeBaseURL(baseURL.absoluteString),
+              let origin = SiteOrigin(url: normalized) else {
             throw NightscoutError.invalidURL
         }
         self.baseURL = normalized
+        self.origin = origin
         self.credentials = credentials
         self.transport = transport
     }
