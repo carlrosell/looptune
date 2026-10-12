@@ -274,8 +274,15 @@ struct CarbRetentionTests {
             inputs: Scenario.dayInputs(carbs: [supported]),
             configuration: configuration
         )
-        #expect(throws: TuningPipeline.PipelineError.invalidInput("carb absorption time")) {
-            try TuningPipeline().run(inputs: Scenario.dayInputs(carbs: [unsupported]), configuration: configuration)
+        // The earliest unsupported entry is reported, in the profile's zone.
+        let later = CarbRecord(date: unsupported.date.addingTimeInterval(3600), grams: 30, absorptionTime: 12 * 3600)
+        #expect(throws: TuningPipeline.PipelineError.unsupportedCarbAbsorption(
+            date: unsupported.date,
+            grams: 60,
+            absorptionTime: CarbRecord.maximumAbsorptionTime + 60,
+            timeZone: TimeZone(identifier: "UTC")!
+        )) {
+            try TuningPipeline().run(inputs: Scenario.dayInputs(carbs: [later, unsupported]), configuration: configuration)
         }
         let inputs = try Scenario.dayInputs(carbs: [unsupported])
         #expect(throws: ReplayEngine.ReplayError.unsupportedAbsorptionTime(unsupported.date)) {
@@ -284,6 +291,34 @@ struct CarbRetentionTests {
         await #expect(throws: ReplayEngine.ReplayError.unsupportedAbsorptionTime(unsupported.date)) {
             try await DiagnosticsBuilder().build(inputs: inputs, recommendation: recommendation)
         }
+    }
+
+    @Test("the unsupported absorption message names the entry, the limit, and the fix")
+    func unsupportedAbsorptionMessage() {
+        let meal = Scenario.meal(hoursBefore: 10.5, absorptionHours: 12, grams: 45.5)
+        let error = TuningPipeline.PipelineError.unsupportedCarbAbsorption(
+            date: meal.date,
+            grams: meal.grams,
+            absorptionTime: meal.absorptionTime,
+            timeZone: TimeZone(identifier: "America/New_York")!
+        )
+        #expect(error.errorDescription == """
+            The 45.5 g carb entry at 2023-11-12 12:30 (America/New_York) has an absorption time \
+            of 12 h; LoopTune supports at most 10 h. Edit that entry's absorption time to 10 h or \
+            less in Loop or Nightscout, or choose an analysis window that starts at least two days \
+            after it. No recommendation was made.
+            """)
+
+        let justOver = TuningPipeline.PipelineError.unsupportedCarbAbsorption(
+            date: meal.date,
+            grams: 60,
+            absorptionTime: CarbRecord.maximumAbsorptionTime + 20,
+            timeZone: TimeZone(identifier: "Asia/Tokyo")!
+        )
+        #expect(justOver.errorDescription?.hasPrefix(
+            "The 60 g carb entry at 2023-11-13 02:30 (Asia/Tokyo) has an absorption time of 10 h 1 min;"
+        ) == true)
+        #expect(TuningPipeline.PipelineError.noGlucose.errorDescription == nil)
     }
 }
 

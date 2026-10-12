@@ -29,8 +29,12 @@ retained meal's absorption, even when the earlier meal ends before the segment.
 
 Replay supports entered absorption times up to
 `CarbRecord.maximumAbsorptionTime`, which equals
-`CarbMath.maximumAbsorptionTimeInterval` (10 hours). `TuningPipeline` rejects longer entries with
-`PipelineError.invalidInput("carb absorption time")`. `HistoricalReplay`
+`CarbMath.maximumAbsorptionTimeInterval` (10 hours). `TuningPipeline` rejects
+longer entries with `PipelineError.unsupportedCarbAbsorption`, which carries the
+earliest offending entry's date, grams, and absorption time and the profile's
+time zone. Its description names that entry in the profile's time zone, states
+the 10-hour limit, and tells the user to edit the entry or choose a window that
+starts at least two days after it. The app and CLI show that text. `HistoricalReplay`
 throws `ReplayError.unsupportedAbsorptionTime(date)`, so `ChainedTuner` and
 `DiagnosticsBuilder` fail explicitly when called directly. They do not drop or
 clamp the meal.
@@ -83,7 +87,9 @@ retained meal. The retained meal is then attributed that shared absorption
 alone. Such a meal cannot itself be active in the segment.
 
 A Nightscout carb entry with an absorption time over 10 hours now fails the
-run instead of being partly dropped.
+run instead of being partly dropped. The fetch reads whole UTC days from up to
+48 hours before the window, so such an entry blocks a run until it is edited or
+falls outside that lead-in.
 
 Each replay reads up to 23h45m before its segment instead of 18 hours. This is
 still within the one lead-in day the current fetch uses. Under ADR 0004,

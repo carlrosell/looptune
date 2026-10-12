@@ -89,6 +89,10 @@ public struct TuningPipeline: Sendable {
         /// The profile history does not reach the settings active at
         /// `requiredFrom`, the earliest instant replay reads (ADR 0005).
         case incompleteProfileHistory(requiredFrom: Date)
+        /// The carb entry logged at `date` has an absorption time above
+        /// `CarbRecord.maximumAbsorptionTime` (ADR 0008). `timeZone` is the
+        /// profile's, so the entry can be named as the user logged it.
+        case unsupportedCarbAbsorption(date: Date, grams: Double, absorptionTime: TimeInterval, timeZone: TimeZone)
     }
 
     /// One hour of CGM evidence: the smallest evidence set allowed to produce
@@ -278,9 +282,16 @@ public struct TuningPipeline: Sendable {
                 && $0.grams.isFinite && $0.grams > 0
                 && $0.absorptionTime.isFinite && $0.absorptionTime > 0
         }) else { throw PipelineError.invalidInput("carbs") }
-        guard inputs.carbs.allSatisfy({
-            $0.absorptionTime <= CarbRecord.maximumAbsorptionTime
-        }) else { throw PipelineError.invalidInput("carb absorption time") }
+        if let unsupported = inputs.carbs
+            .filter({ $0.absorptionTime > CarbRecord.maximumAbsorptionTime })
+            .min(by: { $0.date < $1.date }) {
+            throw PipelineError.unsupportedCarbAbsorption(
+                date: unsupported.date,
+                grams: unsupported.grams,
+                absorptionTime: unsupported.absorptionTime,
+                timeZone: inputs.profile.timeZone
+            )
+        }
         guard inputs.overrides.allSatisfy({ period in
             let validEnd = period.endDate.map {
                 finite($0) && $0 > period.startDate
@@ -580,5 +591,39 @@ public struct TuningPipeline: Sendable {
             String(reflecting: entry.type),
             String(reflecting: entry.device),
         ].joined(separator: "|")
+    }
+}
+
+extension TuningPipeline.PipelineError: LocalizedError {
+    /// A message for errors the user can fix in their own records. Other
+    /// cases return `nil` and keep their default rendering.
+    public var errorDescription: String? {
+        switch self {
+        case let .unsupportedCarbAbsorption(date, grams, absorptionTime, timeZone):
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = timeZone
+            formatter.dateFormat = "yyyy-MM-dd HH:mm"
+            let limit = Self.hoursAndMinutes(CarbRecord.maximumAbsorptionTime)
+            return "The \(Self.grams(grams)) g carb entry at \(formatter.string(from: date)) "
+                + "(\(timeZone.identifier)) has an absorption time of \(Self.hoursAndMinutes(absorptionTime)); "
+                + "LoopTune supports at most \(limit). Edit that entry's absorption time to \(limit) "
+                + "or less in Loop or Nightscout, or choose an analysis window that starts at least "
+                + "two days after it. No recommendation was made."
+        default:
+            return nil
+        }
+    }
+
+    private static func grams(_ value: Double) -> String {
+        value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
+    /// Rounds up to the minute so a value just above the limit never reads
+    /// as equal to it.
+    private static func hoursAndMinutes(_ interval: TimeInterval) -> String {
+        let minutes = Int((interval / 60).rounded(.up))
+        let hours = minutes / 60, remainder = minutes % 60
+        return remainder == 0 ? "\(hours) h" : "\(hours) h \(remainder) min"
     }
 }
