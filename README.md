@@ -92,6 +92,11 @@ days older than 30 days are deleted automatically. Pass `--no-cache` to bypass
 the cache; delete the directory to reset it. Cache and run-history directories
 are owner-only (`0700`), and their health-data JSON files are `0600`.
 
+Requests use HTTPS; plain HTTP is accepted only for `localhost` and loopback
+addresses. Redirects are followed only within the same scheme, host, and port,
+so credentials never reach another site. A site that redirects elsewhere,
+including from `http` to `https`, fails until you enter its final address.
+
 ### App
 
 ```sh
