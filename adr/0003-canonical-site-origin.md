@@ -1,6 +1,6 @@
 # 0003. Identify sites by canonical origin
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-12
 - **Deciders:** Project owner
 - **Related:** [#8](https://github.com/carlrosell/looptune/issues/8) (DATA-01), [Repository audit](../docs/code-reviews/2026-10-12-repository-audit-review.md#data-01-cache-keys-mix-sites-hosted-on-different-ports), [#5](https://github.com/carlrosell/looptune/issues/5) (SEC-02), [#6](https://github.com/carlrosell/looptune/issues/6) (SEC-03), [#20](https://github.com/carlrosell/looptune/issues/20) (APP-02)
