@@ -4,9 +4,12 @@ import Foundation
 ///
 /// The "how it improves" numbers come from replaying the window twice: once
 /// with the profile history recorded as active then (before) and once with the
-/// recommended settings (after). Deviation is `observed − modeled` glucose change, so
-/// a closer in-sample fit produces deviations nearer zero — the same signal the
-/// tuner optimizes, surfaced for inspection without claiming future outcomes.
+/// recommended settings standing in for each recorded settings period (after).
+/// Both replays use the same historical context as chained tuning, so inputs
+/// from before an activation keep the settings recorded for their start.
+/// Deviation is `observed − modeled` glucose change, so a closer in-sample fit
+/// produces deviations nearer zero — the same signal the tuner optimizes,
+/// surfaced for inspection without claiming future outcomes.
 public struct DiagnosticsBuilder: Sendable {
     public init() {}
 
@@ -23,16 +26,9 @@ public struct DiagnosticsBuilder: Sendable {
 
         // The two replays are independent CPU-bound work — run them as
         // concurrent child tasks.
-        async let beforeTask = deviations(
-            for: profile,
-            inputs: inputs,
-            useRecordedProfileHistory: true
-        )
-        async let afterTask = deviations(
-            for: recommendedProfile,
-            inputs: inputs,
-            useRecordedProfileHistory: false
-        )
+        let replay = HistoricalReplay(inputs: inputs)
+        async let beforeTask = deviations(replay: replay) { $0.recorded }
+        async let afterTask = deviations(replay: replay) { _ in recommendedProfile }
         let (before, after) = await (beforeTask, afterTask)
 
         let hourly = hourlyDeviations(before: before, after: after, timeZone: timeZone)
@@ -63,44 +59,12 @@ public struct DiagnosticsBuilder: Sendable {
     /// shape as the chained tuner (linear in days), instead of one full-window
     /// replay whose insulin-effect computation is quadratic in window length.
     private func deviations(
-        for profile: TherapyProfile,
-        inputs: TuningInputs,
-        useRecordedProfileHistory: Bool
+        replay: HistoricalReplay,
+        candidate: @Sendable (ReplaySegment) -> TherapyProfile
     ) -> [DeviationSample] {
-        let engine = ReplayEngine()
-        let windows = ChainedTuner.dayWindows(
-            from: inputs.analysisStart,
-            to: inputs.analysisEnd,
-            timeZone: profile.timeZone
-        )
-        var all: [DeviationSample] = []
-        for window in windows {
-            let segments = useRecordedProfileHistory
-                ? ChainedTuner.profileSegments(for: window, history: inputs.profileHistory)
-                : [window]
-            for segment in segments {
-                let segmentProfile = useRecordedProfileHistory
-                    ? inputs.profileHistory?.activeProfile(at: segment.start) ?? profile
-                    : profile
-                let trimmed = ReplayEngine.trimmedInputs(
-                    glucose: inputs.glucose,
-                    doses: inputs.doses,
-                    carbs: inputs.carbs,
-                    analysisStart: segment.start,
-                    analysisEnd: segment.end
-                )
-                let samples = (try? engine.computeDeviations(
-                    glucose: trimmed.glucose,
-                    doses: trimmed.doses,
-                    carbs: trimmed.carbs,
-                    profile: segmentProfile,
-                    analysisStart: segment.start,
-                    analysisEnd: segment.end
-                )) ?? []
-                all += inputs.eligibleDeviations(samples)
-            }
+        replay.segmentsByDay().joined().flatMap { segment in
+            (try? replay.replay(segment, candidate: candidate(segment)))?.eligibleDeviations ?? []
         }
-        return all
     }
 
     private func meanAbsolute(_ samples: [DeviationSample]) -> Double {

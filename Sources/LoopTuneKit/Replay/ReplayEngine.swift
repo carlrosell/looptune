@@ -39,6 +39,27 @@ public struct ReplayEngine: Sendable {
         analysisStart: Date,
         analysisEnd: Date
     ) throws -> [DeviationSample] {
+        try computeDeviations(
+            glucose: glucose,
+            doses: doses,
+            carbs: carbs,
+            settings: TherapyTimeline(profile: profile),
+            analysisStart: analysisStart,
+            analysisEnd: analysisEnd
+        )
+    }
+
+    /// Compute deviations with the settings `settings` records for each
+    /// instant, so every dose and meal is modeled with the schedules in force
+    /// when it began.
+    public func computeDeviations(
+        glucose: [GlucoseSample],
+        doses: [DoseRecord],
+        carbs: [CarbRecord],
+        settings: TherapyTimeline,
+        analysisStart: Date,
+        analysisEnd: Date
+    ) throws -> [DeviationSample] {
         let sortedGlucose = glucose.sorted { $0.date < $1.date }
         guard sortedGlucose.count >= 2 else { throw ReplayError.insufficientGlucose }
 
@@ -51,16 +72,16 @@ public struct ReplayEngine: Sendable {
         let scheduleStart = earliestInput.addingTimeInterval(-600)
         let scheduleEnd = max(latestInput, analysisEnd).addingTimeInterval(Self.insulinActivityDuration)
 
-        let basalTimeline = profile.basalTimeline(from: scheduleStart, to: scheduleEnd)
-        let isfTimeline = profile.sensitivityTimeline(from: scheduleStart, to: scheduleEnd)
-        let crTimeline = profile.carbRatioTimeline(from: scheduleStart, to: scheduleEnd)
+        let basalTimeline = settings.basalTimeline(from: scheduleStart, to: scheduleEnd)
+        let isfTimeline = settings.sensitivityTimeline(from: scheduleStart, to: scheduleEnd)
+        let crTimeline = settings.carbRatioTimeline(from: scheduleStart, to: scheduleEnd)
 
         // Convert to LoopAlgorithm types (sorted; unified glucose provenance so
         // ICE intervals are not silently dropped).
         let fixtureGlucose = sortedGlucose.map { $0.fixture(unifyProvenance: true) }
         let fixtureDoses = doses
             .sorted { $0.startDate < $1.startDate }
-            .map { $0.fixture(defaultInsulinType: profile.insulinType) }
+            .map { $0.fixture(defaultInsulinType: settings.profile(at: $0.startDate).insulinType) }
         let fixtureCarbs = carbs
             .sorted { $0.date < $1.date }
             .map { $0.fixture() }
@@ -148,6 +169,13 @@ public struct ReplayEngine: Sendable {
     public static let doseLookback: TimeInterval = 18 * 3600
     public static let carbLookback: TimeInterval = 10 * 3600
     public static let glucoseLookback: TimeInterval = 10 * 3600
+
+    /// How far before an analysis window replay can read any input. Fetching
+    /// derives both its data window and its required profile-history
+    /// coverage from this, so it must bound every lookback above.
+    public static var inputLookback: TimeInterval {
+        max(doseLookback, carbLookback, glucoseLookback)
+    }
 
     /// Trim inputs to the subset that can influence deviations inside
     /// `[analysisStart, analysisEnd]`. Replaying a day window with trimmed
