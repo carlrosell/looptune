@@ -43,3 +43,4 @@ retroactive approvals for them.
 | [0005](0005-complete-nightscout-fetches.md) | Fetch complete Nightscout records or fail | Accepted |
 | [0006](0006-same-origin-redirects.md) | Follow redirects only within the request's origin | Accepted |
 | [0007](0007-measure-tuning-evidence-by-cgm-duration.md) | Measure tuning evidence by CGM duration | Proposed |
+| [0008](0008-carb-retention-bound.md) | Bound carb absorption time and derive replay retention from it | Proposed |

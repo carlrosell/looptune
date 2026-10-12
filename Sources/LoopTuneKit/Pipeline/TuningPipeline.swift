@@ -278,6 +278,9 @@ public struct TuningPipeline: Sendable {
                 && $0.grams.isFinite && $0.grams > 0
                 && $0.absorptionTime.isFinite && $0.absorptionTime > 0
         }) else { throw PipelineError.invalidInput("carbs") }
+        guard inputs.carbs.allSatisfy({
+            $0.absorptionTime <= CarbRecord.maximumAbsorptionTime
+        }) else { throw PipelineError.invalidInput("carb absorption time") }
         guard inputs.overrides.allSatisfy({ period in
             let validEnd = period.endDate.map {
                 finite($0) && $0 > period.startDate
@@ -369,8 +372,9 @@ public struct TuningPipeline: Sendable {
 
         cache?.pruneExpired()
 
-        // At least one lead-in day covers the replay lookback and the 30-min
-        // glucose delta lead; 6h trailing margin covers carb-ratio coverage.
+        // One lead-in day covers `ReplayEngine.inputLookback` (23h45m of
+        // doses), the 15h45m carb and glucose lookback, and the 30-min glucose
+        // delta lead; 6h trailing margin covers carb-ratio coverage.
         let fetchStart = analysisStart.addingTimeInterval(-max(DayCache.dayLength, ReplayEngine.inputLookback))
         let fetchEnd = end.addingTimeInterval(6 * 3600)
         let buckets = DayCache.utcDayBuckets(covering: fetchStart, to: fetchEnd)
