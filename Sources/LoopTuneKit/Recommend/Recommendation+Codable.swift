@@ -74,6 +74,7 @@ extension ParameterScheduleRecommendation: Codable {
 extension BasalHourRecommendation: Codable {
     private enum CodingKeys: String, CodingKey {
         case hour, pumpRate, recommendedRate, changeTier, guardrailStatus, untuned, daysMissing, sampleCount
+        case minimumRate, maximumRate
     }
 
     public init(from decoder: Decoder) throws {
@@ -81,11 +82,16 @@ extension BasalHourRecommendation: Codable {
         self.hour = try container.decode(Int.self, forKey: .hour)
         self.pumpRate = try container.decode(Double.self, forKey: .pumpRate)
         self.recommendedRate = try container.decode(Double.self, forKey: .recommendedRate)
-        self.changeTier = try container.decode(ChangeTier.self, forKey: .changeTier)
+        // The stored changeTier is ignored: older runs classified the unrounded
+        // rate, and the tier is now derived from the final rate.
         self.guardrailStatus = try container.decode(LoopGuardrails.Status.self, forKey: .guardrailStatus)
         self.untuned = try container.decode(Bool.self, forKey: .untuned)
         self.daysMissing = try container.decode(Int.self, forKey: .daysMissing)
         self.sampleCount = try container.decode(Int.self, forKey: .sampleCount)
+        // Runs saved before the limits were stored used the default caps.
+        let limits = Self.limits(pumpRate: pumpRate, caps: TuningCaps())
+        self.minimumRate = try container.decodeIfPresent(Double.self, forKey: .minimumRate) ?? limits.minimum
+        self.maximumRate = try container.decodeIfPresent(Double.self, forKey: .maximumRate) ?? limits.maximum
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -93,11 +99,14 @@ extension BasalHourRecommendation: Codable {
         try container.encode(hour, forKey: .hour)
         try container.encode(pumpRate, forKey: .pumpRate)
         try container.encode(recommendedRate, forKey: .recommendedRate)
+        // Kept for readers that still require the key.
         try container.encode(changeTier, forKey: .changeTier)
         try container.encode(guardrailStatus, forKey: .guardrailStatus)
         try container.encode(untuned, forKey: .untuned)
         try container.encode(daysMissing, forKey: .daysMissing)
         try container.encode(sampleCount, forKey: .sampleCount)
+        try container.encode(minimumRate, forKey: .minimumRate)
+        try container.encode(maximumRate, forKey: .maximumRate)
     }
 }
 

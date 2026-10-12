@@ -386,7 +386,7 @@ struct BasalChartView: View {
                         ) {
                             ChartTooltip(title: String(format: "%02d:00–%02d:00", hovered.hour, (hovered.hour + 1) % 24)) {
                                 TooltipRow(color: ChartPalette.pump(colorScheme), label: "Pump", value: String(format: "%.3f U/hr", hovered.pumpRate))
-                                TooltipRow(color: ChartPalette.tuned(colorScheme), label: "LoopTune", value: String(format: "%.3f U/hr", hovered.recommendedRate))
+                                TooltipRow(color: ChartPalette.tuned(colorScheme), label: "LoopTune (unrounded)", value: String(format: "%.3f U/hr", hovered.recommendedRate))
                                 TooltipRow(color: nil, label: "Enter into Loop", value: String(format: "%.2f U/hr", hovered.roundedRate()))
                             }
                         }

@@ -34,8 +34,9 @@ struct GuardrailTests {
 
     @Test("basal rates round to the pump increment")
     func basalRounding() {
+        // The pump rate equals the tuned rate so the caps do not bind.
         func hourRec(_ rate: Double) -> BasalHourRecommendation {
-            BasalHourRecommendation(hour: 0, pumpRate: 1.0, rawTunedRate: rate, untuned: false)
+            BasalHourRecommendation(hour: 0, pumpRate: rate, rawTunedRate: rate, untuned: false)
         }
         // 0.194 → 0.20 at Loop's 0.05 steps.
         #expect(hourRec(0.194).roundedRate() == 0.2)
@@ -46,7 +47,7 @@ struct GuardrailTests {
         // Exact multiples pass through without FP dust.
         #expect(hourRec(0.85).roundedRate() == 0.85)
         // A tiny positive recommendation never rounds down to zero…
-        #expect(hourRec(0.06).roundedRate(toIncrement: 0.25) == 0.25)
+        #expect(hourRec(0.06).roundedRate(toIncrement: 0.025) == 0.05)
         // …and other increments work (Medtronic 0.025).
         #expect(hourRec(0.194).roundedRate(toIncrement: 0.025) == 0.2)
         #expect(hourRec(0.21).roundedRate(toIncrement: 0.025) == 0.2)
@@ -62,9 +63,16 @@ struct GuardrailTests {
         hourly += Array(repeating: 0.31, count: 4)   // rounds to 0.3
         hourly += Array(repeating: 0.49, count: 2)   // rounds to 0.5
         hourly += Array(repeating: 0.29, count: 6)   // rounds to 0.3
+        // Pump rates keep each rounded rate inside the tuning caps.
+        var pump = [Double]()
+        pump += Array(repeating: 0.2, count: 6)
+        pump += Array(repeating: 0.25, count: 6)
+        pump += Array(repeating: 0.3, count: 4)
+        pump += Array(repeating: 0.5, count: 2)
+        pump += Array(repeating: 0.3, count: 6)
         let output = TuningOutput(
             tunedBasalHourly: hourly,
-            pumpBasalHourly: Array(repeating: 0.3, count: 24),
+            pumpBasalHourly: pump,
             untunedBasalHours: Array(repeating: false, count: 24),
             tunedISF: 50, pumpISF: 50, tunedCarbRatio: 10, pumpCarbRatio: 10,
             categoryCounts: [:], totalSamples: 100

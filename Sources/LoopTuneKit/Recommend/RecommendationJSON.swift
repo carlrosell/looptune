@@ -31,8 +31,10 @@ struct RecommendationDTO: Encodable {
     struct BasalHour: Encodable {
         var hour: Int
         var pump: Double
+        /// Unrounded tuned rate (diagnostic); `recommendedRounded` is entered.
         var recommended: Double
         var recommendedRounded: Double
+        /// Tier and status describe `recommendedRounded`.
         var changeTier: String
         var guardrailStatus: String
         var untuned: Bool
@@ -153,8 +155,8 @@ private extension RecommendationDTO.BasalHour {
             pump: rec.pumpRate,
             recommended: rec.recommendedRate,
             recommendedRounded: rec.roundedRate(toIncrement: increment),
-            changeTier: rec.changeTier.rawValue,
-            guardrailStatus: rec.guardrailStatus.rawValue,
+            changeTier: rec.changeTier(increment: increment).rawValue,
+            guardrailStatus: rec.guardrailStatus(increment: increment).rawValue,
             untuned: rec.untuned,
             daysMissing: rec.daysMissing,
             sampleCount: rec.sampleCount
