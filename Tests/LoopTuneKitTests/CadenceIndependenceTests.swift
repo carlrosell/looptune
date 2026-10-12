@@ -533,6 +533,8 @@ struct CadenceIndependenceTests {
         #expect(DeviationSample.fiveMinuteIntervals(apportioning: [60, 0, 3600]) == [0, 0, 12])
     }
 
+    // Exit tests need Swift 6.2; CI still builds with 6.1.
+    #if compiler(>=6.2)
     @Test("a sample's duration must be finite and positive")
     func durationIsValidated() async {
         await #expect(processExitsWith: .failure) {
@@ -548,6 +550,7 @@ struct CadenceIndependenceTests {
             )
         }
     }
+    #endif
 
     @Test("weighted median reduces to oref0's percentile and favors longer evidence")
     func weightedMedian() {
