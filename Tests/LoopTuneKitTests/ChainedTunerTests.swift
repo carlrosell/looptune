@@ -25,7 +25,7 @@ struct ChainedTunerTests {
         // 3 full days starting at midnight: expect windows [00–04], [04–04]×2, [04–24].
         let start = base
         let end = base.addingTimeInterval(3 * 86_400)
-        let windows = ChainedTuner.dayWindows(from: start, to: end, timeZone: tz)
+        let windows = HistoricalReplay.dayWindows(from: start, to: end, timeZone: tz)
         #expect(windows.count == 4)
         #expect(windows.first?.start == start)
         #expect(windows.last?.end == end)

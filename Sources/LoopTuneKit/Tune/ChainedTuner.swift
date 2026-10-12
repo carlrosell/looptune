@@ -30,7 +30,9 @@ public struct ChainedTuningResult: Sendable, Equatable {
 /// profile into the next day's replay — oref0-autotune's chaining model. The
 /// pump profile stays fixed as the safety-cap baseline, so total drift is
 /// bounded regardless of how many days are chained, and the 20% per-run step
-/// yields an implicit exponential recency weighting.
+/// yields an implicit exponential recency weighting. The tuned profile stands
+/// in for the settings period it was tuned under; inputs that began before
+/// that period's activation keep their recorded settings in replay.
 ///
 /// Day boundaries fall at 04:00 local (oref0's convention: a "day" runs 4am to
 /// 4am so overnight periods aren't split).
@@ -53,15 +55,11 @@ public struct ChainedTuner: Sendable {
         // the output answers "what should I change from what's in Loop now".
         let pumpProfile = inputs.profile
 
-        let windows = Self.dayWindows(
-            from: inputs.analysisStart,
-            to: inputs.analysisEnd,
-            timeZone: pumpProfile.timeZone
-        )
+        let replay = HistoricalReplay(inputs: inputs)
 
         // The replay/tuning baseline starts from the settings that were
         // actually active at the window start (when history is available).
-        var activeHistorical = inputs.profileHistory?.activeProfile(at: inputs.analysisStart) ?? inputs.profile
+        var activeHistorical = replay.recordedProfile(at: inputs.analysisStart)
         var evolving = activeHistorical
         var settingsChanges: [Date] = []
 
@@ -72,11 +70,10 @@ public struct ChainedTuner: Sendable {
         )
         var epoch = freshEpoch
         let tuner = LoopTuner(caps: caps, options: options)
-        let replay = ReplayEngine()
 
         var excludedOverrideSamples = 0
 
-        for window in windows {
+        for window in replay.segmentsByDay() {
             var windowHadTuning = false
             var tunedHoursInWindow = [Bool](repeating: false, count: 24)
             var tunedSensitivityInWindow = [Bool](repeating: false, count: epoch.sensitivityDaysMissing.count)
@@ -85,58 +82,36 @@ public struct ChainedTuner: Sendable {
             // A settings change can occur at any instant, not only at a 04:00
             // day boundary. Split the day at every profile activation so
             // neither replay nor tuning attributes data to the wrong settings.
-            for segment in Self.profileSegments(for: window, history: inputs.profileHistory) {
-                if let history = inputs.profileHistory {
-                    let nowActive = history.activeProfile(at: segment.start)
-                    if !nowActive.hasSameTherapySettings(as: activeHistorical) {
-                        evolving = nowActive
-                        activeHistorical = nowActive
-                        settingsChanges.append(nowActive.activeFrom ?? segment.start)
-                        // Output and evidence from the previous settings cannot
-                        // support a recommendation for the new ones, including
-                        // tuning earlier in this window.
-                        epoch = freshEpoch
-                        windowHadTuning = false
-                        tunedHoursInWindow = [Bool](repeating: false, count: 24)
-                        tunedSensitivityInWindow = [Bool](repeating: false, count: tunedSensitivityInWindow.count)
-                        tunedCarbRatioInWindow = [Bool](repeating: false, count: tunedCarbRatioInWindow.count)
-                    }
+            for segment in window {
+                if !segment.recorded.hasSameTherapySettings(as: activeHistorical) {
+                    evolving = segment.recorded
+                    activeHistorical = segment.recorded
+                    settingsChanges.append(segment.recorded.activeFrom ?? segment.interval.start)
+                    // Output and evidence from the previous settings cannot
+                    // support a recommendation for the new ones, including
+                    // tuning earlier in this window.
+                    epoch = freshEpoch
+                    windowHadTuning = false
+                    tunedHoursInWindow = [Bool](repeating: false, count: 24)
+                    tunedSensitivityInWindow = [Bool](repeating: false, count: tunedSensitivityInWindow.count)
+                    tunedCarbRatioInWindow = [Bool](repeating: false, count: tunedCarbRatioInWindow.count)
                 }
 
-                // Trim to the inputs that can influence this segment: replaying
-                // with the full multi-day dataset would make chaining quadratic.
-                let trimmed = ReplayEngine.trimmedInputs(
-                    glucose: inputs.glucose,
-                    doses: inputs.doses,
-                    carbs: inputs.carbs,
-                    analysisStart: segment.start,
-                    analysisEnd: segment.end
-                )
-                let allDeviations: [DeviationSample]
-                do {
-                    allDeviations = try replay.computeDeviations(
-                        glucose: trimmed.glucose,
-                        doses: trimmed.doses,
-                        carbs: trimmed.carbs,
-                        profile: evolving,
-                        analysisStart: segment.start,
-                        analysisEnd: segment.end
-                    )
-                } catch ReplayEngine.ReplayError.insufficientGlucose {
-                    allDeviations = []
-                }
-                let deviations = inputs.eligibleDeviations(allDeviations)
-                excludedOverrideSamples += allDeviations.count - deviations.count
+                // The evolving profile replaces this settings period from its
+                // activation; earlier inputs keep their recorded settings.
+                let replayed = try replay.replay(segment, candidate: evolving)
+                let deviations = replayed.eligibleDeviations
+                excludedOverrideSamples += replayed.deviations.count - deviations.count
                 guard deviations.count >= Self.minimumSamplesPerDay else { continue }
 
                 let output = try tuner.tune(
                     deviations: deviations,
-                    carbs: inputs.eligibleCarbs(from: segment.start, to: segment.end),
-                    attributionCarbs: trimmed.carbs,
+                    carbs: inputs.eligibleCarbs(from: segment.interval.start, to: segment.interval.end),
+                    attributionCarbs: replayed.retainedCarbs,
                     currentProfile: evolving,
                     pumpProfile: pumpProfile,
-                    analysisStart: segment.start,
-                    analysisEnd: segment.end
+                    analysisStart: segment.interval.start,
+                    analysisEnd: segment.interval.end
                 )
 
                 for hour in 0..<24 {
@@ -283,63 +258,5 @@ public struct ChainedTuner: Sendable {
             sensitivityEvidence = [Int](repeating: 0, count: sensitivityEntryCount)
             carbRatioEvidence = [Int](repeating: 0, count: carbRatioEntryCount)
         }
-    }
-
-    /// Split a day window at each activation that changes replay-relevant
-    /// therapy. Target-only or other metadata uploads do not fragment the
-    /// evidence into smaller tuning segments.
-    static func profileSegments(
-        for window: DateInterval,
-        history: ProfileHistory?
-    ) -> [DateInterval] {
-        var changes: [Date] = []
-        if let history {
-            var previous = history.activeProfile(at: window.start)
-            let candidates = Set(history.timeline.compactMap(\.activeFrom).filter {
-                $0 > window.start && $0 < window.end
-            }).sorted()
-            for date in candidates {
-                let active = history.activeProfile(at: date)
-                if !active.hasSameTherapySettings(as: previous) {
-                    changes.append(date)
-                }
-                previous = active
-            }
-        }
-        let cuts = ([window.start] + changes + [window.end]).sorted()
-        var segments: [DateInterval] = []
-        for index in 0..<(cuts.count - 1) where cuts[index] < cuts[index + 1] {
-            segments.append(DateInterval(start: cuts[index], end: cuts[index + 1]))
-        }
-        return segments
-    }
-
-    /// Split `[start, end]` into windows cut at 04:00 local. The first and last
-    /// windows may be partial. Windows shorter than 30 minutes are dropped.
-    static func dayWindows(from start: Date, to end: Date, timeZone: TimeZone) -> [DateInterval] {
-        guard start < end else { return [] }
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-
-        var boundaries: [Date] = []
-        var day = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: start)) ?? start
-        while day <= end {
-            if let boundary = calendar.date(bySettingHour: Self.dayBoundaryHour, minute: 0, second: 0, of: day),
-               boundary > start, boundary < end {
-                boundaries.append(boundary)
-            }
-            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
-            day = next
-        }
-
-        let cuts = [start] + boundaries.sorted() + [end]
-        var windows: [DateInterval] = []
-        for index in 0..<(cuts.count - 1) {
-            let interval = DateInterval(start: cuts[index], end: cuts[index + 1])
-            if interval.duration >= 30 * 60 {
-                windows.append(interval)
-            }
-        }
-        return windows
     }
 }

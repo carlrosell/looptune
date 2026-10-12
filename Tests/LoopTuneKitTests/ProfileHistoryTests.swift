@@ -69,7 +69,7 @@ struct ProfileHistoryTests {
             start: day0,
             end: day0.addingTimeInterval(2 * 3600)
         )
-        let segments = ChainedTuner.profileSegments(
+        let segments = HistoricalReplay.profileSegments(
             for: window,
             history: ProfileHistory(timeline: [before, after], current: after)
         )

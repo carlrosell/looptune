@@ -107,13 +107,19 @@ public struct TuningPipeline: Sendable {
 
         let options = CategorizerOptions(categorizeUAMAsBasal: configuration.categorizeUAMAsBasal)
         let days = max(1, Int(ceil(inputs.analysisEnd.timeIntervalSince(inputs.analysisStart) / 86_400)))
-        let fullWindow = DateInterval(start: inputs.analysisStart, end: inputs.analysisEnd)
-        let hasTherapyChangeInsideWindow = ChainedTuner.profileSegments(
-            for: fullWindow,
+        // A therapy change inside the window, or among the retained inputs
+        // before it, needs the chained tuner's activation-aware replay. The
+        // single-replay path below applies one profile to every input.
+        let replayWindow = DateInterval(
+            start: inputs.analysisStart.addingTimeInterval(-ReplayEngine.inputLookback),
+            end: inputs.analysisEnd
+        )
+        let hasTherapyChangeInReplay = HistoricalReplay.profileSegments(
+            for: replayWindow,
             history: chainInputs.profileHistory
         ).count > 1
 
-        if days > 1 || hasTherapyChangeInsideWindow {
+        if days > 1 || hasTherapyChangeInReplay {
             let result = try ChainedTuner(options: options).run(inputs: chainInputs)
             guard result.output.totalSamples >= Self.minimumUsableSamples else {
                 throw PipelineError.insufficientUsableData(
