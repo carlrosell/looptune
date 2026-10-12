@@ -7,7 +7,7 @@
 Task ownership and PR state follow the [coordination workflow](docs/coordination.md).
 Durable decisions live in [ADRs](adr/README.md). The
 [2026-10-12 audit](docs/code-reviews/2026-10-12-repository-audit-review.md) links
-all 20 findings to their remediation issues; those findings remain open.
+all 20 findings to their remediation issues and records each finding's status.
 
 ---
 
@@ -561,3 +561,11 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   skills, issue and PR templates, ADRs 0000 through 0002, read-only status
   tooling, documentation checks, and CI coverage for the workflow tools.
   All findings remain open; no application behavior changed.
+- **2026-10-12**: Landed wave 1 of the audit remediation for SEC-01 (#25),
+  CORE-01 (#26), CORE-04 (#27), and CORE-02 (#29). Plain HTTP is limited to
+  validated loopback literals; no-evidence ISF and CR blocks stay within
+  pump-relative caps; a therapy change resets chained output and evidence,
+  reporting insufficient data when the final settings lack evidence; and final
+  basal rates, including rounding, stay inside tuning and Loop limits with
+  change tiers taken from the entered rate. The audit records commits and
+  verification for each. DATA-01 (#28) remains in review.
