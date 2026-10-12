@@ -42,11 +42,20 @@ a new period. Each period's schedules are expanded with `DailySchedule.expand`
 in that profile's own time zone. Doses without an explicit insulin type take
 the type of the profile in force at their start.
 
+Every period boundary is a cut in the basal, ISF, and carb-ratio timelines,
+even where a schedule has the same value on both sides. The pinned
+LoopAlgorithm splits a temp basal only at basal timeline boundaries and models
+each part with the ISF in force at that part's start. Without the cut, a temp
+basal crossing an ISF-only change would be modeled entirely with the earlier
+ISF.
+
 The candidate stands in for the settings period being analyzed. Inputs that
 began under an earlier period keep the settings recorded for their start.
 Inputs that begin after the activation use the candidate. A temp basal that
-crosses the activation is split there by the model, as it would be at any
-schedule boundary.
+crosses the activation is split at the activation, whether or not the basal
+rate changes there. The part delivered before it keeps the recorded basal and
+ISF, and the part after it uses the candidate's. Both parts keep the insulin
+type resolved at the dose's start.
 
 - Recorded-history replay (the diagnostics "before" replay) uses the recorded
   profile as the candidate, so it replays the recorded history throughout.
@@ -101,7 +110,13 @@ inputs keep their recorded settings.
 Replay accuracy depends on profile history covering the earliest retained input.
 `ReplayEngine.inputLookback` names that span for profile fetching (DATA-04).
 History that does not reach it falls back to the earliest known profile; this
-decision does not detect that gap.
+decision does not detect that gap. DATA-04
+([#11](https://github.com/carlrosell/looptune/issues/11), PR
+[#36](https://github.com/carlrosell/looptune/pull/36)) handles it at the
+pipeline boundary: fetching extends profile history to
+`analysisStart - inputLookback` or throws when the fetched history is
+truncated. A site whose complete history starts after that boundary still uses
+its earliest profile there.
 
 Input retention stays in `ReplayEngine.trimmedInputs` and its lookback
 constants. The timeline is built over whatever the retained inputs span, so
@@ -113,8 +128,11 @@ chained path. Its recommendation reports `daysTuned` and per-hour days missing
 like other chained runs.
 
 Regression tests in `HistoricalReplayTests.swift` replay the audit's bolus case
-and cover pre-change temp basals, a temp basal crossing the activation,
-pre-change meals, and post-change inputs. The chained tuner and pipeline
+and cover pre-change temp basals, pre-change meals, and post-change inputs.
+A temp basal crossing the activation must equal its explicitly split parts
+for basal-only, ISF-only, carb-ratio-only, and combined changes. Further tests
+cover a return to earlier settings, a recorded period in another time zone,
+and the insulin type recorded for each period. The chained tuner and pipeline
 recommendations must equal those for an equivalent input expressed under the
 new settings. Both diagnostics replays must keep the recorded settings for
 pre-change inputs.

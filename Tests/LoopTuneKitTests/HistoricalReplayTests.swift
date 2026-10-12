@@ -15,7 +15,8 @@ struct ProfileChangeScenario {
         basal: Double = 1.0,
         isf: Double,
         carbRatio: Double = 10,
-        target: ClosedRange<Double> = 100...110
+        target: ClosedRange<Double> = 100...110,
+        insulinType: InsulinType = .novolog
     ) throws -> TherapyProfile {
         TherapyProfile(
             basalSchedule: try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: basal)]),
@@ -25,7 +26,7 @@ struct ProfileChangeScenario {
             timeZone: TimeZone(identifier: "UTC")!,
             glucoseUnit: .milligramsPerDeciliter,
             activeFrom: activeFrom,
-            insulinType: .novolog
+            insulinType: insulinType
         )
     }
 
@@ -75,6 +76,39 @@ enum PreChangeInput: String, CaseIterable, Sendable, CustomTestStringConvertible
     func carbs(equivalentUnderNewSettings: Bool) -> [CarbRecord] {
         guard self == .meal else { return [] }
         return [ProfileChangeScenario.meal(equivalentUnderNewSettings ? 15 : 30)]
+    }
+}
+
+/// A settings change at the activation. Schedules it does not name keep the
+/// same value on both sides.
+enum SettingsChange: String, CaseIterable, Sendable, CustomTestStringConvertible {
+    case basal
+    case sensitivity
+    case carbRatio
+    case basalAndSensitivity
+
+    var testDescription: String { rawValue }
+
+    var old: TherapyProfile {
+        get throws {
+            try ProfileChangeScenario.profile(
+                activeFrom: ProfileChangeScenario.start.addingTimeInterval(-2 * 86_400),
+                basal: 1,
+                isf: 40,
+                carbRatio: 10
+            )
+        }
+    }
+
+    var new: TherapyProfile {
+        get throws {
+            try ProfileChangeScenario.profile(
+                activeFrom: ProfileChangeScenario.activation,
+                basal: self == .basal || self == .basalAndSensitivity ? 2 : 1,
+                isf: self == .sensitivity || self == .basalAndSensitivity ? 80 : 40,
+                carbRatio: self == .carbRatio ? 20 : 10
+            )
+        }
     }
 }
 
@@ -188,10 +222,10 @@ struct HistoricalReplayTests {
         #expect(zip(historical, reinterpreted).contains { abs($0.insulinEffect - $1.insulinEffect) > 0.1 })
     }
 
-    @Test("a temp basal crossing activation splits at the activation")
-    func tempBasalCrossingActivation() throws {
-        let old = try Scenario.old(basal: 1.0)
-        let new = try Scenario.new(basal: 2.0)
+    @Test("a temp basal crossing activation splits at the activation", arguments: SettingsChange.allCases)
+    func tempBasalCrossingActivation(change: SettingsChange) throws {
+        let old = try change.old
+        let new = try change.new
         func temp(from start: TimeInterval, to end: TimeInterval) -> DoseRecord {
             DoseRecord(
                 kind: .tempBasal(unitsPerHour: 3),
@@ -199,6 +233,12 @@ struct HistoricalReplayTests {
                 endDate: Scenario.activation.addingTimeInterval(end * 60)
             )
         }
+
+        // The activation stays a basal boundary even when the basal rate is
+        // the same on both sides, so the model splits the temp basal there.
+        let timeline = TherapyTimeline(history: history(old: old, new: new), candidate: new, from: Scenario.activation)
+        let basal = timeline.basalTimeline(from: Scenario.preChange, to: Scenario.activation.addingTimeInterval(3600))
+        #expect(basal.map(\.startDate) == [Scenario.preChange, Scenario.activation])
 
         let historical = try replayAfterActivation(
             history: history(old: old, new: new),
@@ -208,8 +248,17 @@ struct HistoricalReplayTests {
         let before = try replayWithSingleProfile(old, doses: [temp(from: -30, to: 0)])
         let after = try replayWithSingleProfile(new, doses: [temp(from: 0, to: 30)])
         #expect(historical.count == before.count)
+        #expect(historical.count == after.count)
         for (sample, (a, b)) in zip(historical, zip(before, after)) {
+            #expect(sample.date == a.date && sample.date == b.date)
             #expect(abs(sample.insulinEffect - (a.insulinEffect + b.insulinEffect)) < 1e-9)
+            #expect(abs(sample.insulinOnBoard - (a.insulinOnBoard + b.insulinOnBoard)) < 1e-9)
+        }
+
+        if change == .sensitivity {
+            // Unsplit, the post-activation half would keep ISF 40.
+            let unsplit = try replayWithSingleProfile(old, doses: [temp(from: -30, to: 30)])
+            #expect(zip(historical, unsplit).contains { abs($0.insulinEffect - $1.insulinEffect) > 0.1 })
         }
     }
 
@@ -265,6 +314,78 @@ struct HistoricalReplayTests {
         #expect(replay.settingsActivation(at: Scenario.activation.addingTimeInterval(2 * 3600)) == Scenario.activation)
         #expect(replay.settingsActivation(at: Scenario.activation.addingTimeInterval(-60)) == old.activeFrom)
         #expect(replay.segmentsByDay().joined().map(\.settingsActivation) == [old.activeFrom, Scenario.activation])
+    }
+
+    @Test("a return to earlier settings keeps the intervening period for inputs given under it")
+    func returnToEarlierSettings() throws {
+        let first = try Scenario.old()
+        let intervening = try Scenario.profile(activeFrom: Scenario.activation.addingTimeInterval(-2 * 3600), isf: 80)
+        var restored = first
+        restored.activeFrom = Scenario.activation
+        let history = ProfileHistory(timeline: [first, intervening, restored], current: restored)
+        let underFirst = Scenario.bolus(1, at: Scenario.activation.addingTimeInterval(-3 * 3600))
+        let underIntervening = Scenario.bolus(1, at: Scenario.preChange)
+
+        let historical = try replayAfterActivation(history: history, doses: [underFirst, underIntervening])
+        let a = try replayWithSingleProfile(first, doses: [underFirst])
+        let b = try replayWithSingleProfile(intervening, doses: [underIntervening])
+        #expect(historical.count == a.count)
+        for (sample, (a, b)) in zip(historical, zip(a, b)) {
+            #expect(abs(sample.insulinEffect - (a.insulinEffect + b.insulinEffect)) < 1e-9)
+        }
+        // Replaying the restored settings throughout would erase the change.
+        let flattened = try replayWithSingleProfile(first, doses: [underFirst, underIntervening])
+        #expect(zip(historical, flattened).contains { abs($0.insulinEffect - $1.insulinEffect) > 0.1 })
+    }
+
+    @Test("each recorded period expands its schedules in its own time zone")
+    func periodInAnotherTimeZone() throws {
+        // 00:00 in Tokyo is 15:00 UTC, an hour before the UTC activation.
+        let tokyo = TherapyProfile(
+            basalSchedule: try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: 1)]),
+            sensitivitySchedule: try DailySchedule(entries: [
+                .init(secondsSinceMidnight: 0, value: 30),
+                .init(secondsSinceMidnight: 12 * 3600, value: 50),
+            ]),
+            carbRatioSchedule: try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: 10)]),
+            targetSchedule: try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: 100...110)]),
+            timeZone: TimeZone(identifier: "Asia/Tokyo")!,
+            glucoseUnit: .milligramsPerDeciliter,
+            activeFrom: Scenario.start.addingTimeInterval(-2 * 86_400),
+            insulinType: .novolog
+        )
+        let new = try Scenario.new()
+        let timeline = TherapyTimeline(history: history(old: tokyo, new: new), candidate: new, from: Scenario.activation)
+        let sensitivity = timeline.sensitivityTimeline(
+            from: Scenario.activation.addingTimeInterval(-2 * 3600),
+            to: Scenario.activation.addingTimeInterval(3600)
+        )
+        #expect(sensitivity.map(\.startDate) == [
+            Scenario.activation.addingTimeInterval(-2 * 3600),
+            Scenario.preChange,
+            Scenario.activation,
+        ])
+        #expect(sensitivity.map { $0.value.doubleValue(for: .milligramsPerDeciliter) } == [50, 30, 80])
+
+        let dose = Scenario.bolus(1, at: Scenario.activation.addingTimeInterval(-30 * 60))
+        let historical = try replayAfterActivation(history: history(old: tokyo, new: new), doses: [dose])
+        expectEqual(historical, try replayWithSingleProfile(tokyo, doses: [dose]))
+        var tokyoReadAsUTC = tokyo
+        tokyoReadAsUTC.timeZone = TimeZone(identifier: "UTC")!
+        let misread = try replayWithSingleProfile(tokyoReadAsUTC, doses: [dose])
+        #expect(zip(historical, misread).contains { abs($0.insulinEffect - $1.insulinEffect) > 0.1 })
+    }
+
+    @Test("a dose without its own insulin type takes the type recorded at its start")
+    func perPeriodInsulinType() throws {
+        let old = try Scenario.profile(activeFrom: Scenario.start.addingTimeInterval(-2 * 86_400), isf: 40, insulinType: .fiasp)
+        let new = try Scenario.profile(activeFrom: Scenario.activation, isf: 40, insulinType: .novolog)
+        let dose = Scenario.bolus(1)
+
+        let historical = try replayAfterActivation(history: history(old: old, new: new), doses: [dose])
+        expectEqual(historical, try replayWithSingleProfile(old, doses: [dose]))
+        let reinterpreted = try replayWithSingleProfile(new, doses: [dose])
+        #expect(zip(historical, reinterpreted).contains { abs($0.insulinEffect - $1.insulinEffect) > 0.01 })
     }
 
     @Test("a timeline composes recorded periods before the activation with the candidate after it")

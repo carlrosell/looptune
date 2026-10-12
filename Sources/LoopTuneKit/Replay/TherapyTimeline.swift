@@ -34,12 +34,15 @@ public struct TherapyTimeline: Sendable {
     /// keep the settings recorded for their start. Without history or an
     /// activation date the candidate applies throughout. Before the earliest
     /// recorded activation, the earliest recorded profile applies, matching
-    /// `ProfileHistory.activeProfile(at:)`.
+    /// `ProfileHistory.activeProfile(at:)`. Recorded uploads that keep the
+    /// previous therapy settings, such as target-only changes, do not start a
+    /// new period.
     public init(history: ProfileHistory?, candidate: TherapyProfile, from activation: Date?) {
         var periods: [Period] = []
         if let history, let activation {
             for profile in history.timeline {
                 guard let activeFrom = profile.activeFrom, activeFrom < activation else { continue }
+                if let last = periods.last, last.profile.hasSameTherapySettings(as: profile) { continue }
                 periods.append(Period(start: periods.isEmpty ? .distantPast : activeFrom, profile: profile))
             }
         }
@@ -72,9 +75,13 @@ public struct TherapyTimeline: Sendable {
     }
 
     /// Expand each period's schedule over its share of `[start, end]` and
-    /// concatenate, merging equal values across period boundaries so a single
+    /// concatenate. Every period boundary stays a cut, even where a schedule
+    /// has the same value on both sides: LoopAlgorithm splits temp basals only
+    /// at basal timeline boundaries and models each part with the ISF in force
+    /// at its start, so merging equal basal values would model insulin
+    /// delivered after an ISF-only change with the earlier ISF. A single
     /// period yields exactly the profile's own expansion.
-    private func timeline<Value: Equatable>(
+    private func timeline<Value>(
         from start: Date,
         to end: Date,
         expand: (TherapyProfile, Date, Date) -> [AbsoluteScheduleValue<Value>]
@@ -85,14 +92,7 @@ public struct TherapyTimeline: Sendable {
             let lower = max(start, periods[index].start)
             let upper = min(end, periodEnd)
             guard lower < upper else { continue }
-            for item in expand(periods[index].profile, lower, upper) {
-                if var last = result.last, last.value == item.value, last.endDate == item.startDate {
-                    last.endDate = item.endDate
-                    result[result.count - 1] = last
-                } else {
-                    result.append(item)
-                }
-            }
+            result += expand(periods[index].profile, lower, upper)
         }
         return result
     }
