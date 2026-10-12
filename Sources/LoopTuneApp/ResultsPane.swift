@@ -159,7 +159,7 @@ struct ResultsView: View {
 
     private var basalPercentChange: Double {
         guard recommendation.pumpDailyBasal > 0 else { return 0 }
-        return (recommendation.tunedDailyBasal - recommendation.pumpDailyBasal) / recommendation.pumpDailyBasal * 100
+        return (recommendation.roundedDailyBasal() - recommendation.pumpDailyBasal) / recommendation.pumpDailyBasal * 100
     }
 
     private var basalTable: some View {
@@ -186,7 +186,7 @@ struct ResultsView: View {
                 }
                 .width(min: 64, ideal: 76)
 
-                TableColumn("LoopTune") { hour in
+                TableColumn("Unrounded") { hour in
                     Text(String(format: "%.3f", hour.recommendedRate))
                         .foregroundStyle(.secondary)
                         .numericCell()

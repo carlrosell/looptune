@@ -58,7 +58,7 @@ public enum TuningReport {
             )
         }
 
-        lines.append("Basal schedule [U/hr] — Rounded = nearest \(String(format: "%.3g", basalIncrement)) U/hr step within the tuning limits (what Loop accepts)")
+        lines.append("Basal schedule [U/hr] — LoopTune = unrounded; Rounded = nearest \(String(format: "%.3g", basalIncrement)) U/hr step within the tuning limits (what Loop accepts); Flag = change of the Rounded rate")
         lines.append(pad("Hour", 8) + pad("Pump", 12) + pad("LoopTune", 12) + pad("Rounded", 10) + pad("Days missing", 14) + "Flag")
         lines.append(String(repeating: "-", count: 62))
         for hour in recommendation.basalHours where hour.pumpRate != hour.recommendedRate || !hour.untuned {
@@ -69,7 +69,7 @@ public enum TuningReport {
             pad("Total", 8)
             + pad(fmt(recommendation.pumpDailyBasal), 12)
             + pad(fmt(recommendation.tunedDailyBasal), 12)
-            + pad(fmt2(recommendation.roundedDailyBasal(increment: basalIncrement)), 10)
+            + pad(fmtRate(recommendation.roundedDailyBasal(increment: basalIncrement), increment: basalIncrement), 10)
         )
         lines.append("")
 
@@ -79,7 +79,7 @@ public enum TuningReport {
         lines.append("Basal Rates — as entered in Loop (\(loopEntries.count) entries)")
         lines.append(String(repeating: "-", count: 30))
         for entry in loopEntries {
-            lines.append(pad(entry.timeString, 8) + fmt2(entry.rate) + " U/hr")
+            lines.append(pad(entry.timeString, 8) + fmtRate(entry.rate, increment: basalIncrement) + " U/hr")
         }
         lines.append("")
         lines.append(disclaimer)
@@ -127,18 +127,24 @@ public enum TuningReport {
 
     private static func basalRow(_ hour: BasalHourRecommendation, increment: Double) -> String {
         let label = String(format: "%02d:00", hour.hour)
-        let flag = hour.untuned ? "(no data)" : tierFlag(hour.changeTier)
+        let flag = hour.untuned ? "(no data)" : tierFlag(hour.changeTier(increment: increment))
         let missing = hour.daysMissing > 0 ? String(hour.daysMissing) : ""
         return pad(label, 8)
             + pad(fmt(hour.pumpRate), 12)
             + pad(fmt(hour.recommendedRate), 12)
-            + pad(fmt2(hour.roundedRate(toIncrement: increment)), 10)
+            + pad(fmtRate(hour.roundedRate(toIncrement: increment), increment: increment), 10)
             + pad(missing, 14)
             + flag
     }
 
-    private static func fmt2(_ value: Double) -> String {
-        String(format: "%.2f", value)
+    /// Two decimals, or enough to show every step of a finer increment such
+    /// as 0.025 U/hr.
+    private static func fmtRate(_ value: Double, increment: Double) -> String {
+        let decimals = (2...3).first { places in
+            let steps = increment * pow(10, Double(places))
+            return abs(steps - steps.rounded()) < 1e-6
+        } ?? 4
+        return String(format: "%.\(decimals)f", value)
     }
 
     // ISO8601DateFormatter is documented thread-safe for formatting.

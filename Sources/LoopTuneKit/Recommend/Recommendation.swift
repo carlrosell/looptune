@@ -96,8 +96,11 @@ public struct BasalHourRecommendation: Sendable, Equatable, Identifiable {
     public var id: Int { hour }
     public var hour: Int
     public var pumpRate: Double
+    /// The tuned rate inside the limits, before rounding to a pump increment.
+    /// Diagnostic only: users enter `roundedRate(toIncrement:)`.
     public var recommendedRate: Double
-    public var changeTier: ChangeTier
+    /// Loop guardrail status of `recommendedRate`. Use
+    /// `guardrailStatus(increment:)` for the value entered into Loop.
     public var guardrailStatus: LoopGuardrails.Status
     public var untuned: Bool
     /// Day windows in which this hour received no tuning data (confidence:
@@ -137,13 +140,9 @@ public struct BasalHourRecommendation: Sendable, Equatable, Identifiable {
         } else {
             // No rate satisfies both the caps and Loop's limits: keep the pump
             // rate. This preserves zero rates instead of raising them to 0.05.
-            let bounds = LoopGuardrails.basalRate
             self.recommendedRate = pumpRate
-            self.guardrailStatus = pumpRate < bounds.recommendedMin || pumpRate > bounds.recommendedMax
-                ? .outsideRecommended
-                : .ok
+            self.guardrailStatus = Self.status(of: pumpRate)
         }
-        self.changeTier = ChangeTier.classify(pump: pumpRate, tuned: recommendedRate)
         self.untuned = untuned
         self.daysMissing = daysMissing
         self.sampleCount = sampleCount
@@ -155,6 +154,28 @@ public struct BasalHourRecommendation: Sendable, Equatable, Identifiable {
             max(pumpRate * caps.autotuneMin, bounds.absoluteMin),
             min(pumpRate * caps.autotuneMax, bounds.absoluteMax)
         )
+    }
+
+    private static func status(of rate: Double) -> LoopGuardrails.Status {
+        let bounds = LoopGuardrails.basalRate
+        return rate < bounds.recommendedMin || rate > bounds.recommendedMax ? .outsideRecommended : .ok
+    }
+
+    /// Change class of the rate entered into Loop at the default increment.
+    public var changeTier: ChangeTier { changeTier(increment: Self.loopBasalIncrement) }
+
+    /// Change class of `roundedRate(toIncrement:)`, the rate entered into
+    /// Loop, so an hour whose final rate is unchanged reports `.minimal`.
+    public func changeTier(increment: Double) -> ChangeTier {
+        ChangeTier.classify(pump: pumpRate, tuned: roundedRate(toIncrement: increment))
+    }
+
+    /// Loop guardrail status of `roundedRate(toIncrement:)`. It is `.atLimit`
+    /// only when the entered rate is the Loop limit `recommendedRate` was
+    /// clamped to.
+    public func guardrailStatus(increment: Double) -> LoopGuardrails.Status {
+        let rate = roundedRate(toIncrement: increment)
+        return rate == recommendedRate ? guardrailStatus : Self.status(of: rate)
     }
 
     /// Loop's scheduled-basal granularity on typical pumps (Omnipod, most

@@ -35,7 +35,7 @@ public struct SavedRun: Codable, Sendable, Identifiable, Equatable {
 
     /// A one-line summary of the headline changes, e.g. "ISF +6% · CR −4%".
     public var headline: String {
-        let basal = percent(recommendation.pumpDailyBasal, recommendation.tunedDailyBasal)
+        let basal = percent(recommendation.pumpDailyBasal, recommendation.roundedDailyBasal())
         return "Basal \(basal) · ISF \(signed(recommendation.sensitivity.percentChange)) · CR \(signed(recommendation.carbRatio.percentChange))"
     }
 

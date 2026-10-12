@@ -160,6 +160,104 @@ struct BasalLimitTests {
         #expect(legacy.basalHours[0].maximumRate == rec.basalHours[0].maximumRate)
     }
 
+    @Test(
+        "change tier and status describe the rate entered into Loop",
+        arguments: [
+            // (pump, tuned, increment, final rate, final tier, report flag)
+            (0.15, 0.18, 0.05, 0.15, ChangeTier.minimal, ""),    // capped +20% rounds back to the pump rate
+            (0.08, 0.096, 0.05, 0.08, ChangeTier.minimal, ""),   // no increment fits; the pump rate is kept
+            (1.0, 1.08, 0.05, 1.1, ChangeTier.notable, "△"),     // +8% rounds up to +10%
+            (1.0, 0.89, 0.05, 0.9, ChangeTier.minimal, ""),      // −11% rounds to −10%
+            (0.15, 0.18, 0.025, 0.175, ChangeTier.notable, "△"), // a finer increment keeps part of the change
+        ] as [(Double, Double, Double, Double, ChangeTier, String)]
+    )
+    func tierDescribesFinalRate(
+        _ pump: Double,
+        _ tuned: Double,
+        _ increment: Double,
+        _ final: Double,
+        _ tier: ChangeTier,
+        _ flag: String
+    ) throws {
+        let rec = try recommendation(pump: pump, tuned: tuned)
+        let hour = rec.basalHours[0]
+        #expect(hour.roundedRate(toIncrement: increment) == final)
+        // The unrounded rate falls in a different tier, so this case matters.
+        #expect(ChangeTier.classify(pump: pump, tuned: hour.recommendedRate) != tier)
+        #expect(hour.changeTier(increment: increment) == tier)
+        #expect(hour.guardrailStatus(increment: increment) == .ok)
+        if increment == BasalHourRecommendation.loopBasalIncrement {
+            #expect(hour.changeTier == tier)
+        }
+
+        let json = try basalJSON(rec, increment: increment)
+        let exported = try #require((json["basal"] as? [[String: Any]])?.first)
+        #expect(exported["recommendedRounded"] as? Double == final)
+        #expect(exported["changeTier"] as? String == tier.rawValue)
+        #expect(exported["guardrailStatus"] as? String == "ok")
+
+        let report = TuningReport.render(rec, basalIncrement: increment)
+        let row = try #require(report.split(separator: "\n").first { $0.hasPrefix("00:00 ") })
+        let columns = row.split(separator: " ")
+        #expect(columns.count == (flag.isEmpty ? 4 : 5), "\(row)")
+        #expect(Double(columns[3]) == final)
+        #expect((columns.count == 5 ? String(columns[4]) : "") == flag)
+    }
+
+    @Test("guardrail status follows the increment actually used")
+    func guardrailStatusDescribesFinalRate() throws {
+        // 0.042 is clamped to Loop's 0.05 minimum. At 0.1 U/hr steps no rate
+        // fits, so the pump rate is entered and is not at the limit.
+        let hour = try recommendation(pump: 0.06, tuned: 0.042).basalHours[0]
+        #expect(hour.guardrailStatus == .atLimit)
+        #expect(hour.roundedRate() == 0.05)
+        #expect(hour.guardrailStatus(increment: 0.05) == .atLimit)
+        #expect(hour.roundedRate(toIncrement: 0.1) == 0.06)
+        #expect(hour.guardrailStatus(increment: 0.1) == .ok)
+        #expect(hour.changeTier(increment: 0.1) == .minimal)
+
+        let json = try basalJSON(try recommendation(pump: 0.06, tuned: 0.042), increment: 0.1)
+        let exported = try #require((json["basal"] as? [[String: Any]])?.first)
+        #expect(exported["guardrailStatus"] as? String == "ok")
+    }
+
+    @Test("saved runs report the tier of the final rate")
+    func savedRunsDeriveTier() throws {
+        let rec = try recommendation(
+            pumpHourly: Array(repeating: 0.15, count: 24),
+            tunedHourly: Array(repeating: 0.18, count: 24)
+        )
+        #expect(rec.basalHours.allSatisfy { $0.changeTier == .minimal })
+
+        // A run saved before this change stored the tier of the unrounded rate.
+        var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(rec)) as? [String: Any])
+        var hours = try #require(object["basalHours"] as? [[String: Any]])
+        #expect(hours.allSatisfy { $0["changeTier"] as? String == "minimal" })
+        hours = hours.map { hour in
+            var hour = hour
+            hour["changeTier"] = "large"
+            return hour
+        }
+        object["basalHours"] = hours
+        let legacy = try JSONDecoder().decode(
+            TuningRecommendation.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(legacy.basalHours.allSatisfy { $0.changeTier == .minimal })
+
+        // The run history headline compares the entered rates, not +20%.
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let diagnostics = RunDiagnostics(
+            glucoseCount: 0, doseCount: 0, carbCount: 0, windowStart: date, windowEnd: date,
+            daySummaries: [], hourlyDeviation: [], meanAbsDeviationBefore: 0, meanAbsDeviationAfter: 0
+        )
+        let run = SavedRun(
+            id: "run", createdAt: date, siteHost: "site", days: 1, insulinType: .novolog,
+            recommendation: legacy, diagnostics: diagnostics
+        )
+        #expect(run.headline.hasPrefix("Basal 0% "))
+    }
+
     @Test("the pipeline keeps a zero basal profile at zero")
     func pipelineKeepsZeroProfile() throws {
         let base = Date(timeIntervalSince1970: 1_700_000_000)
@@ -191,8 +289,8 @@ struct BasalLimitTests {
         #expect(rec.loopBasalSchedule() == [LoopBasalEntry(startMinutes: 0, rate: 0)])
     }
 
-    private func basalJSON(_ rec: TuningRecommendation) throws -> [String: Any] {
-        let json = try RecommendationJSON.encode(rec)
+    private func basalJSON(_ rec: TuningRecommendation, increment: Double = 0.05) throws -> [String: Any] {
+        let json = try RecommendationJSON.encode(rec, basalIncrement: increment)
         return try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
     }
 }
