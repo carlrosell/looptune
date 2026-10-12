@@ -1,6 +1,6 @@
 # 0008. Bound carb absorption time and derive replay retention from it
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-12
 - **Deciders:** Project owner
 - **Related:** [#18](https://github.com/carlrosell/looptune/issues/18) (CORE-07), [Repository audit](../docs/code-reviews/2026-10-12-repository-audit-review.md#core-07-fixed-carb-lookback-drops-meals-still-active-in-the-model), [ADR 0004](0004-historical-replay-context.md), [#11](https://github.com/carlrosell/looptune/issues/11) (DATA-04)

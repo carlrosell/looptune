@@ -1,6 +1,6 @@
 # 0007. Measure tuning evidence by CGM duration
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-12
 - **Deciders:** Project owner
 - **Related:** [#16](https://github.com/carlrosell/looptune/issues/16) (CORE-05), [Repository audit](../docs/code-reviews/2026-10-12-repository-audit-review.md#core-05-cgm-cadence-changes-tuning-weight-and-the-minimum-evidence-duration), [#17](https://github.com/carlrosell/looptune/issues/17) (CORE-06)

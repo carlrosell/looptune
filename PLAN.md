@@ -597,3 +597,10 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   possibly capped responses and require profile history to reach the earliest
   replay input, failing instead of truncating (ADR 0005). Both ADRs are
   accepted, and the audit records the commits and verification.
+- **2026-10-12**: Landed CORE-05 (#34) and CORE-07 (#39), completing wave 2 of
+  the audit remediation. Tuning weights and evidence now measure CGM time
+  rather than reading counts, so recommendations no longer depend on sensor
+  cadence (ADR 0007). Replay retains meals for their full modeled absorption
+  and rejects absorption times the model cannot bound (ADR 0008). Both ADRs
+  are accepted, and the audit records the commits and verification. An
+  intermittent Foundation trap in the redirect tests is tracked as #41.
