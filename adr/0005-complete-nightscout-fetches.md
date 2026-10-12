@@ -25,27 +25,35 @@ There is no skip or cursor parameter that every supported server honors.
 A fetch either retrieves every record the analysis can read or throws. It never
 returns, analyzes, or caches data it knows may be incomplete.
 
-**Records.** A response that holds as many records as requested may be
-truncated. The range is split at its midpoint and both halves are queried
-again, newer half first, until every queried range returns fewer records than
-requested. The halves share the inclusive midpoint, and records returned twice
-are dropped: treatments by sync identifier, then `_id`, then the whole decoded
-document; entries by every decoded field. Splitting relies only on the range
+**Records.** Queries request 1,500 records. A response that holds 1,000 or
+more may be truncated: either it fills the request, or a server or proxy capped
+it below the request, as Nightscout API v3 and common proxies do at 1,000. The
+range is split at its midpoint and both halves are queried again, newer half
+first, until every queried range returns fewer than 1,000 records. The halves
+share the inclusive midpoint, and records returned twice are dropped: treatments
+by sync identifier, then `_id`, then the whole decoded document; entries by
+every decoded field. Splitting relies only on the range
 filter and `count`, not on which matches the server returns first. Split points
 lie on the filter's grid (milliseconds for entries, whole seconds for
 treatments). A full range narrower than two grid steps, or a day that needs more
 than 64 queries for one collection, throws
 `PipelineError.incompleteRecords(collection:start:end:)`. The 64-query budget
-also stops a server that ignores the range filter.
+also stops a server that ignores the range filter. Because a split query yields
+two more, 64 queries end in about 32 ranges below 1,000 records, roughly 30,000
+records in an evenly spread day. A one-minute CGM day of about 1,440 entries
+takes three queries.
 
 **Profile history.** The required boundary is the earliest instant replay can
 read: `analysisStart - ReplayEngine.inputLookback`, where `inputLookback` is the
 largest of the replay lookbacks. Profiles are requested with `count` 100,
 doubling to at most 3,200. A response with fewer documents than requested is
-the site's whole history. A full response is accepted only if it contains a
-document that started at or before the boundary and later than the oldest
-returned start date, because documents tied with the oldest one may have been
-cut off. Otherwise the fetch throws
+the site's whole history, with two exceptions. Nightscout returns 10 documents
+when `count` is dropped, so a response of exactly 10 is accepted only after a
+request with `count` 1 returns fewer than 10, which shows `count` is honored. A
+response of 1,000 or more may be a server cap and is rejected. A full response
+is accepted only if it contains a document that started at or before the
+boundary and later than the oldest returned start date, because documents tied
+with the oldest one may have been cut off. Otherwise the fetch throws
 `PipelineError.incompleteProfileHistory(requiredFrom:)`.
 
 The data window starts `max(1 day, ReplayEngine.inputLookback)` before the
@@ -88,14 +96,22 @@ Existing caches are refetched once after upgrading. If replay comes to read
 further back, raising `ReplayEngine.inputLookback` extends both the data window
 and the profile boundary.
 
-The design assumes the server honors the `count` it is sent. A server that caps
-responses below the requested count is indistinguishable from a complete
-response.
+The design assumes a server honors the `count` it is sent, caps responses at
+1,000 or more, or drops `count` and returns 10. A server or proxy that caps
+responses below 1,000, including one that honors `count` 1 but caps at 10, still
+looks complete. A site whose whole profile history is exactly 10 documents, all
+newer than the boundary, costs one extra profile request. Dense days split once
+responses reach 1,000 records rather than 1,500.
 
-Verification: `CompleteFetchTests` uses a capped synthetic transport. Saturated
-treatments and entries are fully retrieved, an exactly full day with records on
-the split midpoint is not doubled, and unsplittable or non-progressing ranges
-are rejected within the query budget. The 101-profile case fetches the 0.5 U/h
-baseline, a covered history needs one request, tied oldest documents are
-extended, and an unbounded history is rejected. Incomplete days are not cached,
-complete saturated days are reused, and unmarked days are refetched.
+Verification: `CompleteFetchTests` uses a synthetic transport that can honor,
+cap, or drop `count`. Saturated treatments and entries are fully retrieved. A
+day of 1,000 records is split although it is below the request, and records on
+the split midpoint are not doubled. A server capped at 1,000 returns all 1,440
+entries of a one-minute CGM day and 1,001 doses in three queries each.
+Unsplittable or non-progressing ranges are rejected within the query budget.
+The 101-profile case fetches the 0.5 U/h baseline, a covered history needs one
+request, tied oldest documents are extended, and an unbounded history is
+rejected. Ten profiles from a server that drops `count` are rejected, ten from a
+server that honors it are accepted, and a profile response at a 1,000-document
+cap is rejected. Incomplete days are not cached, complete saturated days are
+reused, and unmarked days are refetched.

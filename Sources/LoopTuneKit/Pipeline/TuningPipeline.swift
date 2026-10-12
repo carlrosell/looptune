@@ -95,12 +95,18 @@ public struct TuningPipeline: Sendable {
 
     /// Records requested by one entries or treatments query.
     static let recordPageSize = 1500
+    /// A response at least this long may have been cut off by a server or
+    /// proxy cap below the requested count; API v3 and common proxies cap at
+    /// 1,000. Such a response is treated like a full one.
+    static let possiblyCappedCount = 1000
     /// Queries allowed to retrieve one collection for one day bucket.
     static let maximumQueriesPerDay = 64
     /// Profile documents requested first, doubled until the history covers
     /// the earliest replay input, up to `maximumProfileCount`.
     static let initialProfileCount = 100
     static let maximumProfileCount = 3200
+    /// What Nightscout returns when a request's `count` is dropped.
+    static let defaultProfileCount = 10
 
     /// Run tuning against already-assembled inputs (offline path).
     ///
@@ -427,7 +433,13 @@ public struct TuningPipeline: Sendable {
         var count = initialProfileCount
         while true {
             let documents = try await client.fetchProfiles(count: count)
-            if documents.count < count || covers(documents, boundary) {
+            if covers(documents, boundary) {
+                return documents
+            }
+            if documents.count < count {
+                guard try await isWholeProfileHistory(documents, client: client) else {
+                    throw PipelineError.incompleteProfileHistory(requiredFrom: boundary)
+                }
                 return documents
             }
             guard count < maximumProfileCount else {
@@ -435,6 +447,24 @@ public struct TuningPipeline: Sendable {
             }
             count = min(count * 2, maximumProfileCount)
         }
+    }
+
+    /// Whether a response shorter than requested is the site's whole profile
+    /// history. A server that drops `count` returns Nightscout's default of
+    /// 10, and a capped one returns its cap, so neither length proves the
+    /// history ends there. Ten documents are accepted once a smaller request
+    /// shows that `count` is honored.
+    static func isWholeProfileHistory(
+        _ documents: [NSProfileDocument],
+        client: NightscoutClient
+    ) async throws -> Bool {
+        if documents.count >= possiblyCappedCount {
+            return false
+        }
+        if documents.count == defaultProfileCount {
+            return try await client.fetchProfiles(count: 1).count < defaultProfileCount
+        }
+        return true
     }
 
     /// Whether a full profile response shows the settings active at
@@ -448,10 +478,10 @@ public struct TuningPipeline: Sendable {
     }
 
     /// Every record in `interval` from a range query capped at `pageSize`.
-    /// A response that fills the page may be truncated, so its range is split
-    /// in two and both halves are queried again, newer half first. The halves
-    /// share their inclusive midpoint, and records returned twice are dropped
-    /// by `key`. This relies only on the range filter and `count`, not on
+    /// A response that fills the page, or holds at least `possiblyCapped`
+    /// records, may be truncated, so its range is split in two and both
+    /// halves are queried again, newer half first. The halves share their
+    /// inclusive midpoint, and records returned twice are dropped by `key`. This relies only on the range filter and `count`, not on
     /// which matches the server returns first. Bounds lie on the filter's
     /// `stepsPerSecond` grid; a full range that cannot be split, or running
     /// out of queries, throws `incompleteRecords`.
@@ -460,6 +490,7 @@ public struct TuningPipeline: Sendable {
         in interval: DateInterval,
         stepsPerSecond: Double,
         pageSize: Int = recordPageSize,
+        possiblyCapped: Int = possiblyCappedCount,
         maximumQueries: Int = maximumQueriesPerDay,
         key: (Record) -> String,
         fetch: (Date, Date, Int) async throws -> [Record]
@@ -479,7 +510,7 @@ public struct TuningPipeline: Sendable {
             }
             queries += 1
             let page = try await fetch(date(range.low), date(range.high), pageSize)
-            guard page.count >= pageSize else {
+            guard page.count >= min(pageSize, possiblyCapped) else {
                 pages.append(page)
                 continue
             }

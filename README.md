@@ -83,9 +83,10 @@ LOOPTUNE_TOKEN='<access-token>' \
 units, auth status) without tuning.
 
 Each run retrieves every glucose entry and treatment in its window, splitting
-any query that returns as many records as requested, and fetches profile history
-back to the settings active at the earliest replay input. If either cannot be
-retrieved completely, the run fails instead of analyzing partial data
+any query that returns 1,000 or more records in case a server capped it, and
+fetches profile history back to the settings active at the earliest replay
+input. If either cannot be retrieved completely, the run fails instead of
+analyzing partial data
 ([ADR 0005](adr/0005-complete-nightscout-fetches.md)).
 
 Fetched days are cached locally (`~/Library/Application Support/LoopTune/DayCache`,

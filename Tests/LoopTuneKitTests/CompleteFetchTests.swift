@@ -20,6 +20,10 @@ final class CappedNightscoutTransport: NightscoutTransport, @unchecked Sendable 
     var unboundedProfiles: Date?
     /// Ignore the range filters and always return the newest records.
     var ignoresRange = false
+    /// Return at most this many documents, whatever `count` asks for.
+    var cap: Int?
+    /// Ignore `count` and return Nightscout's default of 10 documents.
+    var ignoresCount = false
     private(set) var requests: [Request] = []
 
     func requests(to fragment: String) -> [Request] {
@@ -32,7 +36,7 @@ final class CappedNightscoutTransport: NightscoutTransport, @unchecked Sendable 
         for item in components.queryItems ?? [] { items[item.name] = item.value }
         let recorded = Request(path: components.path, items: items)
         requests.append(recorded)
-        let count = recorded.count ?? 10
+        let count = ignoresCount ? 10 : min(recorded.count ?? 10, cap ?? .max)
 
         let body: String
         if recorded.path.contains("profile") {
@@ -157,8 +161,8 @@ struct CompleteFetchTests {
         #expect(inputs.glucose.count == pageSize + 1)
     }
 
-    @Test("an exactly full day is split once and records on the shared midpoint are not doubled")
-    func exactLimitWithMidpointDuplicates() async throws {
+    @Test("a possibly capped day is split once and records on the shared midpoint are not doubled")
+    func possiblyCappedDayWithMidpointDuplicates() async throws {
         let transport = makeTransport()
         let midpoint = dayStart.addingTimeInterval(43_200)
         // Three identified doses and one without an ID sit on the inclusive
@@ -166,17 +170,41 @@ struct CompleteFetchTests {
         let onMidpoint = (0..<3).map {
             (date: midpoint, json: CappedNightscoutTransport.bolusJSON(id: "mid-\($0)", at: midpoint, units: 1 + Double($0)))
         } + [(date: midpoint, json: #"{"eventType":"Correction Bolus","created_at":"\#(NightscoutClient.iso(midpoint))","insulin":7}"#)]
-        transport.treatments = onMidpoint + doses(count: pageSize - onMidpoint.count, from: dayStart.addingTimeInterval(60), spacing: 30)
+        // Fewer than requested, but as many as a capped server would return.
+        let total = TuningPipeline.possiblyCappedCount
+        transport.treatments = onMidpoint + doses(count: total - onMidpoint.count, from: dayStart.addingTimeInterval(60), spacing: 60)
 
         let inputs = try await fetch(transport)
 
-        #expect(inputs.doses.count == pageSize)
+        #expect(inputs.doses.count == total)
         let dayQueries = transport.requests(to: "treatments").filter {
             $0.items["find[created_at][$gte]"] == NightscoutClient.iso(dayStart)
                 || $0.items["find[created_at][$lte]"] == NightscoutClient.iso(dayStart.addingTimeInterval(86_400))
         }
         #expect(dayQueries.count == 3)
         #expect(dayQueries.filter { $0.items.values.contains(NightscoutClient.iso(midpoint)) }.count == 2)
+    }
+
+    @Test("a server capped at 1,000 returns every record of a one-minute CGM day")
+    func serverCapIsSplit() async throws {
+        let transport = makeTransport()
+        transport.cap = TuningPipeline.possiblyCappedCount
+        transport.entries = (0..<1440).map {
+            NSEntry(date: dayStart.addingTimeInterval(30 + Double($0) * 60), sgv: 100, type: "sgv", device: nil)
+        }
+        transport.treatments = doses(count: 1001, from: dayStart.addingTimeInterval(60), spacing: 60)
+
+        let inputs = try await fetch(transport)
+
+        #expect(inputs.glucose.count == 1440)
+        #expect(inputs.doses.count == 1001)
+        // Each saturated day takes one split: three queries instead of one.
+        let buckets = DayCache.utcDayBuckets(
+            covering: analysisStart.addingTimeInterval(-86_400),
+            to: end.addingTimeInterval(6 * 3600)
+        )
+        #expect(transport.requests(to: "entries").count == buckets.count + 2)
+        #expect(transport.requests(to: "treatments").count == buckets.count + 2)
     }
 
     @Test("a full range that cannot be split is rejected")
@@ -279,6 +307,43 @@ struct CompleteFetchTests {
 
         #expect(transport.requests(to: "profile").map(\.count) == [100, 200])
         #expect(try #require(inputs.profileHistory).timeline.count == 101)
+    }
+
+    @Test("ten profiles from a server that ignores count are not taken as the whole history")
+    func droppedProfileCountIsRejected() async throws {
+        let transport = CappedNightscoutTransport()
+        transport.ignoresCount = true
+        transport.profiles = [(start: earliestReplayInput.addingTimeInterval(-86_400), basal: 0.5)]
+            + (1...20).map { (start: earliestReplayInput.addingTimeInterval(Double($0) * 60), basal: 1.0) }
+
+        await #expect(throws: TuningPipeline.PipelineError.incompleteProfileHistory(requiredFrom: earliestReplayInput)) {
+            _ = try await fetch(transport)
+        }
+        #expect(transport.requests(to: "profile").map(\.count) == [100, 1])
+        #expect(transport.requests(to: "entries").isEmpty)
+    }
+
+    @Test("ten profiles from a server that honors count are the whole history")
+    func tenProfileHistoryIsAccepted() async throws {
+        let transport = CappedNightscoutTransport()
+        transport.profiles = (1...10).map { (start: earliestReplayInput.addingTimeInterval(Double($0) * 60), basal: 1.0) }
+
+        let inputs = try await fetch(transport)
+
+        #expect(transport.requests(to: "profile").map(\.count) == [100, 1])
+        #expect(try #require(inputs.profileHistory).timeline.count == 10)
+    }
+
+    @Test("a profile response cut off at a server cap is not taken as the whole history")
+    func cappedProfileHistoryIsRejected() async throws {
+        let transport = makeTransport()
+        transport.cap = TuningPipeline.possiblyCappedCount
+        transport.unboundedProfiles = end
+
+        await #expect(throws: TuningPipeline.PipelineError.incompleteProfileHistory(requiredFrom: earliestReplayInput)) {
+            _ = try await fetch(transport)
+        }
+        #expect(transport.requests(to: "profile").map(\.count) == [100, 200, 400, 800, 1600])
     }
 
     @Test("profile history that never reaches the boundary is rejected")
