@@ -140,4 +140,49 @@ struct ReplayEngineTests {
         #expect(samples.allSatisfy { abs($0.deviation - 5) < 1e-9 })
         #expect(samples.allSatisfy { abs($0.averageDelta - 5) < 1e-9 })
     }
+
+    @Test("a temp basal at the scheduled rate in the repeated fall-back hour nets to zero")
+    func repeatedHourBasalNetting() throws {
+        // America/New_York 2026-11-01: 02:00 EDT (06:00Z) returns to 01:00 EST.
+        // During the second 01:00-01:30 the direct schedule rate is 1 U/hr.
+        let profile = TherapyProfile(
+            basalSchedule: try DailySchedule(entries: [
+                .init(secondsSinceMidnight: 0, value: 1.0),
+                .init(secondsSinceMidnight: 90 * 60, value: 2.0),
+                .init(secondsSinceMidnight: 2 * 3600, value: 3.0),
+            ]),
+            sensitivitySchedule: try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: 50)]),
+            carbRatioSchedule: try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: 10)]),
+            targetSchedule: try DailySchedule(entries: [.init(secondsSinceMidnight: 0, value: 100...110)]),
+            timeZone: TimeZone(identifier: "America/New_York")!,
+            glucoseUnit: .milligramsPerDeciliter,
+            insulinType: .novolog
+        )
+        let transition = ISO8601DateFormatter().date(from: "2026-11-01T06:00:00Z")!
+        let temp = DoseRecord(
+            kind: .tempBasal(unitsPerHour: 1.0),
+            startDate: transition,
+            endDate: transition.addingTimeInterval(30 * 60)
+        )
+        let basal = profile.basalTimeline(
+            from: transition.addingTimeInterval(-2 * 3600),
+            to: transition.addingTimeInterval(3 * 3600)
+        )
+        #expect(basal.map(\.value) == [1.0, 2.0, 1.0, 2.0, 3.0])
+        #expect(basal[2].startDate == temp.startDate)
+        #expect(basal[2].endDate == temp.endDate)
+
+        let glucose = (0..<72).map { index in
+            GlucoseSample(date: transition.addingTimeInterval(Double(index) * 300), milligramsPerDeciliter: 120)
+        }
+        let samples = try ReplayEngine().computeDeviations(
+            glucose: glucose, doses: [temp], carbs: [], profile: profile,
+            analysisStart: transition, analysisEnd: glucose.last!.date
+        )
+        #expect(samples.count == 71)
+        let largestInsulinEffect = samples.map { abs($0.insulinEffect) }.max() ?? 0
+        let largestDeviation = samples.map { abs($0.deviation) }.max() ?? 0
+        #expect(largestInsulinEffect < 1e-9)
+        #expect(largestDeviation < 1e-9)
+    }
 }

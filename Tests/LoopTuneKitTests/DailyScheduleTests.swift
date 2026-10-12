@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import LoopAlgorithm
 @testable import LoopTuneKit
 
 @Suite("DailySchedule")
@@ -115,8 +116,8 @@ struct DailyScheduleTests {
 
         let timeline = schedule.expand(from: dayStart, to: dayEnd, timeZone: tz)
 
-        // 02:00 does not exist on this date. Foundation resolves the scheduled
-        // boundary to 03:00, so the 1.0 block starts at the first valid instant.
+        // 02:00 does not exist on this date. The 1.0 block starts at the
+        // transition, the first valid instant, which reads as 03:00 local.
         let postJumpSegment = timeline.first { $0.value == 1.0 }
         #expect(postJumpSegment != nil)
         #expect(DailySchedule<Double>.secondsSinceMidnight(of: postJumpSegment!.startDate, in: tz) == 3 * 3600)
@@ -133,6 +134,151 @@ struct DailyScheduleTests {
         #expect(noonSeconds == 12 * 3600)
         // And the whole day is 23 hours (spring-forward), tiled contiguously.
         #expect(timeline.last!.endDate.timeIntervalSince(timeline.first!.startDate) == 23 * 3600)
+    }
+
+    // MARK: - Daylight-saving agreement
+
+    private static func utc(_ string: String) -> Date {
+        ISO8601DateFormatter().date(from: string)!
+    }
+
+    private static func schedule(_ entries: [(String, Double)]) throws -> DailySchedule<Double> {
+        try DailySchedule(entries: entries.map { DailySchedule.Entry(time: $0.0, value: $0.1)! })
+    }
+
+    /// Expands `[start, end]` and checks the timeline is clipped, contiguous and
+    /// merged, and that it gives the direct-lookup value every minute and one
+    /// second either side of every cut and offset transition.
+    private func expectExpansionMatchesLookup(
+        _ schedule: DailySchedule<Double>,
+        timeZone: TimeZone,
+        from start: Date,
+        to end: Date,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) -> [AbsoluteScheduleValue<Double>] {
+        let timeline = schedule.expand(from: start, to: end, timeZone: timeZone)
+        #expect(timeline.first?.startDate == start, sourceLocation: sourceLocation)
+        #expect(timeline.last?.endDate == end, sourceLocation: sourceLocation)
+        for segment in timeline {
+            #expect(segment.startDate < segment.endDate, sourceLocation: sourceLocation)
+        }
+        for index in timeline.indices.dropFirst() {
+            #expect(timeline[index].startDate == timeline[index - 1].endDate, sourceLocation: sourceLocation)
+            #expect(timeline[index].value != timeline[index - 1].value, sourceLocation: sourceLocation)
+        }
+
+        var probes = Array(stride(from: start, to: end, by: 60))
+        var transition = timeZone.nextDaylightSavingTimeTransition(after: start)
+        while let instant = transition, instant < end {
+            probes.append(instant)
+            transition = timeZone.nextDaylightSavingTimeTransition(after: instant)
+        }
+        for segment in timeline {
+            probes += [-1, 0, 1].map { segment.startDate.addingTimeInterval($0) }
+        }
+        for probe in probes where probe >= start && probe < end {
+            let expanded = timeline.first { $0.startDate <= probe && probe < $0.endDate }?.value
+            let direct = schedule.value(at: probe, timeZone: timeZone)
+            #expect(
+                expanded == direct,
+                "\(ISO8601DateFormatter().string(from: probe)): expanded \(String(describing: expanded)), direct \(direct)",
+                sourceLocation: sourceLocation
+            )
+        }
+        return timeline
+    }
+
+    @Test("fall-back expansion follows both passes through the repeated hour")
+    func expansionFallBackRepeatedHour() throws {
+        // America/New_York 2026-11-01: 02:00 EDT (06:00Z) returns to 01:00 EST.
+        let schedule = try Self.schedule([("00:00", 1), ("01:30", 2), ("02:00", 3)])
+        let tz = TimeZone(identifier: "America/New_York")!
+        let start = Self.utc("2026-11-01T04:00:00Z")
+        let end = Self.utc("2026-11-01T09:00:00Z")
+
+        let timeline = expectExpansionMatchesLookup(schedule, timeZone: tz, from: start, to: end)
+
+        // The second local 01:15 is still in the midnight block.
+        let secondQuarterPastOne = Self.utc("2026-11-01T06:15:00Z")
+        #expect(schedule.value(at: secondQuarterPastOne, timeZone: tz) == 1)
+        #expect(timeline.first { $0.startDate <= secondQuarterPastOne && secondQuarterPastOne < $0.endDate }?.value == 1)
+
+        // 01:30 occurs twice and the clock transition is a cut.
+        #expect(timeline.map(\.startDate) == [
+            start,
+            Self.utc("2026-11-01T05:30:00Z"),  // 01:30 EDT
+            Self.utc("2026-11-01T06:00:00Z"),  // 02:00 EDT becomes 01:00 EST
+            Self.utc("2026-11-01T06:30:00Z"),  // 01:30 EST
+            Self.utc("2026-11-01T07:00:00Z"),  // 02:00 EST
+        ])
+        #expect(timeline.map(\.value) == [1, 2, 1, 2, 3])
+    }
+
+    @Test("spring-forward expansion starts a skipped block at the clock transition")
+    func expansionSpringForwardSkippedBoundary() throws {
+        // America/New_York 2026-03-08: 02:00 EST (07:00Z) jumps to 03:00 EDT, so
+        // 02:30 never occurs and 03:00 local is the transition instant.
+        let schedule = try Self.schedule([("00:00", 1), ("01:30", 2), ("02:30", 3), ("04:00", 4)])
+        let tz = TimeZone(identifier: "America/New_York")!
+        let start = Self.utc("2026-03-08T05:00:00Z")
+        let end = Self.utc("2026-03-08T10:00:00Z")
+
+        let timeline = expectExpansionMatchesLookup(schedule, timeZone: tz, from: start, to: end)
+
+        #expect(timeline.map(\.startDate) == [
+            start,
+            Self.utc("2026-03-08T06:30:00Z"),  // 01:30 EST
+            Self.utc("2026-03-08T07:00:00Z"),  // 02:00 EST becomes 03:00 EDT
+            Self.utc("2026-03-08T08:00:00Z"),  // 04:00 EDT
+        ])
+        #expect(timeline.map(\.value) == [1, 2, 3, 4])
+    }
+
+    @Test("expansion agrees with lookup through Lord Howe's 30-minute shifts")
+    func expansionHalfHourShift() throws {
+        let tz = TimeZone(identifier: "Australia/Lord_Howe")!
+
+        // 2026-04-05: 02:00 +11:00 (15:00Z) returns to 01:30 +10:30.
+        let fallBack = try Self.schedule([("00:00", 1), ("01:45", 2), ("02:00", 3)])
+        let fallBackTimeline = expectExpansionMatchesLookup(
+            fallBack, timeZone: tz,
+            from: Self.utc("2026-04-04T13:00:00Z"), to: Self.utc("2026-04-04T17:00:00Z")
+        )
+        #expect(fallBackTimeline.map(\.startDate) == [
+            Self.utc("2026-04-04T13:00:00Z"),  // local midnight
+            Self.utc("2026-04-04T14:45:00Z"),  // first 01:45
+            Self.utc("2026-04-04T15:00:00Z"),  // 02:00 becomes 01:30
+            Self.utc("2026-04-04T15:15:00Z"),  // second 01:45
+            Self.utc("2026-04-04T15:30:00Z"),  // 02:00
+        ])
+        #expect(fallBackTimeline.map(\.value) == [1, 2, 1, 2, 3])
+
+        // 2026-10-04: 02:00 +10:30 (15:30Z) jumps to 02:30 +11:00.
+        let springForward = try Self.schedule([("00:00", 1), ("02:15", 2), ("03:00", 3)])
+        let springTimeline = expectExpansionMatchesLookup(
+            springForward, timeZone: tz,
+            from: Self.utc("2026-10-03T13:30:00Z"), to: Self.utc("2026-10-03T17:00:00Z")
+        )
+        #expect(springTimeline.map(\.startDate) == [
+            Self.utc("2026-10-03T13:30:00Z"),  // local midnight
+            Self.utc("2026-10-03T15:30:00Z"),  // 02:00 becomes 02:30
+            Self.utc("2026-10-03T16:00:00Z"),  // 03:00
+        ])
+        #expect(springTimeline.map(\.value) == [1, 2, 3])
+    }
+
+    @Test("expansion clips to a window that starts and ends inside DST blocks")
+    func expansionClipsAcrossTransition() throws {
+        let schedule = try Self.schedule([("00:00", 1), ("01:30", 2), ("02:00", 3)])
+        let tz = TimeZone(identifier: "America/New_York")!
+        // Starts in the first 01:30 block and ends inside the second.
+        let start = Self.utc("2026-11-01T05:40:00Z")
+        let end = Self.utc("2026-11-01T06:45:00Z")
+
+        let timeline = expectExpansionMatchesLookup(schedule, timeZone: tz, from: start, to: end)
+
+        #expect(timeline.map(\.value) == [2, 1, 2])
+        #expect(schedule.expand(from: start, to: start, timeZone: tz).isEmpty)
     }
 
     @Test("value(at:) matches expansion under a non-UTC zone")
