@@ -20,9 +20,16 @@ extension NSEntry: Codable {
 
     /// Encodes back to Nightscout wire format (epoch-ms `date`), so cached
     /// documents round-trip through the same lenient decoder as live fetches.
+    /// A date outside `NightscoutDate.epochMillisecondRange` throws.
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(Int((date.timeIntervalSince1970 * 1000).rounded()), forKey: .date)
+        guard let millis = NightscoutDate.epochMilliseconds(date) else {
+            throw EncodingError.invalidValue(date, EncodingError.Context(
+                codingPath: container.codingPath + [CodingKeys.date],
+                debugDescription: "entry date is outside the supported range"
+            ))
+        }
+        try container.encode(millis, forKey: .date)
         try container.encode(sgv, forKey: .sgv)
         try container.encodeIfPresent(type, forKey: .type)
         try container.encodeIfPresent(device, forKey: .device)
@@ -30,9 +37,16 @@ extension NSEntry: Codable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        // Prefer epoch-ms `date`; fall back to ISO `dateString`.
-        if let millis = container.lenientDouble(forKey: .date),
-           let parsed = NightscoutDate.fromEpochMilliseconds(millis) {
+        // Prefer epoch-ms `date`; fall back to ISO `dateString` only when
+        // `date` is not numeric. A numeric `date` out of range is corrupt.
+        if let millis = container.lenientDouble(forKey: .date) {
+            guard let parsed = NightscoutDate.fromEpochMilliseconds(millis) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .date,
+                    in: container,
+                    debugDescription: "entry date is non-finite or outside the supported range"
+                )
+            }
             date = parsed
         } else if let iso = container.lenientString(forKey: .dateString), let parsed = NightscoutDate.parseISO(iso) {
             date = parsed
@@ -111,8 +125,15 @@ extension NSTreatment: Codable {
 
     /// Encodes back to Nightscout wire format (ISO `created_at`), so cached
     /// documents round-trip through the same lenient decoder as live fetches.
+    /// A date outside `NightscoutDate.epochMillisecondRange` throws.
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        guard NightscoutDate.epochMilliseconds(createdAt) != nil else {
+            throw EncodingError.invalidValue(createdAt, EncodingError.Context(
+                codingPath: container.codingPath + [CodingKeys.created_at],
+                debugDescription: "treatment created_at is outside the supported range"
+            ))
+        }
         try container.encodeIfPresent(identifier, forKey: .identifier)
         try container.encodeIfPresent(syncIdentifier, forKey: .syncIdentifier)
         try container.encodeIfPresent(eventType, forKey: .eventType)
@@ -313,7 +334,14 @@ extension NSProfileDocument: Decodable {
             }
             startDate = parsed
         } else if let millis = container.lenientDouble(forKey: .startDate) {
-            startDate = NightscoutDate.fromEpochMilliseconds(millis)
+            guard let parsed = NightscoutDate.fromEpochMilliseconds(millis) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .startDate,
+                    in: container,
+                    debugDescription: "profile startDate is non-finite or outside the supported range"
+                )
+            }
+            startDate = parsed
         } else {
             startDate = nil
         }
