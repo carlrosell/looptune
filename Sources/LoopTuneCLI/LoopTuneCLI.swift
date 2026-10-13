@@ -34,7 +34,33 @@ struct ConnectionOptions: ParsableArguments {
         if let effectiveToken { credentials = .token(effectiveToken) }
         else if let effectiveSecret { credentials = .apiSecret(effectiveSecret) }
         else { credentials = .none }
-        return try NightscoutClient(rawURLString: url, credentials: credentials)
+        return try reportingFailures {
+            try NightscoutClient(rawURLString: url, credentials: credentials)
+        }
+    }
+}
+
+/// A failure reported with its controlled message. ArgumentParser prints an
+/// error's own description, and a Foundation network error's description
+/// includes the failing request URL with its access token.
+struct ReportedFailure: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
+func reportingFailures<T>(_ body: () throws -> T) throws -> T {
+    do {
+        return try body()
+    } catch {
+        throw ReportedFailure(message: ErrorMessage.describe(error))
+    }
+}
+
+func reportingFailures<T>(_ body: () async throws -> T) async throws -> T {
+    do {
+        return try await body()
+    } catch {
+        throw ReportedFailure(message: ErrorMessage.describe(error))
     }
 }
 
@@ -75,7 +101,9 @@ struct Tune: AsyncParsableCommand {
         }
         let config = TuningConfiguration(days: days, insulinType: insulinType)
         let cache: DayCache? = noCache ? nil : DayCache()
-        let recommendation = try await TuningPipeline().run(client: client, configuration: config, endingAt: Date(), cache: cache)
+        let recommendation = try await reportingFailures {
+            try await TuningPipeline().run(client: client, configuration: config, endingAt: Date(), cache: cache)
+        }
 
         if json {
             print(try RecommendationJSON.encode(recommendation, displayUnit: displayUnit, basalIncrement: basalIncrement))
@@ -113,12 +141,14 @@ struct Fetch: AsyncParsableCommand {
         let client = try connection.makeClient()
         let authorized = await client.checkAuthorized()
         FileHandle.standardError.write(Data("authorized: \(authorized)\n".utf8))
-        let inputs = try await TuningPipeline().fetchInputs(
-            client: client,
-            configuration: TuningConfiguration(days: days),
-            endingAt: Date(),
-            cache: noCache ? nil : DayCache()
-        )
+        let inputs = try await reportingFailures {
+            try await TuningPipeline().fetchInputs(
+                client: client,
+                configuration: TuningConfiguration(days: days),
+                endingAt: Date(),
+                cache: noCache ? nil : DayCache()
+            )
+        }
         print("glucose samples: \(inputs.glucose.count)")
         print("doses: \(inputs.doses.count)")
         print("carbs: \(inputs.carbs.count)")

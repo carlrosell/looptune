@@ -155,35 +155,9 @@ final class TuningViewModel {
         }
     }
 
+    /// The failure text the app shows. It never includes text carried by the
+    /// error, such as a failing request URL with its access token.
     static func describe(_ error: Error) -> String {
-        switch error {
-        case NightscoutError.unauthorized:
-            return "Not authorized. Check your access token."
-        case NightscoutError.invalidURL:
-            return "That doesn't look like a valid Nightscout URL."
-        case let NightscoutError.httpStatus(code):
-            return "Nightscout returned HTTP \(code)."
-        case let NightscoutError.partialDecoding(path, skipped):
-            return "Nightscout returned \(skipped) malformed record\(skipped == 1 ? "" : "s") from \(path). No recommendation was made."
-        case TuningPipeline.PipelineError.noProfile:
-            return "No profile found on this Nightscout site."
-        case TuningPipeline.PipelineError.noGlucose:
-            return "Not enough glucose data in the selected window."
-        case let TuningPipeline.PipelineError.insufficientUsableData(minimum, actual):
-            // Evidence is counted in five-minute intervals of CGM time.
-            return "Only \(actual * 5) minutes of usable data remained; at least \(minimum * 5) are required. No recommendation was made."
-        case TuningPipeline.PipelineError.invalidAnalysisWindow:
-            return "The selected analysis window is invalid."
-        case let TuningPipeline.PipelineError.invalidInput(field):
-            return "The \(field) data is invalid, so no recommendation was made."
-        case let TuningPipeline.PipelineError.incompleteRecords(collection, start, end):
-            return "Nightscout has more \(collection) between \(start.formatted()) and \(end.formatted()) than could be retrieved. No recommendation was made."
-        case let TuningPipeline.PipelineError.incompleteProfileHistory(requiredFrom):
-            return "Nightscout's profile history does not show the settings active at \(requiredFrom.formatted()). No recommendation was made."
-        case let error as TuningPipeline.PipelineError:
-            return error.errorDescription ?? "\(error)"
-        default:
-            return "\(error)"
-        }
+        ErrorMessage.describe(error)
     }
 }
