@@ -82,17 +82,18 @@ struct ResultsView: View {
                 HStack(spacing: 16) {
                     ParameterCard(
                         rec: recommendation.sensitivity,
-                        displayUnit: displayUnit,
-                        isDailyAverage: recommendation.sensitivitySchedule.count > 1
+                        schedule: recommendation.sensitivitySchedule,
+                        displayUnit: displayUnit
                     )
                     ParameterCard(
                         rec: recommendation.carbRatio,
-                        displayUnit: displayUnit,
-                        isDailyAverage: recommendation.carbRatioSchedule.count > 1
+                        schedule: recommendation.carbRatioSchedule,
+                        displayUnit: displayUnit
                     )
                 }
 
-                if recommendation.sensitivitySchedule.count > 1 {
+                if recommendation.sensitivitySchedule.count > 1
+                    || recommendation.insufficientData.sensitivityBlocks > 0 {
                     ParameterScheduleCard(
                         title: "Insulin sensitivity by time of day",
                         entries: recommendation.sensitivitySchedule,
@@ -101,7 +102,8 @@ struct ResultsView: View {
                     )
                 }
 
-                if recommendation.carbRatioSchedule.count > 1 {
+                if recommendation.carbRatioSchedule.count > 1
+                    || recommendation.insufficientData.carbRatioBlocks > 0 {
                     ParameterScheduleCard(
                         title: "Carb ratio by time of day",
                         entries: recommendation.carbRatioSchedule,
@@ -120,7 +122,10 @@ struct ResultsView: View {
 
                 LoopScheduleCard(recommendation: recommendation)
 
-                basalTable
+                VStack(alignment: .leading, spacing: 8) {
+                    basalTable
+                    InsufficientDataNotes(notes: InsufficientDataNotes.notes(for: recommendation.basalHours))
+                }
             }
             .padding(24)
         }
@@ -133,9 +138,21 @@ struct ResultsView: View {
             Text("Suggested changes")
                 .font(.title2.weight(.semibold))
             HStack(spacing: 8) {
-                MetricBadge(label: "Basal", percent: basalPercentChange)
-                MetricBadge(label: "ISF", percent: recommendation.sensitivity.percentChange)
-                MetricBadge(label: "Carb ratio", percent: recommendation.carbRatio.percentChange)
+                MetricBadge(
+                    label: "Basal",
+                    percent: basalPercentChange,
+                    insufficientData: recommendation.insufficientData.allBasalHours
+                )
+                MetricBadge(
+                    label: "ISF",
+                    percent: recommendation.sensitivity.percentChange,
+                    insufficientData: recommendation.insufficientData.allSensitivityBlocks
+                )
+                MetricBadge(
+                    label: "Carb ratio",
+                    percent: recommendation.carbRatio.percentChange,
+                    insufficientData: recommendation.insufficientData.allCarbRatioBlocks
+                )
             }
             Text("vs your pump settings · \(recommendation.daysAnalyzed) day\(recommendation.daysAnalyzed == 1 ? "" : "s"), \(TuningReport.evidenceTime(recommendation.totalSamples)) of data")
                 .font(.caption)
@@ -148,6 +165,15 @@ struct ResultsView: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            }
+            if !recommendation.insufficientData.isEmpty {
+                Label {
+                    Text("Insufficient data: \(recommendation.insufficientData.description). LoopTune makes no recommendation for these. Each shows your pump value and, where possible, a value interpolated from the nearest blocks with enough data. You choose which to enter.")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+                .font(.caption)
             }
             if recommendation.excludedOverrideSamples > 0 {
                 Label(
@@ -174,7 +200,7 @@ struct ResultsView: View {
                 recommendation.pumpDailyBasal,
                 recommendation.tunedDailyBasal,
                 recommendation.roundedDailyBasal()
-            )
+            ) + (recommendation.insufficientData.basalHours > 0 ? " · pump rate used for hours with insufficient data" : "")
         ) {
             Table(recommendation.basalHours, selection: $basalSelection) {
                 TableColumn("Hour") { hour in
@@ -190,22 +216,34 @@ struct ResultsView: View {
                 .width(min: 64, ideal: 76)
 
                 TableColumn("Unrounded") { hour in
-                    Text(String(format: "%.3f", hour.recommendedRate))
+                    Text(hour.insufficientEvidence == nil ? String(format: "%.3f", hour.recommendedRate) : "—")
                         .foregroundStyle(.secondary)
                         .numericCell()
                 }
                 .width(min: 72, ideal: 84)
 
                 TableColumn("Enter into Loop") { hour in
-                    Text(String(format: "%.2f", hour.roundedRate()))
-                        .fontWeight(.semibold)
-                        .foregroundStyle(color(for: hour.changeTier))
+                    if hour.insufficientEvidence != nil {
+                        ChoiceText(
+                            pump: BasalHourRecommendation.formattedPumpRate(hour.pumpRate),
+                            interpolated: hour.interpolatedRoundedRate().map { String(format: "%.2f interpolated", $0) },
+                            interpolatedColor: hour.interpolatedChangeTier()?.color ?? .primary,
+                            interpolatedStatus: hour.interpolatedGuardrailStatus() ?? .ok
+                        )
                         .numericCell()
+                    } else {
+                        Text(String(format: "%.2f", hour.roundedRate()))
+                            .fontWeight(.semibold)
+                            .foregroundStyle(hour.changeTier.color)
+                            .numericCell()
+                    }
                 }
-                .width(min: 100, ideal: 112)
+                .width(min: 100, ideal: 170)
 
                 TableColumn("Data") { hour in
-                    if hour.untuned {
+                    if hour.insufficientEvidence != nil {
+                        Text("Insufficient data").foregroundStyle(.orange)
+                    } else if hour.untuned {
                         Text("no data").foregroundStyle(.tertiary)
                     } else if hour.daysMissing > 0 {
                         Text("\(hour.daysMissing)d missing").foregroundStyle(.tertiary)
@@ -218,13 +256,6 @@ struct ResultsView: View {
         }
     }
 
-    private func color(for tier: ChangeTier) -> Color {
-        switch tier {
-        case .minimal: return .primary
-        case .notable: return .yellow
-        case .large: return .orange
-        }
-    }
 }
 
 /// A tinted capsule showing one parameter's direction and size of change.
@@ -233,12 +264,15 @@ struct ResultsView: View {
 struct MetricBadge: View {
     let label: String
     let percent: Double
+    /// No block had evidence, so there is no change to report (ADR 0011).
+    var insufficientData = false
 
     private var tier: ChangeTier {
         ChangeTier.classify(pump: 100, tuned: 100 + percent)
     }
 
     private var symbolName: String {
+        if insufficientData { return "exclamationmark.triangle.fill" }
         if abs(percent) < 0.5 { return "equal" }
         return percent > 0 ? "arrow.up.right" : "arrow.down.right"
     }
@@ -257,51 +291,44 @@ struct MetricBadge: View {
                 .font(.caption2.weight(.bold))
             Text(label)
                 .font(.callout)
-            Text(formattedSignedPercent(percent))
+            Text(insufficientData ? "insufficient data" : formattedSignedPercent(percent))
                 .font(.callout.weight(.semibold))
                 .monospacedDigit()
                 .contentTransition(.numericText())
         }
-        .foregroundStyle(tier == .minimal ? AnyShapeStyle(.secondary) : AnyShapeStyle(tint))
+        .foregroundStyle(foreground)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .background(tint.opacity(0.14), in: Capsule())
+        .background(background.opacity(0.14), in: Capsule())
+    }
+
+    private var foreground: AnyShapeStyle {
+        if insufficientData { return AnyShapeStyle(Color.orange) }
+        return tier == .minimal ? AnyShapeStyle(.secondary) : AnyShapeStyle(tint)
+    }
+
+    private var background: Color {
+        insufficientData ? .orange : tint
     }
 }
 
 struct ParameterCard: View {
     let rec: ParameterRecommendation
+    let schedule: [ParameterScheduleRecommendation]
     let displayUnit: GlucoseUnit
-    var isDailyAverage = false
+
+    private var insufficientBlocks: Int {
+        schedule.filter { $0.insufficientEvidence != nil }.count
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(rec.name)
                 .font(.subheadline.weight(.semibold))
-            if isDailyAverage {
-                Text("Daily average")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(rec.formatted(rec.recommendedValue(in: displayUnit), in: displayUnit))
-                    .font(.system(size: 30, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-                Text(rec.unitLabel(in: displayUnit))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Text("was \(rec.formatted(rec.pumpValue(in: displayUnit), in: displayUnit))  ·  \(formattedSignedPercent(rec.percentChange))")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if rec.guardrailStatus != .ok {
-                Label(
-                    rec.guardrailStatus == .atLimit ? "Clamped to Loop's limit" : "Outside Loop's recommended range",
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-                .font(.caption2)
-                .foregroundStyle(.orange)
+            if insufficientBlocks > 0, insufficientBlocks == schedule.count {
+                insufficientContent
+            } else {
+                recommendationContent
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -311,6 +338,52 @@ struct ParameterCard: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(.quaternary, lineWidth: 1)
         )
+    }
+
+    /// No block has evidence, so there is no recommendation to show.
+    @ViewBuilder private var insufficientContent: some View {
+        Label("Insufficient data", systemImage: "exclamationmark.triangle.fill")
+            .font(.title3.weight(.semibold))
+            .foregroundStyle(.orange)
+        Text("pump \(rec.formatted(rec.pumpValue(in: displayUnit), in: displayUnit)) \(rec.unitLabel(in: displayUnit))  ·  see the schedule below")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder private var recommendationContent: some View {
+        if schedule.count > 1 {
+            Text("Daily average")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(rec.formatted(rec.recommendedValue(in: displayUnit), in: displayUnit))
+                .font(.system(size: 30, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .contentTransition(.numericText())
+            Text(rec.unitLabel(in: displayUnit))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        Text("was \(rec.formatted(rec.pumpValue(in: displayUnit), in: displayUnit))  ·  \(formattedSignedPercent(rec.percentChange))")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        if rec.guardrailStatus != .ok {
+            Label(
+                rec.guardrailStatus == .atLimit ? "Clamped to Loop's limit" : "Outside Loop's recommended range",
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .font(.caption2)
+            .foregroundStyle(.orange)
+        }
+        if insufficientBlocks > 0 {
+            Label(
+                "\(insufficientBlocks) of \(schedule.count) blocks: insufficient data, pump value used",
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .font(.caption2)
+            .foregroundStyle(.orange)
+        }
     }
 }
 

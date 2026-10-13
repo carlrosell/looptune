@@ -54,6 +54,16 @@ stops if local time is not UTC. Output is deterministic: repeated runs are
 byte-identical. A difference from the committed fixtures means the inputs or
 oracle changed. Investigate it instead of replacing the expected values.
 
+## LoopTune departure: untuned basal hours
+
+LoopTune does not smooth basal hours without evidence
+([ADR 0011](../../../../adr/0011-insufficient-evidence-blocks.md)). It keeps
+their current rate and offers an interpolated alternative only in the final
+recommendation. `Oref0ParityTests` runs `BasalTuner` in its internal
+`oref0Smoothing` mode to compare every hour with these fixtures, and checks the
+default mode separately: hours oref0 tuned match exactly, and the other hours
+keep their input rate. The expected values are unchanged.
+
 ## Fixture format
 
 Each `<scenario>.json` contains:

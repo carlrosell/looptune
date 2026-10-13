@@ -46,3 +46,4 @@ retroactive approvals for them.
 | [0008](0008-carb-retention-bound.md) | Bound carb absorption time and derive replay retention from it | Accepted |
 | [0009](0009-url-user-information.md) | Remove URL user information from site addresses | Accepted |
 | [0010](0010-controlled-error-messages.md) | Show errors only through controlled messages | Accepted |
+| [0011](0011-insufficient-evidence-blocks.md) | Show the pump value and an interpolated alternative for blocks without evidence | Proposed |

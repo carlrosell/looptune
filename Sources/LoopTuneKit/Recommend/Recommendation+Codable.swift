@@ -68,10 +68,46 @@ extension ParameterRecommendation: Codable {
     }
 }
 
+extension InsufficientEvidence: Codable where Alternative: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case interpolated, sources
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let sources = try container.decode([Int].self, forKey: .sources)
+        // Sources are shown as times of day, so each must name one.
+        guard sources.count <= 2, sources.allSatisfy({ (0..<86_400).contains($0) }) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .sources,
+                in: container,
+                debugDescription: "Interpolation sources must be at most two offsets inside the day."
+            )
+        }
+        let interpolated = try container.decodeIfPresent(Alternative.self, forKey: .interpolated)
+        // The note names the sources, so an alternative needs at least one.
+        guard interpolated == nil || !sources.isEmpty else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .sources,
+                in: container,
+                debugDescription: "An interpolated value needs the blocks it came from."
+            )
+        }
+        self.init(interpolated: interpolated, sources: sources)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(interpolated, forKey: .interpolated)
+        try container.encode(sources, forKey: .sources)
+    }
+}
+
 extension ParameterScheduleRecommendation: Codable {
     private enum CodingKeys: String, CodingKey {
         case secondsSinceMidnight, startMinutes
         case parameter, untuned, evidenceCount, daysMissing
+        case insufficientEvidence
     }
 
     public init(from decoder: Decoder) throws {
@@ -102,6 +138,12 @@ extension ParameterScheduleRecommendation: Codable {
         self.untuned = try container.decode(Bool.self, forKey: .untuned)
         self.evidenceCount = try container.decode(Int.self, forKey: .evidenceCount)
         self.daysMissing = try container.decode(Int.self, forKey: .daysMissing)
+        // Absent in runs saved before ADR 0011.
+        self.insufficientEvidence = try container.decodeIfPresent(
+            InsufficientEvidence<ParameterRecommendation>.self,
+            forKey: .insufficientEvidence
+        )
+        self.untuned = untuned || insufficientEvidence != nil
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -112,13 +154,14 @@ extension ParameterScheduleRecommendation: Codable {
         try container.encode(untuned, forKey: .untuned)
         try container.encode(evidenceCount, forKey: .evidenceCount)
         try container.encode(daysMissing, forKey: .daysMissing)
+        try container.encodeIfPresent(insufficientEvidence, forKey: .insufficientEvidence)
     }
 }
 
 extension BasalHourRecommendation: Codable {
     private enum CodingKeys: String, CodingKey {
         case hour, pumpRate, recommendedRate, changeTier, guardrailStatus, untuned, daysMissing, sampleCount
-        case minimumRate, maximumRate
+        case minimumRate, maximumRate, insufficientEvidence
     }
 
     public init(from decoder: Decoder) throws {
@@ -146,6 +189,12 @@ extension BasalHourRecommendation: Codable {
         let limits = Self.limits(pumpRate: pumpRate, caps: TuningCaps())
         self.minimumRate = try container.decodeIfPresent(Double.self, forKey: .minimumRate) ?? limits.minimum
         self.maximumRate = try container.decodeIfPresent(Double.self, forKey: .maximumRate) ?? limits.maximum
+        // Absent in runs saved before ADR 0011.
+        self.insufficientEvidence = try container.decodeIfPresent(
+            InsufficientEvidence<Double>.self,
+            forKey: .insufficientEvidence
+        )
+        self.untuned = untuned || insufficientEvidence != nil
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -161,6 +210,7 @@ extension BasalHourRecommendation: Codable {
         try container.encode(sampleCount, forKey: .sampleCount)
         try container.encode(minimumRate, forKey: .minimumRate)
         try container.encode(maximumRate, forKey: .maximumRate)
+        try container.encodeIfPresent(insufficientEvidence, forKey: .insufficientEvidence)
     }
 }
 

@@ -2,19 +2,40 @@ import Foundation
 
 /// Tunes the 24-hour basal schedule from basal-categorized deviations, following
 /// oref0's per-hour adjustment (deviations at hour h adjust basals at h−3…h−1).
+///
+/// An hour that no basal evidence informs keeps its current rate within the
+/// pump-relative caps, as ISF and carb-ratio blocks do. oref0 instead smooths
+/// such hours toward their tuned neighbours; LoopTune offers an interpolated
+/// alternative only when presenting the final recommendation (ADR 0011).
 public struct BasalTuner: Sendable {
+    /// What happens to hours without basal evidence.
+    enum UntunedHours: Sendable {
+        /// Keep the current rate within the caps. Used for every recommendation.
+        case keepCurrent
+        /// oref0's `0.8 × own + 0.1 × previous + 0.1 × next` smoothing, kept
+        /// only so the parity fixtures can pin oref0's complete output.
+        case oref0Smoothing
+    }
+
     let timeZone: TimeZone
     let caps: TuningCaps
+    let untunedHours: UntunedHours
 
     public init(timeZone: TimeZone, caps: TuningCaps = TuningCaps()) {
+        self.init(timeZone: timeZone, caps: caps, untunedHours: .keepCurrent)
+    }
+
+    init(timeZone: TimeZone, caps: TuningCaps = TuningCaps(), untunedHours: UntunedHours) {
         self.timeZone = timeZone
         self.caps = caps
+        self.untunedHours = untunedHours
     }
 
     public struct Result: Sendable, Equatable {
         /// Tuned rate per hour (index 0…23).
         public var hourlyRates: [Double]
-        /// Whether each hour was left untuned (no data / smoothed from neighbors).
+        /// Whether each hour had no basal evidence. With oref0 smoothing, whether
+        /// each hour was left unadjusted and smoothed, as oref0 reports it.
         public var untuned: [Bool]
         /// Basal-categorized evidence informing each hour, in five-minute
         /// intervals (data coverage).
@@ -89,16 +110,24 @@ public struct BasalTuner: Sendable {
 
         capRates(&rates, against: pumpHourly)
 
-        // Smooth untouched hours toward the nearest tuned neighbors.
-        smoothUntouched(&rates, touched: touched, original: currentHourly)
-        // `original` may be a historical profile that lies outside the current
-        // pump-relative caps. Smoothing reads that array, so cap again afterward
-        // to preserve the safety invariant across settings changes.
-        capRates(&rates, against: pumpHourly)
+        let untuned: [Bool]
+        switch untunedHours {
+        case .keepCurrent:
+            // An hour with evidence that called for no change is still tuned:
+            // its evidence supports the current rate.
+            untuned = evidenceDurationByHour.map { $0 == 0 }
+        case .oref0Smoothing:
+            smoothUntouched(&rates, touched: touched, original: currentHourly)
+            // `original` may be a historical profile that lies outside the
+            // current pump-relative caps. Smoothing reads that array, so cap
+            // again afterward to preserve the safety invariant.
+            capRates(&rates, against: pumpHourly)
+            untuned = touched.map { !$0 }
+        }
 
         return Result(
             hourlyRates: rates.map(round3),
-            untuned: touched.map { !$0 },
+            untuned: untuned,
             sampleCounts: evidenceDurationByHour.map(DeviationSample.fiveMinuteIntervals(in:))
         )
     }
