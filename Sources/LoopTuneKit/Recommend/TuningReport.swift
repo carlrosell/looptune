@@ -99,11 +99,12 @@ public enum TuningReport {
     }
 
     /// Evidence counted in five-minute intervals, shown as CGM time: "35 min",
-    /// "3 h" or "3 h 5 min".
+    /// "3 h" or "3 h 5 min". Twelve intervals make an hour; dividing before
+    /// multiplying keeps every `Int` count in range.
     public static func evidenceTime(_ fiveMinuteIntervals: Int) -> String {
-        let minutes = max(0, fiveMinuteIntervals) * 5
-        let hours = minutes / 60
-        let remainder = minutes % 60
+        let intervals = max(0, fiveMinuteIntervals)
+        let hours = intervals / 12
+        let remainder = intervals % 12 * 5
         if hours == 0 { return "\(remainder) min" }
         return remainder == 0 ? "\(hours) h" : "\(hours) h \(remainder) min"
     }

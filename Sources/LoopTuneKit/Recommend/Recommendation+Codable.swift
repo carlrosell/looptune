@@ -8,13 +8,13 @@ extension ChangeTier: Codable {}
 extension LoopGuardrails.Status: Codable {}
 extension DeviationCategory: Codable {}
 
-/// The largest five-minute interval count `TuningReport.evidenceTime` can
-/// convert to minutes without overflowing.
-private let maximumEvidenceIntervals = Int.max / 5
+/// The largest five-minute interval count whose duration in minutes fits in
+/// an `Int`. No real run holds more, so a saved count above it is corrupt.
+let maximumEvidenceIntervals = Int.max / 5
 
-private extension KeyedDecodingContainer {
+extension KeyedDecodingContainer {
     /// Decodes an evidence count in five-minute intervals, rejecting a value
-    /// too large to display.
+    /// too large to be real.
     func decodeEvidenceIntervals(forKey key: Key) throws -> Int {
         try validEvidenceIntervals(decode(Int.self, forKey: key), forKey: key)
     }
@@ -28,7 +28,7 @@ private extension KeyedDecodingContainer {
             throw DecodingError.dataCorruptedError(
                 forKey: key,
                 in: self,
-                debugDescription: "Evidence count \(intervals) is too large to display."
+                debugDescription: "Evidence count \(intervals) exceeds \(maximumEvidenceIntervals) five-minute intervals."
             )
         }
         return intervals
