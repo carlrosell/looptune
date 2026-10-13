@@ -617,3 +617,9 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   Saved runs with out-of-day schedule offsets, invalid basal hours, or
   overflowing evidence counts are skipped instead of crashing the app. The
   audit records the commits and verification.
+- **2026-10-13**: Landed APP-02 (#53) and the #41 test fix (#54) from wave 3
+  of the audit remediation. Results and run history show each saved run's own
+  site, including sites that differ only by port. The fake HTTPS site used by
+  the redirect tests no longer races the redirect delegate, which removes the
+  intermittent SIGTRAP in the test suite; production redirect handling was
+  unchanged. The audit records APP-02's commit and verification.

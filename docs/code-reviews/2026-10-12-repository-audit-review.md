@@ -65,7 +65,7 @@ remediation; workflow adoption has not fixed or closed any finding.
 | CORE-06 | Medium | [Profile changes reinterpret doses from before activation](#core-06-profile-changes-reinterpret-doses-from-before-activation) | Fixed | [#17](https://github.com/carlrosell/looptune/issues/17) |
 | CORE-07 | Medium | [Fixed carb lookback drops meals still active in the model](#core-07-fixed-carb-lookback-drops-meals-still-active-in-the-model) | Fixed | [#18](https://github.com/carlrosell/looptune/issues/18) |
 | APP-01 | Medium | [Run completion persists settings edited after the run started](#app-01-run-completion-persists-settings-edited-after-the-run-started) | Fixed | [#19](https://github.com/carlrosell/looptune/issues/19) |
-| APP-02 | Medium | [Saved results do not identify their source site](#app-02-saved-results-do-not-identify-their-source-site) | Open | [#20](https://github.com/carlrosell/looptune/issues/20) |
+| APP-02 | Medium | [Saved results do not identify their source site](#app-02-saved-results-do-not-identify-their-source-site) | Fixed | [#20](https://github.com/carlrosell/looptune/issues/20) |
 | ARC-01 | Low | [An unused connection form duplicates the live sidebar](#arc-01-an-unused-connection-form-duplicates-the-live-sidebar) | Fixed | [#21](https://github.com/carlrosell/looptune/issues/21) |
 | ARC-02 | Low | [Public recommendation construction can trap on short hourly arrays](#arc-02-public-recommendation-construction-can-trap-on-short-hourly-arrays) | Fixed | [#22](https://github.com/carlrosell/looptune/issues/22) |
 | DOC-01 | Low | [Golden fixtures cannot be regenerated from a clean clone](#doc-01-golden-fixtures-cannot-be-regenerated-from-a-clean-clone) | Fixed | [#23](https://github.com/carlrosell/looptune/issues/23) |
@@ -577,9 +577,25 @@ with controllable completion and isolated stores.
 
 ### APP-02 Saved results do not identify their source site
 
-Severity: medium. Status: open.
+Severity: medium. Status: fixed.
 
 Tracking: [#20](https://github.com/carlrosell/looptune/issues/20).
+
+Fixed 2026-10-13 in [#53](https://github.com/carlrosell/looptune/pull/53),
+commit `17ecdc1` (`17ecdc18257aa2fbc577e9c7479d01d4e7d8edd6`). A saved run
+records its canonical `SiteOrigin` as `siteOrigin`, reparsed on load so a
+hand-edited value cannot add user information, a path, or a query, and still
+writes `siteHost` for older builds. The result header and each history row show
+the selected run's own source, truncated in the middle with the full value in
+the tooltip; a legacy host-only record shows only its validated hostname and
+says its scheme and port were not saved. With the recorded origin ignored, 13
+checks fail across `SavedRunSourceTests` and the view-model tests, including the
+two-port history selection test. A lander render of history rows with two
+localhost ports, a long credential-bearing URL, and a legacy record showed
+distinct ports, a middle-truncated label keeping scheme and port, and no
+credentials. Verified on 2026-10-13 against `main` at 1fd84d4: `swift test`,
+`python3 tools/docs_check.py`, the workflow tool tests, and `swift build -c
+release` passed. The original evidence below is unchanged.
 
 [Sources/LoopTuneKit/Persistence/SavedRun.swift:8](../../Sources/LoopTuneKit/Persistence/SavedRun.swift#L8) stores `siteHost`, but no app
 view displays it. [Sources/LoopTuneApp/SidebarView.swift:95](../../Sources/LoopTuneApp/SidebarView.swift#L95) shows only the date
