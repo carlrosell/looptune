@@ -8,6 +8,33 @@ extension ChangeTier: Codable {}
 extension LoopGuardrails.Status: Codable {}
 extension DeviationCategory: Codable {}
 
+/// The largest five-minute interval count `TuningReport.evidenceTime` can
+/// convert to minutes without overflowing.
+private let maximumEvidenceIntervals = Int.max / 5
+
+private extension KeyedDecodingContainer {
+    /// Decodes an evidence count in five-minute intervals, rejecting a value
+    /// too large to display.
+    func decodeEvidenceIntervals(forKey key: Key) throws -> Int {
+        try validEvidenceIntervals(decode(Int.self, forKey: key), forKey: key)
+    }
+
+    func decodeEvidenceIntervalsIfPresent(forKey key: Key) throws -> Int? {
+        try decodeIfPresent(Int.self, forKey: key).map { try validEvidenceIntervals($0, forKey: key) }
+    }
+
+    private func validEvidenceIntervals(_ intervals: Int, forKey key: Key) throws -> Int {
+        guard intervals <= maximumEvidenceIntervals else {
+            throw DecodingError.dataCorruptedError(
+                forKey: key,
+                in: self,
+                debugDescription: "Evidence count \(intervals) is too large to display."
+            )
+        }
+        return intervals
+    }
+}
+
 extension ParameterRecommendation: Codable {
     private enum CodingKeys: String, CodingKey {
         case name, unit, pumpValue, recommendedValue, rawTunedValue
@@ -49,10 +76,27 @@ extension ParameterScheduleRecommendation: Codable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Offsets are range-checked before conversion: a corrupt saved run must
+        // fail to decode rather than trap or produce an offset outside the day.
         if let seconds = try container.decodeIfPresent(Int.self, forKey: .secondsSinceMidnight) {
+            guard (0..<86_400).contains(seconds) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .secondsSinceMidnight,
+                    in: container,
+                    debugDescription: "Schedule offset \(seconds) s is outside [0, 86400)."
+                )
+            }
             self.secondsSinceMidnight = seconds
         } else {
-            self.secondsSinceMidnight = try container.decode(Int.self, forKey: .startMinutes) * 60
+            let minutes = try container.decode(Int.self, forKey: .startMinutes)
+            guard (0..<1_440).contains(minutes) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .startMinutes,
+                    in: container,
+                    debugDescription: "Schedule offset \(minutes) min is outside [0, 1440)."
+                )
+            }
+            self.secondsSinceMidnight = minutes * 60
         }
         self.parameter = try container.decode(ParameterRecommendation.self, forKey: .parameter)
         self.untuned = try container.decode(Bool.self, forKey: .untuned)
@@ -79,7 +123,17 @@ extension BasalHourRecommendation: Codable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.hour = try container.decode(Int.self, forKey: .hour)
+        // The hour becomes a schedule offset and a table identity when the
+        // run is displayed, so it must name an hour of the day.
+        let hour = try container.decode(Int.self, forKey: .hour)
+        guard (0..<24).contains(hour) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .hour,
+                in: container,
+                debugDescription: "Basal hour \(hour) is outside [0, 24)."
+            )
+        }
+        self.hour = hour
         self.pumpRate = try container.decode(Double.self, forKey: .pumpRate)
         self.recommendedRate = try container.decode(Double.self, forKey: .recommendedRate)
         // The stored changeTier is ignored: older runs classified the unrounded
@@ -87,7 +141,7 @@ extension BasalHourRecommendation: Codable {
         self.guardrailStatus = try container.decode(LoopGuardrails.Status.self, forKey: .guardrailStatus)
         self.untuned = try container.decode(Bool.self, forKey: .untuned)
         self.daysMissing = try container.decode(Int.self, forKey: .daysMissing)
-        self.sampleCount = try container.decode(Int.self, forKey: .sampleCount)
+        self.sampleCount = try container.decodeEvidenceIntervals(forKey: .sampleCount)
         // Runs saved before the limits were stored used the default caps.
         let limits = Self.limits(pumpRate: pumpRate, caps: TuningCaps())
         self.minimumRate = try container.decodeIfPresent(Double.self, forKey: .minimumRate) ?? limits.minimum
@@ -140,18 +194,26 @@ extension TuningRecommendation: Codable {
             parameter: carbRatio,
             untuned: false
         )]
-        self.basalHours = try container.decode([BasalHourRecommendation].self, forKey: .basalHours)
+        // Every writer stores one entry for each hour of the day.
+        let basalHours = try container.decode([BasalHourRecommendation].self, forKey: .basalHours)
+        guard basalHours.count == 24, Set(basalHours.map(\.hour)).count == 24 else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .basalHours,
+                in: container,
+                debugDescription: "The basal schedule must hold each hour of the day exactly once."
+            )
+        }
+        self.basalHours = basalHours
         let counts = try container.decode([String: Int].self, forKey: .categoryCounts)
         self.categoryCounts = Dictionary(uniqueKeysWithValues: counts.compactMap { key, value in
             DeviationCategory(rawValue: key).map { ($0, value) }
         })
-        self.totalSamples = try container.decode(Int.self, forKey: .totalSamples)
+        self.totalSamples = try container.decodeEvidenceIntervals(forKey: .totalSamples)
         self.daysAnalyzed = try container.decode(Int.self, forKey: .daysAnalyzed)
         self.profileGlucoseUnit = try container.decode(GlucoseUnit.self, forKey: .profileGlucoseUnit)
         self.daysTuned = try container.decodeIfPresent(Int.self, forKey: .daysTuned)
         self.settingsChanges = try container.decodeIfPresent([Date].self, forKey: .settingsChanges) ?? []
-        self.excludedOverrideSamples = try container.decodeIfPresent(
-            Int.self,
+        self.excludedOverrideSamples = try container.decodeEvidenceIntervalsIfPresent(
             forKey: .excludedOverrideSamples
         ) ?? 0
     }
