@@ -39,21 +39,20 @@ struct ParameterScheduleCard: View {
                 TableColumn("LoopTune") { entry in
                     if let insufficient = entry.insufficientEvidence {
                         ChoiceText(
-                            pump: entry.parameter.formatted(entry.parameter.pumpValue(in: displayUnit), in: displayUnit),
+                            pump: entry.parameter.formattedPumpValue(in: displayUnit),
                             interpolated: insufficient.interpolated.map {
                                 "\($0.formatted($0.recommendedValue(in: displayUnit), in: displayUnit)) interpolated"
                             },
-                            interpolatedColor: insufficient.interpolated?.changeTier.color ?? .primary
+                            interpolatedColor: insufficient.interpolated?.changeTier.color ?? .primary,
+                            interpolatedStatus: insufficient.interpolated?.guardrailStatus ?? .ok
                         )
                         .numericCell()
                     } else {
                         HStack(spacing: 5) {
                             value(entry.parameter.recommendedValue(in: displayUnit), for: entry.parameter)
                                 .fontWeight(.semibold)
-                            if entry.parameter.guardrailStatus != .ok {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundStyle(.orange)
-                                    .help(guardrailMessage(entry.parameter.guardrailStatus))
+                            if let warning = entry.parameter.guardrailStatus.warning {
+                                GuardrailWarningIcon(message: warning.prefix(1).uppercased() + warning.dropFirst())
                             }
                         }
                         .foregroundStyle(entry.parameter.changeTier.color)
@@ -78,9 +77,5 @@ struct ParameterScheduleCard: View {
 
     private func value(_ value: Double, for parameter: ParameterRecommendation) -> Text {
         Text("\(parameter.formatted(value, in: displayUnit)) \(parameter.unitLabel(in: displayUnit))")
-    }
-
-    private func guardrailMessage(_ status: LoopGuardrails.Status) -> String {
-        status == .atLimit ? "Clamped to Loop's limit" : "Outside Loop's recommended range"
     }
 }

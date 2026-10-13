@@ -29,8 +29,9 @@ struct LoopScheduleCard: View {
                     HStack(spacing: 4) {
                         if let insufficient = entry.insufficientEvidence {
                             ChoiceText(
-                                pump: formatted(entry.rate),
-                                interpolated: insufficient.interpolated.map(formatted)
+                                pump: formattedPump(entry.rate),
+                                interpolated: insufficient.interpolated.map(formatted),
+                                interpolatedStatus: entry.interpolatedGuardrailStatus ?? .ok
                             )
                             .monospacedDigit()
                         } else {
@@ -69,5 +70,10 @@ struct LoopScheduleCard: View {
     /// Loop shows rates without trailing zeros (0.2, 0.25), locale-aware.
     private func formatted(_ rate: Double) -> String {
         rate.formatted(.number.precision(.fractionLength(1...2)))
+    }
+
+    /// A pump rate the user may keep, at the precision it was stored with.
+    private func formattedPump(_ rate: Double) -> String {
+        rate.formatted(.number.precision(.fractionLength(1...3)))
     }
 }

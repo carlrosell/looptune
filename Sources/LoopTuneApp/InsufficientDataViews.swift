@@ -51,11 +51,13 @@ struct InsufficientDataNotes: View {
 }
 
 /// The two values for a block with insufficient data: the pump value and,
-/// when one exists, the interpolated alternative.
+/// when one exists, the interpolated alternative with its Loop guardrail
+/// warning.
 struct ChoiceText: View {
     let pump: String
     let interpolated: String?
     var interpolatedColor: Color = .primary
+    var interpolatedStatus: LoopGuardrails.Status = .ok
 
     var body: some View {
         HStack(spacing: 4) {
@@ -68,7 +70,33 @@ struct ChoiceText: View {
                 Text(interpolated)
                     .fontWeight(.semibold)
                     .foregroundStyle(interpolatedColor)
+                if let warning = interpolatedStatus.warning {
+                    GuardrailWarningIcon(message: "Interpolated value: \(warning)")
+                }
             }
+        }
+    }
+}
+
+/// Marks a value outside Loop's recommended range or clamped to its limit.
+struct GuardrailWarningIcon: View {
+    let message: String
+
+    var body: some View {
+        Image(systemName: "exclamationmark.octagon.fill")
+            .foregroundStyle(.red)
+            .help(message)
+            .accessibilityLabel(message)
+    }
+}
+
+extension LoopGuardrails.Status {
+    /// What the user should know about a value with this status.
+    var warning: String? {
+        switch self {
+        case .ok: return nil
+        case .outsideRecommended: return "outside Loop's recommended range"
+        case .atLimit: return "clamped to Loop's limit"
         }
     }
 }

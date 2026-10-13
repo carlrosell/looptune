@@ -323,7 +323,108 @@ struct HourlyGlucoseChartView: View {
     }
 }
 
-/// 24-hour basal schedule: pump vs LoopTune as step lines.
+/// The basal chart's series and tooltip text, kept apart from the view so
+/// the presentation of hours with insufficient data can be tested.
+enum BasalChartData {
+    enum Series: String {
+        case pump = "Pump"
+        case loopTune = "LoopTune"
+        /// The alternative for hours with insufficient data (ADR 0011). It is
+        /// not LoopTune's recommendation.
+        case interpolated = "Interpolated (insufficient data)"
+    }
+
+    struct Point: Identifiable, Equatable {
+        var id: String { "\(segment)-\(hour)" }
+        let hour: Int
+        let rate: Double
+        let series: Series
+        /// One unbroken line. The LoopTune and interpolated series break
+        /// wherever the hours change kind.
+        let segment: String
+    }
+
+    struct TooltipLine: Equatable {
+        let series: Series?
+        let label: String
+        let value: String
+    }
+
+    /// Step-line points. Each segment repeats its last value one hour later
+    /// so its final step has visible width. Hours with insufficient data have
+    /// no LoopTune point: their recommended rate is only the pump rate.
+    static func points(for hours: [BasalHourRecommendation]) -> [Point] {
+        let sorted = hours.sorted { $0.hour < $1.hour }
+        var result = sorted.map { Point(hour: $0.hour, rate: $0.pumpRate, series: .pump, segment: "Pump") }
+        if let last = sorted.last {
+            result.append(Point(hour: last.hour + 1, rate: last.pumpRate, series: .pump, segment: "Pump"))
+        }
+        var segment = 0
+        var previous: (hour: Int, series: Series, rate: Double)?
+        for entry in sorted {
+            let current = value(of: entry)
+            if let open = previous, current?.series != open.series || entry.hour != open.hour + 1 {
+                result.append(Point(hour: open.hour + 1, rate: open.rate, series: open.series, segment: "\(open.series.rawValue)-\(segment)"))
+                segment += 1
+                previous = nil
+            }
+            guard let current else { continue }
+            result.append(Point(hour: entry.hour, rate: current.rate, series: current.series, segment: "\(current.series.rawValue)-\(segment)"))
+            previous = (entry.hour, current.series, current.rate)
+        }
+        if let open = previous {
+            result.append(Point(hour: open.hour + 1, rate: open.rate, series: open.series, segment: "\(open.series.rawValue)-\(segment)"))
+        }
+        return result
+    }
+
+    private static func value(of hour: BasalHourRecommendation) -> (series: Series, rate: Double)? {
+        guard let evidence = hour.insufficientEvidence else { return (.loopTune, hour.recommendedRate) }
+        return evidence.interpolated.map { (.interpolated, $0) }
+    }
+
+    /// Runs of consecutive hours with insufficient data, as `start..<end`.
+    static func insufficientRanges(for hours: [BasalHourRecommendation]) -> [Range<Int>] {
+        var ranges: [Range<Int>] = []
+        for hour in hours.sorted(by: { $0.hour < $1.hour }) where hour.insufficientEvidence != nil {
+            if let last = ranges.last, last.upperBound == hour.hour {
+                ranges[ranges.count - 1] = last.lowerBound..<(hour.hour + 1)
+            } else {
+                ranges.append(hour.hour..<(hour.hour + 1))
+            }
+        }
+        return ranges
+    }
+
+    static func tooltipLines(for hour: BasalHourRecommendation) -> [TooltipLine] {
+        guard let evidence = hour.insufficientEvidence else {
+            return [
+                TooltipLine(series: .pump, label: "Pump", value: String(format: "%.3f U/hr", hour.pumpRate)),
+                TooltipLine(series: .loopTune, label: "LoopTune (unrounded)", value: String(format: "%.3f U/hr", hour.recommendedRate)),
+                TooltipLine(series: nil, label: "Enter into Loop", value: String(format: "%.2f U/hr", hour.roundedRate())),
+            ]
+        }
+        let pump = BasalHourRecommendation.formattedPumpRate(hour.pumpRate)
+        var lines = [
+            TooltipLine(series: nil, label: "Insufficient data", value: "no LoopTune rate"),
+            TooltipLine(series: .pump, label: "Pump (keep)", value: "\(pump) U/hr"),
+        ]
+        guard let interpolated = hour.interpolatedRoundedRate() else {
+            lines.append(TooltipLine(series: nil, label: "Interpolated", value: "none"))
+            return lines
+        }
+        lines.append(TooltipLine(series: .interpolated, label: "Interpolated", value: String(format: "%.2f U/hr", interpolated)))
+        lines.append(TooltipLine(series: nil, label: "Interpolated from", value: evidence.sourceTimes.joined(separator: " and ")))
+        if let warning = hour.interpolatedGuardrailStatus()?.warning {
+            lines.append(TooltipLine(series: nil, label: "Interpolated value", value: warning))
+        }
+        return lines
+    }
+}
+
+/// 24-hour basal schedule: pump vs LoopTune as step lines. Hours with
+/// insufficient data are shaded, have no LoopTune line, and show the
+/// interpolated alternative dashed.
 struct BasalChartView: View {
     let hours: [BasalHourRecommendation]
     @Environment(\.colorScheme) private var colorScheme
@@ -336,26 +437,31 @@ struct BasalChartView: View {
         return hours.first { $0.hour == clamped }
     }
 
-    private struct Point: Identifiable {
-        let id: String
-        let hour: Int
-        let rate: Double
-        let series: String
+    private var points: [BasalChartData.Point] { BasalChartData.points(for: hours) }
+    private var insufficientRanges: [Range<Int>] { BasalChartData.insufficientRanges(for: hours) }
+
+    private func color(_ series: BasalChartData.Series) -> Color {
+        switch series {
+        case .pump: return ChartPalette.pump(colorScheme)
+        case .loopTune: return ChartPalette.tuned(colorScheme)
+        case .interpolated: return .orange
+        }
     }
 
-    /// Step-line points; hour 24 repeats the last value so the final step has
-    /// visible width.
-    private var points: [Point] {
-        var result: [Point] = []
-        for entry in hours {
-            result.append(Point(id: "p\(entry.hour)", hour: entry.hour, rate: entry.pumpRate, series: "Pump"))
-            result.append(Point(id: "t\(entry.hour)", hour: entry.hour, rate: entry.recommendedRate, series: "LoopTune"))
-        }
-        if let last = hours.last {
-            result.append(Point(id: "p24", hour: 24, rate: last.pumpRate, series: "Pump"))
-            result.append(Point(id: "t24", hour: 24, rate: last.recommendedRate, series: "LoopTune"))
-        }
-        return result
+    private func stroke(_ series: BasalChartData.Series) -> StrokeStyle {
+        series == .interpolated ? StrokeStyle(lineWidth: 2, dash: [5, 3]) : StrokeStyle(lineWidth: 2)
+    }
+
+    private var seriesDomain: [String] {
+        var domain = [BasalChartData.Series.loopTune, .pump]
+        if points.contains(where: { $0.series == .interpolated }) { domain.append(.interpolated) }
+        return domain.map(\.rawValue)
+    }
+
+    private var seriesRange: [Color] {
+        var range = [color(.loopTune), color(.pump)]
+        if points.contains(where: { $0.series == .interpolated }) { range.append(color(.interpolated)) }
+        return range
     }
 
     var body: some View {
@@ -365,15 +471,33 @@ struct BasalChartView: View {
             Text("A mismatch observed in one hour tunes the previous three basal hours, because the insulin delivered there acts later.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if !insufficientRanges.isEmpty {
+                Label {
+                    Text("Shaded hours had insufficient data. LoopTune has no rate for them: choose your pump rate or the dashed interpolated rate.")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
             Chart {
+                ForEach(insufficientRanges, id: \.lowerBound) { range in
+                    RectangleMark(
+                        xStart: .value("Start", range.lowerBound),
+                        xEnd: .value("End", range.upperBound)
+                    )
+                    .foregroundStyle(Color.orange.opacity(0.10))
+                }
                 ForEach(points) { point in
                     LineMark(
                         x: .value("Hour", point.hour),
-                        y: .value("U/hr", point.rate)
+                        y: .value("U/hr", point.rate),
+                        series: .value("Segment", point.segment)
                     )
-                    .foregroundStyle(by: .value("Series", point.series))
+                    .foregroundStyle(by: .value("Series", point.series.rawValue))
                     .interpolationMethod(.stepEnd)
-                    .lineStyle(StrokeStyle(lineWidth: 2))
+                    .lineStyle(stroke(point.series))
                 }
                 if let hovered = hoveredHour {
                     RuleMark(x: .value("Hour", hovered.hour))
@@ -385,24 +509,14 @@ struct BasalChartView: View {
                             overflowResolution: .init(x: .fit(to: .chart), y: .disabled)
                         ) {
                             ChartTooltip(title: String(format: "%02d:00–%02d:00", hovered.hour, (hovered.hour + 1) % 24)) {
-                                TooltipRow(color: ChartPalette.pump(colorScheme), label: "Pump", value: String(format: "%.3f U/hr", hovered.pumpRate))
-                                TooltipRow(color: ChartPalette.tuned(colorScheme), label: "LoopTune (unrounded)", value: String(format: "%.3f U/hr", hovered.recommendedRate))
-                                if hovered.insufficientEvidence != nil {
-                                    TooltipRow(color: nil, label: "Insufficient data", value: "pump rate kept")
-                                    if let interpolated = hovered.interpolatedRoundedRate() {
-                                        TooltipRow(color: nil, label: "Interpolated alternative", value: String(format: "%.2f U/hr", interpolated))
-                                    }
-                                } else {
-                                    TooltipRow(color: nil, label: "Enter into Loop", value: String(format: "%.2f U/hr", hovered.roundedRate()))
+                                ForEach(BasalChartData.tooltipLines(for: hovered), id: \.label) { line in
+                                    TooltipRow(color: line.series.map(color), label: line.label, value: line.value)
                                 }
                             }
                         }
                 }
             }
-            .chartForegroundStyleScale([
-                "LoopTune": ChartPalette.tuned(colorScheme),
-                "Pump": ChartPalette.pump(colorScheme),
-            ])
+            .chartForegroundStyleScale(domain: seriesDomain, range: seriesRange)
             .chartXSelection(value: $selectedHour)
             .chartXScale(domain: 0...24)
             .chartXAxis {

@@ -138,9 +138,21 @@ struct ResultsView: View {
             Text("Suggested changes")
                 .font(.title2.weight(.semibold))
             HStack(spacing: 8) {
-                MetricBadge(label: "Basal", percent: basalPercentChange)
-                MetricBadge(label: "ISF", percent: recommendation.sensitivity.percentChange)
-                MetricBadge(label: "Carb ratio", percent: recommendation.carbRatio.percentChange)
+                MetricBadge(
+                    label: "Basal",
+                    percent: basalPercentChange,
+                    insufficientData: recommendation.insufficientData.allBasalHours
+                )
+                MetricBadge(
+                    label: "ISF",
+                    percent: recommendation.sensitivity.percentChange,
+                    insufficientData: recommendation.insufficientData.allSensitivityBlocks
+                )
+                MetricBadge(
+                    label: "Carb ratio",
+                    percent: recommendation.carbRatio.percentChange,
+                    insufficientData: recommendation.insufficientData.allCarbRatioBlocks
+                )
             }
             Text("vs your pump settings · \(recommendation.daysAnalyzed) day\(recommendation.daysAnalyzed == 1 ? "" : "s"), \(TuningReport.evidenceTime(recommendation.totalSamples)) of data")
                 .font(.caption)
@@ -213,9 +225,10 @@ struct ResultsView: View {
                 TableColumn("Enter into Loop") { hour in
                     if hour.insufficientEvidence != nil {
                         ChoiceText(
-                            pump: String(format: "%.2f", hour.roundedRate()),
+                            pump: BasalHourRecommendation.formattedPumpRate(hour.pumpRate),
                             interpolated: hour.interpolatedRoundedRate().map { String(format: "%.2f interpolated", $0) },
-                            interpolatedColor: hour.interpolatedChangeTier()?.color ?? .primary
+                            interpolatedColor: hour.interpolatedChangeTier()?.color ?? .primary,
+                            interpolatedStatus: hour.interpolatedGuardrailStatus() ?? .ok
                         )
                         .numericCell()
                     } else {
@@ -251,12 +264,15 @@ struct ResultsView: View {
 struct MetricBadge: View {
     let label: String
     let percent: Double
+    /// No block had evidence, so there is no change to report (ADR 0011).
+    var insufficientData = false
 
     private var tier: ChangeTier {
         ChangeTier.classify(pump: 100, tuned: 100 + percent)
     }
 
     private var symbolName: String {
+        if insufficientData { return "exclamationmark.triangle.fill" }
         if abs(percent) < 0.5 { return "equal" }
         return percent > 0 ? "arrow.up.right" : "arrow.down.right"
     }
@@ -275,15 +291,24 @@ struct MetricBadge: View {
                 .font(.caption2.weight(.bold))
             Text(label)
                 .font(.callout)
-            Text(formattedSignedPercent(percent))
+            Text(insufficientData ? "insufficient data" : formattedSignedPercent(percent))
                 .font(.callout.weight(.semibold))
                 .monospacedDigit()
                 .contentTransition(.numericText())
         }
-        .foregroundStyle(tier == .minimal ? AnyShapeStyle(.secondary) : AnyShapeStyle(tint))
+        .foregroundStyle(foreground)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .background(tint.opacity(0.14), in: Capsule())
+        .background(background.opacity(0.14), in: Capsule())
+    }
+
+    private var foreground: AnyShapeStyle {
+        if insufficientData { return AnyShapeStyle(Color.orange) }
+        return tier == .minimal ? AnyShapeStyle(.secondary) : AnyShapeStyle(tint)
+    }
+
+    private var background: Color {
+        insufficientData ? .orange : tint
     }
 }
 
