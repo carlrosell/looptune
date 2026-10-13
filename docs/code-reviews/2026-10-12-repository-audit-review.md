@@ -59,16 +59,16 @@ remediation; workflow adoption has not fixed or closed any finding.
 | SEC-02 | Medium | [URL user information survives sanitization](#sec-02-url-user-information-survives-sanitization) | Open | [#5](https://github.com/carlrosell/looptune/issues/5) |
 | SEC-04 | Medium | [Network error messages expose query tokens](#sec-04-network-error-messages-expose-query-tokens) | Open | [#7](https://github.com/carlrosell/looptune/issues/7) |
 | DATA-02 | Medium | [Corrupt legacy schedule offsets can crash history loading](#data-02-corrupt-legacy-schedule-offsets-can-crash-history-loading) | Open | [#9](https://github.com/carlrosell/looptune/issues/9) |
-| DATA-03 | Medium | [Oversized remote timestamps crash cache encoding](#data-03-oversized-remote-timestamps-crash-cache-encoding) | Open | [#10](https://github.com/carlrosell/looptune/issues/10) |
+| DATA-03 | Medium | [Oversized remote timestamps crash cache encoding](#data-03-oversized-remote-timestamps-crash-cache-encoding) | Fixed | [#10](https://github.com/carlrosell/looptune/issues/10) |
 | CORE-03 | Medium | [Expanded schedules disagree with clock lookup during fall-back](#core-03-expanded-schedules-disagree-with-clock-lookup-during-fall-back) | Fixed | [#14](https://github.com/carlrosell/looptune/issues/14) |
 | CORE-05 | Medium | [CGM cadence changes tuning weight and the minimum evidence duration](#core-05-cgm-cadence-changes-tuning-weight-and-the-minimum-evidence-duration) | Fixed | [#16](https://github.com/carlrosell/looptune/issues/16) |
 | CORE-06 | Medium | [Profile changes reinterpret doses from before activation](#core-06-profile-changes-reinterpret-doses-from-before-activation) | Fixed | [#17](https://github.com/carlrosell/looptune/issues/17) |
 | CORE-07 | Medium | [Fixed carb lookback drops meals still active in the model](#core-07-fixed-carb-lookback-drops-meals-still-active-in-the-model) | Fixed | [#18](https://github.com/carlrosell/looptune/issues/18) |
-| APP-01 | Medium | [Run completion persists settings edited after the run started](#app-01-run-completion-persists-settings-edited-after-the-run-started) | Open | [#19](https://github.com/carlrosell/looptune/issues/19) |
+| APP-01 | Medium | [Run completion persists settings edited after the run started](#app-01-run-completion-persists-settings-edited-after-the-run-started) | Fixed | [#19](https://github.com/carlrosell/looptune/issues/19) |
 | APP-02 | Medium | [Saved results do not identify their source site](#app-02-saved-results-do-not-identify-their-source-site) | Open | [#20](https://github.com/carlrosell/looptune/issues/20) |
-| ARC-01 | Low | [An unused connection form duplicates the live sidebar](#arc-01-an-unused-connection-form-duplicates-the-live-sidebar) | Open | [#21](https://github.com/carlrosell/looptune/issues/21) |
-| ARC-02 | Low | [Public recommendation construction can trap on short hourly arrays](#arc-02-public-recommendation-construction-can-trap-on-short-hourly-arrays) | Open | [#22](https://github.com/carlrosell/looptune/issues/22) |
-| DOC-01 | Low | [Golden fixtures cannot be regenerated from a clean clone](#doc-01-golden-fixtures-cannot-be-regenerated-from-a-clean-clone) | Open | [#23](https://github.com/carlrosell/looptune/issues/23) |
+| ARC-01 | Low | [An unused connection form duplicates the live sidebar](#arc-01-an-unused-connection-form-duplicates-the-live-sidebar) | Fixed | [#21](https://github.com/carlrosell/looptune/issues/21) |
+| ARC-02 | Low | [Public recommendation construction can trap on short hourly arrays](#arc-02-public-recommendation-construction-can-trap-on-short-hourly-arrays) | Fixed | [#22](https://github.com/carlrosell/looptune/issues/22) |
+| DOC-01 | Low | [Golden fixtures cannot be regenerated from a clean clone](#doc-01-golden-fixtures-cannot-be-regenerated-from-a-clean-clone) | Fixed | [#23](https://github.com/carlrosell/looptune/issues/23) |
 
 ## Fix order
 
@@ -221,9 +221,23 @@ errors. Add corrupt-history tests that exercise startup loading.
 
 ### DATA-03 Oversized remote timestamps crash cache encoding
 
-Severity: medium. Status: open.
+Severity: medium. Status: fixed.
 
 Tracking: [#10](https://github.com/carlrosell/looptune/issues/10).
+
+Fixed 2026-10-13 in [#48](https://github.com/carlrosell/looptune/pull/48),
+commit `1ba3892` (`1ba3892d6c951b0aa04915fb274ce6a6aa0f7c7c`). Nightscout
+timestamps must lie between 0001-01-01 and 9999-12-31T23:59:59.999Z; numeric
+epochs and ISO dates outside that range, and non-finite values, are rejected
+rather than clamped, and an out-of-range numeric entry date no longer falls back
+to `dateString`. Encoding an unrepresentable date throws
+`EncodingError.invalidValue`, which the day cache already handles by skipping
+the write, and a fetched array containing such a record fails with the
+controlled `partialDecoding` error before anything is cached. With the range
+checks reverted, the new `TimestampBoundsTests` and the fetch test fail on the
+audit's `1e30` and `-1e30` cases. Verified on 2026-10-13 against `main` at
+166ce01: `swift test`, `python3 tools/docs_check.py`, the workflow tool tests,
+and `swift build -c release` passed. The original evidence below is unchanged.
 
 [Sources/LoopTuneKit/Nightscout/LenientDecoding.swift:115](../../Sources/LoopTuneKit/Nightscout/LenientDecoding.swift#L115) accepts any finite
 epoch value, but [Sources/LoopTuneKit/Nightscout/NightscoutDTOs.swift:25](../../Sources/LoopTuneKit/Nightscout/NightscoutDTOs.swift#L25) converts milliseconds to `Int` without
@@ -496,9 +510,21 @@ bound. Test full and trimmed replay equivalence at that boundary.
 
 ### APP-01 Run completion persists settings edited after the run started
 
-Severity: medium. Status: open.
+Severity: medium. Status: fixed.
 
 Tracking: [#19](https://github.com/carlrosell/looptune/issues/19).
+
+Fixed 2026-10-13 in [#47](https://github.com/carlrosell/looptune/pull/47),
+commit `166ce01` (`166ce011c2088acd4ceb29451ba58a05b3731471`). `run()` captures
+an immutable `AnalysisRequest`; a successful run persists exactly that request
+and a failed run persists nothing. The Nightscout and Analysis sidebar sections
+are disabled while a run is pending, and the form URL is only rewritten if it is
+unchanged. `TuningViewModelRunTests` drive runs with controlled completion; with
+persistence switched back to the live form, five checks fail in the
+token-clearing and settings-switching cases. Integration verified on 2026-10-13
+against `main` at 9448dfb with the other wave-3 changes landed in the same
+order: `swift test`, `python3 tools/docs_check.py`, the workflow tool tests, and
+`swift build -c release` passed. The original evidence below is unchanged.
 
 [Sources/LoopTuneApp/TuningViewModel.swift:94](../../Sources/LoopTuneApp/TuningViewModel.swift#L94) captures the request URL, token,
 and configuration, but completion calls `persistSettings` at line 123 using
@@ -530,9 +556,18 @@ history selection; no real-world misapplication is claimed.
 
 ### ARC-01 An unused connection form duplicates the live sidebar
 
-Severity: low. Status: open.
+Severity: low. Status: fixed.
 
 Tracking: [#21](https://github.com/carlrosell/looptune/issues/21).
+
+Fixed 2026-10-13 in [#46](https://github.com/carlrosell/looptune/pull/46),
+commit `e3bb24a` (`e3bb24adf48a092e49629e7e836cfd82f7128201`). The unused
+`ConnectionForm` view is deleted; `SidebarView` is the only connection layout,
+and no source references remain. The link above now points to the file at the
+audit baseline. Integration verified on 2026-10-13 against `main` at 9448dfb
+with the other wave-3 changes landed in the same order: `swift test`, `python3
+tools/docs_check.py`, the workflow tool tests, and `swift build -c release`
+passed. The original evidence below is unchanged.
 
 [Sources/LoopTuneApp/ConnectionForm.swift:5](https://github.com/carlrosell/looptune/blob/e14a57c5f92038ce9edbc65ac3c8f070bf642356/Sources/LoopTuneApp/ConnectionForm.swift#L5) defines an internal view with no
 callers in the repository. [Sources/LoopTuneApp/LoopTuneApp.swift:39](../../Sources/LoopTuneApp/LoopTuneApp.swift#L39) uses `SidebarView`, whose
@@ -542,9 +577,21 @@ Repository-wide symbol search confirmed the absence of references.
 
 ### ARC-02 Public recommendation construction can trap on short hourly arrays
 
-Severity: low. Status: open.
+Severity: low. Status: fixed.
 
 Tracking: [#22](https://github.com/carlrosell/looptune/issues/22).
+
+Fixed 2026-10-13 in [#44](https://github.com/carlrosell/looptune/pull/44),
+commit `c6add2e` (`c6add2e592ead16569bfc5f53c8e4c07c08358ad`).
+`TuningRecommendation.init(from:)` checks all five hourly collections, including
+values set through public mutation and a supplied `daysMissingByHour`, and
+throws `TuningOutput.HourlyCountError` instead of trapping; the throwing
+`TuningOutput` initializer runs the same check. A lander exit test confirmed
+that on 9448dfb an empty `basalSampleCountByHour` terminates the process.
+Integration verified on 2026-10-13 against `main` at 9448dfb with the other
+wave-3 changes landed in the same order: `swift test`, `python3
+tools/docs_check.py`, the workflow tool tests, and `swift build -c release`
+passed. The original evidence below is unchanged.
 
 [Sources/LoopTuneKit/Tune/LoopTuner.swift:68](../../Sources/LoopTuneKit/Tune/LoopTuner.swift#L68) accepts arbitrary hourly array
 lengths. The throwing recommendation initializer checks three arrays at
@@ -558,9 +605,22 @@ a valid 24-element control succeeded. A surrounding `do/catch` did not help.
 
 ### DOC-01 Golden fixtures cannot be regenerated from a clean clone
 
-Severity: low. Status: open.
+Severity: low. Status: fixed.
 
 Tracking: [#23](https://github.com/carlrosell/looptune/issues/23).
+
+Fixed 2026-10-13 in [#45](https://github.com/carlrosell/looptune/pull/45),
+commit `85c3f95` (`85c3f954986693448cb3d72de6c930cf5e6c1073`).
+`scripts/generate-oref0-fixtures.js` regenerates the three parity fixtures from
+a disposable oref0 clone pinned to 88cf032, refuses other revisions or modified
+clones, forces UTC, and has a `--check` mode; the fixture README documents the
+commands and the oracle's limited basal and ISF scope. A lander spot-check from
+a fresh clone matched all three fixtures under UTC and America/New_York,
+regenerated them byte-for-byte unchanged, and rejected a tampered fixture.
+Integration verified on 2026-10-13 against `main` at 9448dfb with the other
+wave-3 changes landed in the same order: `swift test`, `python3
+tools/docs_check.py`, the workflow tool tests, and `swift build -c release`
+passed. The original evidence below is unchanged.
 
 [Tests/LoopTuneKitTests/Fixtures/oref0/README.md:9](../../Tests/LoopTuneKitTests/Fixtures/oref0/README.md#L9) instructs contributors to run
 `node references/gen_oref0_fixtures.js`, but that file is absent from Git and

@@ -604,3 +604,10 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   and rejects absorption times the model cannot bound (ADR 0008). Both ADRs
   are accepted, and the audit records the commits and verification. An
   intermittent Foundation trap in the redirect tests is tracked as #41.
+- **2026-10-13**: Landed the first wave-3 audit fixes: ARC-01 (#46), ARC-02
+  (#44), DOC-01 (#45), APP-01 (#47), and DATA-03 (#48). The unused connection
+  form is gone, recommendation construction rejects malformed hourly arrays
+  instead of trapping, the oref0 fixtures can be regenerated from a pinned
+  clone, a completed run persists the settings it actually used, and
+  out-of-range Nightscout timestamps are rejected before they reach the cache.
+  The audit records the commits and verification.
