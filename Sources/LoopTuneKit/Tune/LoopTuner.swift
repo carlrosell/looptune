@@ -6,7 +6,8 @@ public struct ScheduleTuningOutput: Sendable, Equatable {
     public var tunedValue: Double
     public var pumpValue: Double
     /// True when this block had too little usable evidence to tune. Its value
-    /// carries the current setting forward within the pump-relative caps.
+    /// carries the current setting forward within the pump-relative caps for
+    /// chained replay. `TuningRecommendation` never presents it (ADR 0011).
     public var untuned: Bool
     /// Usable ISF evidence in five-minute intervals, or logged meals, behind
     /// this block.

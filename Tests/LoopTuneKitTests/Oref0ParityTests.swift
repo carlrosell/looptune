@@ -10,6 +10,11 @@ import Foundation
 /// These pin selected ISF and basal tuning math to the reference
 /// implementation on pre-categorized data, including its rounding and
 /// smoothing quirks. They do not cover carb ratio, categorization, or replay.
+///
+/// LoopTune does not smooth hours without basal evidence (ADR 0011). The
+/// parity runs use `BasalTuner`'s oref0 smoothing mode so the fixtures still
+/// pin oref0's complete output, and a separate check pins how the default
+/// differs: identical tuned hours, unsmoothed hours without evidence.
 @Suite("oref0 parity")
 struct Oref0ParityTests {
     struct Fixture: Decodable {
@@ -79,7 +84,8 @@ struct Oref0ParityTests {
         #expect(abs(tunedISF - fixture.expected.sens) < 0.001, "ISF mismatch in \(name): got \(tunedISF), oref0 says \(fixture.expected.sens)")
 
         // Basal parity (fixtures are generated with TZ=UTC).
-        let basalResult = BasalTuner(timeZone: TimeZone(identifier: "UTC")!).tune(
+        let utc = TimeZone(identifier: "UTC")!
+        let basalResult = BasalTuner(timeZone: utc, untunedHours: .oref0Smoothing).tune(
             samples: samples,
             currentHourly: fixture.input.basalHourly,
             pumpHourly: fixture.input.pumpBasalHourly,
@@ -93,6 +99,26 @@ struct Oref0ParityTests {
             #expect(
                 basalResult.untuned[hour] == (fixture.expected.untuned[hour] > 0),
                 "untuned flag mismatch in \(name) hour \(hour)"
+            )
+        }
+
+        // LoopTune's default: hours oref0 tuned match it exactly, and in these
+        // fixtures they are exactly the hours with basal evidence. Every other
+        // hour keeps its current rate instead of being smoothed.
+        let loopTuneResult = BasalTuner(timeZone: utc).tune(
+            samples: samples,
+            currentHourly: fixture.input.basalHourly,
+            pumpHourly: fixture.input.pumpBasalHourly,
+            isf: fixture.input.isf
+        )
+        #expect(loopTuneResult.untuned == basalResult.untuned)
+        for hour in 0..<24 {
+            let expected = fixture.expected.untuned[hour] > 0
+                ? fixture.input.basalHourly[hour]
+                : fixture.expected.basalHourly[hour]
+            #expect(
+                abs(loopTuneResult.hourlyRates[hour] - expected) < 0.001,
+                "LoopTune basal in \(name) hour \(hour): got \(loopTuneResult.hourlyRates[hour]), expected \(expected)"
             )
         }
     }

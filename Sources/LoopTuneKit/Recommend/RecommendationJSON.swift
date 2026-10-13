@@ -32,6 +32,7 @@ struct RecommendationDTO: Encodable {
         var hour: Int
         var pump: Double
         /// Unrounded tuned rate (diagnostic); `recommendedRounded` is entered.
+        /// With insufficient data, both are the pump rate.
         var recommended: Double
         var recommendedRounded: Double
         /// Tier and status describe `recommendedRounded`.
@@ -40,6 +41,30 @@ struct RecommendationDTO: Encodable {
         var untuned: Bool
         var daysMissing: Int
         var sampleCount: Int
+        /// `tuned`, `insufficientData`, or `carriedForward` (ADR 0011).
+        var evidenceStatus: String
+        /// The alternative to the pump rate for an hour with insufficient data.
+        var interpolated: InterpolatedBasal?
+        var note: String?
+    }
+    struct InterpolatedBasal: Encodable {
+        var recommended: Double
+        var recommendedRounded: Double
+        /// Relative to the pump rate; describes this alternative only.
+        var changeTier: String
+        var guardrailStatus: String
+        var from: [String]
+        var fromHours: [Int]
+    }
+    struct InterpolatedParameter: Encodable {
+        var recommended: Double
+        var rawTuned: Double
+        /// Relative to the pump value; describes this alternative only.
+        var percentChange: Double
+        var changeTier: String
+        var guardrailStatus: String
+        var from: [String]
+        var fromSecondsSinceMidnight: [Int]
     }
     struct ParameterScheduleEntry: Encodable {
         var time: String
@@ -55,6 +80,12 @@ struct RecommendationDTO: Encodable {
         var untuned: Bool
         var daysMissing: Int
         var evidenceCount: Int
+        /// `tuned`, `insufficientData`, or `carriedForward` (ADR 0011). With
+        /// insufficient data, `recommended` is the pump value.
+        var evidenceStatus: String
+        /// The alternative to the pump value for a block with insufficient data.
+        var interpolated: InterpolatedParameter?
+        var note: String?
     }
 
     var daysAnalyzed: Int
@@ -79,7 +110,12 @@ struct RecommendationDTO: Encodable {
     struct LoopEntry: Encodable {
         var time: String
         var startMinutes: Int
+        /// With insufficient data, the pump rate.
         var rate: Double
+        var evidenceStatus: String
+        var interpolatedRate: Double?
+        var interpolatedFrom: [String]?
+        var note: String?
     }
 
     init(_ recommendation: TuningRecommendation, displayUnit: GlucoseUnit, basalIncrement: Double) {
@@ -107,7 +143,15 @@ struct RecommendationDTO: Encodable {
         self.basalIncrement = basalIncrement
         basal = recommendation.basalHours.map { BasalHour($0, increment: basalIncrement) }
         loopBasalSchedule = recommendation.loopBasalSchedule(increment: basalIncrement).map {
-            LoopEntry(time: $0.timeString, startMinutes: $0.startMinutes, rate: $0.rate)
+            LoopEntry(
+                time: $0.timeString,
+                startMinutes: $0.startMinutes,
+                rate: $0.rate,
+                evidenceStatus: $0.evidenceStatus.rawValue,
+                interpolatedRate: $0.insufficientEvidence?.interpolated,
+                interpolatedFrom: $0.insufficientEvidence.flatMap { $0.interpolated == nil ? nil : $0.sourceTimes },
+                note: $0.insufficientEvidence?.note
+            )
         }
     }
 }
@@ -128,7 +172,22 @@ private extension RecommendationDTO.ParameterScheduleEntry {
             guardrailStatus: rec.guardrailStatus.rawValue,
             untuned: entry.untuned,
             daysMissing: entry.daysMissing,
-            evidenceCount: entry.evidenceCount
+            evidenceCount: entry.evidenceCount,
+            evidenceStatus: entry.evidenceStatus.rawValue,
+            interpolated: entry.insufficientEvidence.flatMap { evidence in
+                evidence.interpolated.map { alternative in
+                    RecommendationDTO.InterpolatedParameter(
+                        recommended: alternative.recommendedValue(in: unit),
+                        rawTuned: alternative.rawTunedValue(in: unit),
+                        percentChange: alternative.percentChange,
+                        changeTier: alternative.changeTier.rawValue,
+                        guardrailStatus: alternative.guardrailStatus.rawValue,
+                        from: evidence.sourceTimes,
+                        fromSecondsSinceMidnight: evidence.sources
+                    )
+                }
+            },
+            note: entry.insufficientEvidence?.note
         )
     }
 }
@@ -159,7 +218,21 @@ private extension RecommendationDTO.BasalHour {
             guardrailStatus: rec.guardrailStatus(increment: increment).rawValue,
             untuned: rec.untuned,
             daysMissing: rec.daysMissing,
-            sampleCount: rec.sampleCount
+            sampleCount: rec.sampleCount,
+            evidenceStatus: rec.evidenceStatus.rawValue,
+            interpolated: rec.insufficientEvidence.flatMap { evidence in
+                evidence.interpolated.map { rate in
+                    RecommendationDTO.InterpolatedBasal(
+                        recommended: rate,
+                        recommendedRounded: rec.interpolatedRoundedRate(toIncrement: increment) ?? rate,
+                        changeTier: (rec.interpolatedChangeTier(increment: increment) ?? .minimal).rawValue,
+                        guardrailStatus: (rec.interpolatedGuardrailStatus(increment: increment) ?? .ok).rawValue,
+                        from: evidence.sourceTimes,
+                        fromHours: evidence.sources.map { $0 / 3600 }
+                    )
+                }
+            },
+            note: rec.insufficientEvidence?.note
         )
     }
 }

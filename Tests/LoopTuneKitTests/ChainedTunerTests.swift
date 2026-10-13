@@ -100,13 +100,15 @@ struct ChainedTunerTests {
 
     @Test("days with no data increment daysMissing for every hour")
     func missingDays() throws {
-        // Day 1 has data; day 2 is empty; day 3 has data.
+        // Data until 04:00 on day 2, none in the window from 04:00 on day 2 to
+        // 04:00 on day 3, then data again. Flat glucose is basal evidence that
+        // supports the current rates, so only the empty window is missing.
         var glucose: [GlucoseSample] = []
-        for i in 0..<288 {
+        for i in 0..<(28 * 12) {
             glucose.append(GlucoseSample(date: base.addingTimeInterval(Double(i) * 300), milligramsPerDeciliter: 120))
         }
-        for i in 0..<288 {
-            glucose.append(GlucoseSample(date: base.addingTimeInterval(Double(2 * 288 + i) * 300), milligramsPerDeciliter: 120))
+        for i in (52 * 12)..<(72 * 12) {
+            glucose.append(GlucoseSample(date: base.addingTimeInterval(Double(i) * 300), milligramsPerDeciliter: 120))
         }
         let inputs = TuningInputs(
             profile: try profile(),

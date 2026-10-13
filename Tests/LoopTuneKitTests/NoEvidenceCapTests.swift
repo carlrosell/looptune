@@ -3,8 +3,9 @@ import Foundation
 @testable import LoopTuneKit
 
 /// A historical profile can lie outside the limits anchored to the current
-/// pump. Blocks without usable evidence must still return values inside those
-/// limits, and must say they were not tuned.
+/// pump. Tuners carry a capped value forward for blocks without usable
+/// evidence, and the final recommendation never presents it: such a block
+/// keeps the pump value and says its data was insufficient (ADR 0011).
 @Suite("No-evidence pump-relative caps")
 struct NoEvidenceCapTests {
     // 2023-11-13 00:00 UTC.
@@ -178,7 +179,7 @@ struct NoEvidenceCapTests {
         #expect(carbRatio[0].evidenceCount == 0)
     }
 
-    @Test("final recommendation keeps untuned historical blocks inside pump-relative caps")
+    @Test("final recommendation keeps the pump value for blocks without evidence, not the historical value")
     func finalRecommendation() throws {
         let historical = try profile(isf: 100, cr: 30)
         let pump = try profile(isf: 40, cr: 10)
@@ -193,25 +194,32 @@ struct NoEvidenceCapTests {
         )
         let recommendation = try TuningRecommendation(from: output, daysAnalyzed: 1)
 
+        // No block has evidence, so nothing can be interpolated: only the
+        // pump value is offered.
         #expect(recommendation.sensitivitySchedule.count == 4)
         for block in recommendation.sensitivitySchedule {
             #expect(block.parameter.pumpValue == 40)
-            #expect(block.parameter.recommendedValue == maxISF)
-            #expect(block.untuned)
+            #expect(block.parameter.recommendedValue == 40)
+            #expect(block.parameter.rawTunedValue == 40)
+            #expect(block.parameter.changeTier == .minimal)
+            #expect(block.evidenceStatus == .insufficientData)
+            #expect(block.insufficientEvidence?.interpolated == nil)
             #expect(block.evidenceDescription("samples") == "no data")
         }
-        #expect(recommendation.sensitivity.recommendedValue <= maxISF + 1e-9)
+        #expect(recommendation.sensitivity.recommendedValue == 40)
+        #expect(recommendation.sensitivity.rawTunedValue == 40)
 
         #expect(recommendation.carbRatioSchedule.count == 1)
         let carbRatio = recommendation.carbRatioSchedule[0]
         #expect(carbRatio.parameter.pumpValue == 10)
-        #expect(carbRatio.parameter.recommendedValue == maxCR)
-        #expect(carbRatio.untuned)
+        #expect(carbRatio.parameter.recommendedValue == 10)
+        #expect(carbRatio.evidenceStatus == .insufficientData)
+        #expect(carbRatio.insufficientEvidence?.interpolated == nil)
         #expect(carbRatio.evidenceDescription("meals") == "no data")
-        #expect(recommendation.carbRatio.recommendedValue == maxCR)
+        #expect(recommendation.carbRatio.recommendedValue == 10)
     }
 
-    @Test("historical-profile pipeline returns capped ISF and CR without block evidence")
+    @Test("historical-profile pipeline returns the pump ISF and CR without block evidence")
     func historicalPipeline() throws {
         // The analysis covers two past days on ISF 100 / CR 30. The current
         // pump profile, ISF 40 / CR 10, was applied after the window. Flat
@@ -240,20 +248,34 @@ struct NoEvidenceCapTests {
 
         #expect(recommendation.daysTuned != nil)
         #expect(recommendation.settingsChanges.isEmpty)
+        // Before ADR 0011 each ISF block recommended 57.143 (ISF 100 capped
+        // at 40 / 0.7) with a "large" tier. No ISF block has evidence, so each
+        // now offers only the pump value.
         #expect(recommendation.sensitivitySchedule.count == 4)
         for block in recommendation.sensitivitySchedule {
             #expect(block.parameter.pumpValue == 40)
-            #expect(block.parameter.recommendedValue >= minISF - 0.0005)
-            #expect(block.parameter.recommendedValue <= maxISF + 0.0005)
-            #expect(block.untuned)
+            #expect(block.parameter.recommendedValue == 40)
+            #expect(block.parameter.changeTier == .minimal)
+            #expect(block.evidenceStatus == .insufficientData)
+            #expect(block.insufficientEvidence?.interpolated == nil)
             #expect(block.evidenceCount == 0)
         }
+        #expect(recommendation.sensitivity.recommendedValue == 40)
         #expect(recommendation.carbRatioSchedule.count == 1)
         let carbRatio = recommendation.carbRatioSchedule[0]
         #expect(carbRatio.parameter.pumpValue == 10)
-        #expect(carbRatio.parameter.recommendedValue >= minCR - 0.0005)
-        #expect(carbRatio.parameter.recommendedValue <= maxCR + 0.0005)
-        #expect(carbRatio.untuned)
+        #expect(carbRatio.parameter.recommendedValue == 10)
+        #expect(carbRatio.evidenceStatus == .insufficientData)
+        #expect(carbRatio.insufficientEvidence?.interpolated == nil)
         #expect(carbRatio.evidenceCount == 0)
+
+        // Every output says so instead of presenting 57.143.
+        let report = TuningReport.render(recommendation)
+        #expect(!report.contains("57.1"))
+        #expect(report.contains("Insulin Sensitivity   40.0 mg/dL/U  —             insufficient data"))
+        #expect(report.contains("Only the pump value is shown."))
+        let json = try RecommendationJSON.encode(recommendation)
+        #expect(!json.contains("57.14"))
+        #expect(json.contains("\"evidenceStatus\" : \"insufficientData\""))
     }
 }

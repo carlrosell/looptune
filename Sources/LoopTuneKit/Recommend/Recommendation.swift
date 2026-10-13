@@ -102,7 +102,14 @@ public struct BasalHourRecommendation: Sendable, Equatable, Identifiable {
     /// Loop guardrail status of `recommendedRate`. Use
     /// `guardrailStatus(increment:)` for the value entered into Loop.
     public var guardrailStatus: LoopGuardrails.Status
+    /// True when no basal evidence under the final settings informed this hour.
     public var untuned: Bool
+    /// Set when this hour's own evidence was insufficient (ADR 0011). Its
+    /// `recommendedRate` is then the pump rate, and the alternative is the
+    /// rate interpolated from the nearest hours with evidence, inside this
+    /// hour's limits and before rounding. `nil` for tuned hours and for runs
+    /// saved before ADR 0011.
+    public var insufficientEvidence: InsufficientEvidence<Double>?
     /// Day windows in which this hour received no tuning data (confidence:
     /// higher = less real data behind the recommendation for this hour).
     public var daysMissing: Int
@@ -134,19 +141,61 @@ public struct BasalHourRecommendation: Sendable, Equatable, Identifiable {
         let limits = Self.limits(pumpRate: pumpRate, caps: caps)
         self.minimumRate = limits.minimum
         self.maximumRate = limits.maximum
-        let clamped = LoopGuardrails.clamp(rawTunedRate, to: LoopGuardrails.basalRate)
-        if limits.minimum <= limits.maximum {
-            self.recommendedRate = min(max(clamped.value, limits.minimum), limits.maximum)
-            self.guardrailStatus = clamped.status
-        } else {
-            // No rate satisfies both the caps and Loop's limits: keep the pump
-            // rate. This preserves zero rates instead of raising them to 0.05.
-            self.recommendedRate = pumpRate
-            self.guardrailStatus = Self.status(of: pumpRate)
-        }
+        let clamped = Self.limited(rawTunedRate, pumpRate: pumpRate, minimum: limits.minimum, maximum: limits.maximum)
+        self.recommendedRate = clamped.rate
+        self.guardrailStatus = clamped.status
         self.untuned = untuned
         self.daysMissing = daysMissing
         self.sampleCount = sampleCount
+    }
+
+    /// An hour without sufficient evidence of its own (ADR 0011). The
+    /// recommended rate is the pump rate. `interpolatedRate`, when supplied,
+    /// is limited like a tuned rate and offered beside it.
+    public init(
+        hour: Int,
+        pumpRate: Double,
+        interpolatedRate: Double?,
+        sources: [Int],
+        daysMissing: Int = 0,
+        sampleCount: Int = 0,
+        caps: TuningCaps = TuningCaps()
+    ) {
+        self.init(
+            hour: hour,
+            pumpRate: pumpRate,
+            rawTunedRate: pumpRate,
+            untuned: true,
+            daysMissing: daysMissing,
+            sampleCount: sampleCount,
+            caps: caps
+        )
+        let alternative = interpolatedRate.map {
+            Self.round3(Self.limited($0, pumpRate: pumpRate, minimum: minimumRate, maximum: maximumRate).rate)
+        }
+        self.insufficientEvidence = InsufficientEvidence(interpolated: alternative, sources: sources)
+    }
+
+    /// `rate` inside Loop's absolute limits and `minimum...maximum`. When no
+    /// rate satisfies both, the pump rate is kept. This preserves zero rates
+    /// instead of raising them to 0.05.
+    private static func limited(
+        _ rate: Double,
+        pumpRate: Double,
+        minimum: Double,
+        maximum: Double
+    ) -> (rate: Double, status: LoopGuardrails.Status) {
+        guard minimum <= maximum else { return (pumpRate, status(of: pumpRate)) }
+        let clamped = LoopGuardrails.clamp(rate, to: LoopGuardrails.basalRate)
+        return (min(max(clamped.value, minimum), maximum), clamped.status)
+    }
+
+    private static func round3(_ value: Double) -> Double { (value * 1000).rounded() / 1000 }
+
+    /// Whether this hour's evidence supports its recommended rate.
+    public var evidenceStatus: BlockEvidenceStatus {
+        if insufficientEvidence != nil { return .insufficientData }
+        return untuned ? .carriedForward : .tuned
     }
 
     static func limits(pumpRate: Double, caps: TuningCaps) -> (minimum: Double, maximum: Double) {
@@ -171,6 +220,23 @@ public struct BasalHourRecommendation: Sendable, Equatable, Identifiable {
         ChangeTier.classify(pump: pumpRate, tuned: roundedRate(toIncrement: increment))
     }
 
+    /// The interpolated alternative rounded like a recommendation, or `nil`
+    /// when the hour has evidence or no alternative.
+    public func interpolatedRoundedRate(toIncrement increment: Double = Self.loopBasalIncrement) -> Double? {
+        insufficientEvidence?.interpolated.map { rounded($0, increment: increment) }
+    }
+
+    /// Change class of the rounded interpolated alternative relative to the
+    /// pump rate. It describes the alternative, not a tuned change.
+    public func interpolatedChangeTier(increment: Double = Self.loopBasalIncrement) -> ChangeTier? {
+        interpolatedRoundedRate(toIncrement: increment).map { ChangeTier.classify(pump: pumpRate, tuned: $0) }
+    }
+
+    /// Loop guardrail status of the rounded interpolated alternative.
+    public func interpolatedGuardrailStatus(increment: Double = Self.loopBasalIncrement) -> LoopGuardrails.Status? {
+        interpolatedRoundedRate(toIncrement: increment).map(Self.status(of:))
+    }
+
     /// Loop guardrail status of `roundedRate(toIncrement:)`. It is `.atLimit`
     /// only when the entered rate is the Loop limit `recommendedRate` was
     /// clamped to.
@@ -186,15 +252,20 @@ public struct BasalHourRecommendation: Sendable, Equatable, Identifiable {
     /// The value a user can actually enter into Loop: the recommended rate
     /// rounded to the nearest pump increment between `minimumRate` and
     /// `maximumRate`. When no increment lies in that range, the pump rate is
-    /// kept unchanged.
+    /// kept unchanged. An hour with insufficient data keeps the pump rate.
     public func roundedRate(toIncrement increment: Double = Self.loopBasalIncrement) -> Double {
-        guard increment.isFinite, increment > 0 else { return recommendedRate }
+        guard insufficientEvidence == nil else { return pumpRate }
+        return rounded(recommendedRate, increment: increment)
+    }
+
+    private func rounded(_ rate: Double, increment: Double) -> Double {
+        guard increment.isFinite, increment > 0 else { return rate }
         // Tolerate floating-point error in limits such as 0.15 × 1.2.
         let tolerance = 1e-9
         let lowestStep = (minimumRate / increment - tolerance).rounded(.up)
         let highestStep = (maximumRate / increment + tolerance).rounded(.down)
         guard lowestStep <= highestStep else { return pumpRate }
-        let step = min(max((recommendedRate / increment).rounded(), lowestStep), highestStep)
+        let step = min(max((rate / increment).rounded(), lowestStep), highestStep)
         // Shave floating-point dust (e.g. 0.15000000000000002).
         return (step * increment * 10_000).rounded() / 10_000
     }
@@ -211,19 +282,27 @@ public struct ParameterScheduleRecommendation: Sendable, Equatable, Identifiable
     /// compatibility. Schedule identity and reconstruction use seconds.
     public var startMinutes: Int { secondsSinceMidnight / 60 }
     public var parameter: ParameterRecommendation
+    /// True when this block had too little usable evidence under the final
+    /// settings.
     public var untuned: Bool
     /// Usable ISF samples or logged meals behind this block.
     public var evidenceCount: Int
     /// Chained day windows in which this block had no usable evidence.
     public var daysMissing: Int
+    /// Set when this block's own evidence was insufficient (ADR 0011). Its
+    /// `parameter` then recommends the pump value, and the alternative holds
+    /// the value interpolated from the nearest blocks with evidence. `nil`
+    /// for tuned blocks and for runs saved before ADR 0011.
+    public var insufficientEvidence: InsufficientEvidence<ParameterRecommendation>?
 
     public var timeString: String {
-        let hour = secondsSinceMidnight / 3600
-        let minute = secondsSinceMidnight % 3600 / 60
-        let second = secondsSinceMidnight % 60
-        return second == 0
-            ? String(format: "%02d:%02d", hour, minute)
-            : String(format: "%02d:%02d:%02d", hour, minute, second)
+        InsufficientEvidence<ParameterRecommendation>.timeString(secondsSinceMidnight)
+    }
+
+    /// Whether this block's evidence supports its recommended value.
+    public var evidenceStatus: BlockEvidenceStatus {
+        if insufficientEvidence != nil { return .insufficientData }
+        return untuned ? .carriedForward : .tuned
     }
 
     public init(
@@ -231,13 +310,15 @@ public struct ParameterScheduleRecommendation: Sendable, Equatable, Identifiable
         parameter: ParameterRecommendation,
         untuned: Bool,
         evidenceCount: Int = 0,
-        daysMissing: Int = 0
+        daysMissing: Int = 0,
+        insufficientEvidence: InsufficientEvidence<ParameterRecommendation>? = nil
     ) {
         self.secondsSinceMidnight = secondsSinceMidnight
         self.parameter = parameter
-        self.untuned = untuned
+        self.untuned = untuned || insufficientEvidence != nil
         self.evidenceCount = evidenceCount
         self.daysMissing = daysMissing
+        self.insufficientEvidence = insufficientEvidence
     }
 
     /// Compatibility initializer for callers that only have minute offsets.
@@ -261,7 +342,7 @@ public struct ParameterScheduleRecommendation: Sendable, Equatable, Identifiable
         var description: String
         if untuned && evidenceCount == 0 {
             description = "no data"
-        } else if untuned {
+        } else if untuned && insufficientEvidence == nil {
             description = "\(evidenceCount) \(evidenceName), unchanged"
         } else {
             description = "\(evidenceCount) \(evidenceName)"
@@ -332,45 +413,30 @@ public struct TuningRecommendation: Sendable, Equatable {
             output.carbRatioSchedule.map(\.secondsSinceMidnight),
             parameter: .carbRatio
         )
-        let sensitivitySchedule = output.sensitivitySchedule.map { entry in
-            ParameterScheduleRecommendation(
-                secondsSinceMidnight: entry.secondsSinceMidnight,
-                parameter: ParameterRecommendation(
-                    name: "Insulin Sensitivity",
-                    unit: "mg/dL/U",
-                    pumpValue: entry.pumpValue,
-                    rawTunedValue: entry.tunedValue,
-                    bounds: LoopGuardrails.sensitivity,
-                    isGlucoseDenominated: true
-                ),
-                untuned: entry.untuned,
-                evidenceCount: entry.evidenceCount,
-                daysMissing: entry.daysMissing
-            )
-        }
-        let carbRatioSchedule = output.carbRatioSchedule.map { entry in
-            ParameterScheduleRecommendation(
-                secondsSinceMidnight: entry.secondsSinceMidnight,
-                parameter: ParameterRecommendation(
-                    name: "Carb Ratio",
-                    unit: "g/U",
-                    pumpValue: entry.pumpValue,
-                    rawTunedValue: entry.tunedValue,
-                    bounds: LoopGuardrails.carbRatio,
-                    isGlucoseDenominated: false
-                ),
-                untuned: entry.untuned,
-                evidenceCount: entry.evidenceCount,
-                daysMissing: entry.daysMissing
-            )
-        }
+        let sensitivitySchedule = Self.scheduleRecommendations(
+            output.sensitivitySchedule,
+            name: "Insulin Sensitivity",
+            unit: "mg/dL/U",
+            bounds: LoopGuardrails.sensitivity,
+            isGlucoseDenominated: true,
+            // ISF caps are inverted: a lower sensitivity ratio raises ISF.
+            limits: { pump in (pump / caps.autotuneMax, pump / caps.autotuneMin) }
+        )
+        let carbRatioSchedule = Self.scheduleRecommendations(
+            output.carbRatioSchedule,
+            name: "Carb Ratio",
+            unit: "g/U",
+            bounds: LoopGuardrails.carbRatio,
+            isGlucoseDenominated: false,
+            limits: { pump in (pump * caps.autotuneMin, pump * caps.autotuneMax) }
+        )
         self.sensitivitySchedule = sensitivitySchedule
         self.carbRatioSchedule = carbRatioSchedule
         var sensitivity = ParameterRecommendation(
             name: "Insulin Sensitivity",
             unit: "mg/dL/U",
             pumpValue: Self.timeWeightedAverage(sensitivitySchedule, value: { $0.parameter.pumpValue }),
-            rawTunedValue: output.tunedISF,
+            rawTunedValue: Self.timeWeightedAverage(sensitivitySchedule, value: { $0.parameter.rawTunedValue }),
             bounds: LoopGuardrails.sensitivity,
             isGlucoseDenominated: true
         )
@@ -380,19 +446,40 @@ public struct TuningRecommendation: Sendable, Equatable {
             name: "Carb Ratio",
             unit: "g/U",
             pumpValue: Self.timeWeightedAverage(carbRatioSchedule, value: { $0.parameter.pumpValue }),
-            rawTunedValue: output.tunedCarbRatio,
+            rawTunedValue: Self.timeWeightedAverage(carbRatioSchedule, value: { $0.parameter.rawTunedValue }),
             bounds: LoopGuardrails.carbRatio,
             isGlucoseDenominated: false
         )
         Self.applyScheduleSummary(&carbRatio, from: carbRatioSchedule)
         self.carbRatio = carbRatio
-        self.basalHours = (0..<24).map { hour in
-            BasalHourRecommendation(
+        let tunedHours = (0..<24).map { hour -> BasalHourRecommendation? in
+            guard !output.untunedBasalHours[hour] else { return nil }
+            return BasalHourRecommendation(
                 hour: hour,
                 pumpRate: output.pumpBasalHourly[hour],
                 rawTunedRate: output.tunedBasalHourly[hour],
-                untuned: output.untunedBasalHours[hour],
-                daysMissing: daysMissingByHour?[hour] ?? (output.untunedBasalHours[hour] ? 1 : 0),
+                untuned: false,
+                daysMissing: daysMissingByHour?[hour] ?? 0,
+                sampleCount: output.basalSampleCountByHour[hour],
+                caps: caps
+            )
+        }
+        let hourStarts = (0..<24).map { $0 * 3600 }
+        self.basalHours = (0..<24).map { hour in
+            if let tuned = tunedHours[hour] { return tuned }
+            // The output's rate for an hour without evidence is the value
+            // carried into chained replay, never a recommendation.
+            let interpolation = ScheduleInterpolation.interpolate(
+                at: hour,
+                starts: hourStarts,
+                values: tunedHours.map { $0?.recommendedRate }
+            )
+            return BasalHourRecommendation(
+                hour: hour,
+                pumpRate: output.pumpBasalHourly[hour],
+                interpolatedRate: interpolation?.value,
+                sources: interpolation?.sources ?? [],
+                daysMissing: daysMissingByHour?[hour] ?? 1,
                 sampleCount: output.basalSampleCountByHour[hour],
                 caps: caps
             )
@@ -406,6 +493,15 @@ public struct TuningRecommendation: Sendable, Equatable {
         self.excludedOverrideSamples = excludedOverrideSamples
     }
 
+    /// How many blocks of each schedule had insufficient data (ADR 0011).
+    public var insufficientData: InsufficientDataSummary {
+        InsufficientDataSummary(
+            basalHours: basalHours.filter { $0.insufficientEvidence != nil }.count,
+            sensitivityBlocks: sensitivitySchedule.filter { $0.insufficientEvidence != nil }.count,
+            carbRatioBlocks: carbRatioSchedule.filter { $0.insufficientEvidence != nil }.count
+        )
+    }
+
     public func recommendedSensitivityDailySchedule() throws -> DailySchedule<Double> {
         try DailySchedule(entries: sensitivitySchedule.map {
             .init(secondsSinceMidnight: $0.secondsSinceMidnight, value: $0.parameter.recommendedValue)
@@ -416,6 +512,68 @@ public struct TuningRecommendation: Sendable, Equatable {
         try DailySchedule(entries: carbRatioSchedule.map {
             .init(secondsSinceMidnight: $0.secondsSinceMidnight, value: $0.parameter.recommendedValue)
         })
+    }
+
+    /// Builds one parameter's schedule. A block without sufficient evidence
+    /// recommends its pump value and offers the value interpolated from the
+    /// nearest evidence-backed blocks, inside its own pump-relative `limits`
+    /// and Loop's guardrails (ADR 0011). The output's value for such a block
+    /// is what chained replay carried forward and is never used.
+    private static func scheduleRecommendations(
+        _ entries: [ScheduleTuningOutput],
+        name: String,
+        unit: String,
+        bounds: LoopGuardrails.Bounds,
+        isGlucoseDenominated: Bool,
+        limits: (Double) -> (lower: Double, upper: Double)
+    ) -> [ParameterScheduleRecommendation] {
+        func parameter(pump: Double, raw: Double) -> ParameterRecommendation {
+            ParameterRecommendation(
+                name: name,
+                unit: unit,
+                pumpValue: pump,
+                rawTunedValue: raw,
+                bounds: bounds,
+                isGlucoseDenominated: isGlucoseDenominated
+            )
+        }
+        let tuned = entries.map { entry in
+            entry.untuned ? nil : parameter(pump: entry.pumpValue, raw: entry.tunedValue)
+        }
+        let starts = entries.map(\.secondsSinceMidnight)
+        return entries.indices.map { index in
+            let entry = entries[index]
+            if let tuned = tuned[index] {
+                return ParameterScheduleRecommendation(
+                    secondsSinceMidnight: entry.secondsSinceMidnight,
+                    parameter: tuned,
+                    untuned: false,
+                    evidenceCount: entry.evidenceCount,
+                    daysMissing: entry.daysMissing
+                )
+            }
+            let interpolation = ScheduleInterpolation.interpolate(
+                at: index,
+                starts: starts,
+                values: tuned.map { $0?.recommendedValue }
+            )
+            let alternative = interpolation.map { interpolation in
+                let (lower, upper) = limits(entry.pumpValue)
+                let capped = TuningMath.clamp(interpolation.value, lower, upper)
+                return parameter(pump: entry.pumpValue, raw: (capped * 1000).rounded() / 1000)
+            }
+            return ParameterScheduleRecommendation(
+                secondsSinceMidnight: entry.secondsSinceMidnight,
+                parameter: parameter(pump: entry.pumpValue, raw: entry.pumpValue),
+                untuned: true,
+                evidenceCount: entry.evidenceCount,
+                daysMissing: entry.daysMissing,
+                insufficientEvidence: InsufficientEvidence(
+                    interpolated: alternative,
+                    sources: interpolation?.sources ?? []
+                )
+            )
+        }
     }
 
     private static func timeWeightedAverage(
@@ -448,5 +606,26 @@ public struct TuningRecommendation: Sendable, Equatable {
         } else {
             summary.guardrailStatus = .ok
         }
+    }
+}
+
+/// Counts of blocks without sufficient evidence of their own, for warnings.
+public struct InsufficientDataSummary: Sendable, Equatable {
+    public var basalHours: Int
+    public var sensitivityBlocks: Int
+    public var carbRatioBlocks: Int
+
+    public var isEmpty: Bool { basalHours == 0 && sensitivityBlocks == 0 && carbRatioBlocks == 0 }
+
+    /// For example "3 basal hours, 1 ISF block".
+    public var description: String {
+        func count(_ value: Int, _ singular: String, _ plural: String) -> String? {
+            value == 0 ? nil : "\(value) \(value == 1 ? singular : plural)"
+        }
+        return [
+            count(basalHours, "basal hour", "basal hours"),
+            count(sensitivityBlocks, "ISF block", "ISF blocks"),
+            count(carbRatioBlocks, "carb-ratio block", "carb-ratio blocks"),
+        ].compactMap { $0 }.joined(separator: ", ")
     }
 }
