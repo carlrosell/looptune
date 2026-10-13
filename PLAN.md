@@ -196,8 +196,10 @@ Regular five-minute data gives every datum weight 1, as in oref0.
   evaluated in **profile timezone**.
 - **ISF (per configured Loop block):** per ISF datum
   `ratio = 1 + deviation/BGI`; `fullNewISF = ISF × median(ratios)` (needs ≥10
-  usable five-minute intervals, or 50 minutes, in that block, else unchanged); optional blend toward pump
-  ISF via `adjustmentFraction` (default 1.0 = none);
+  usable five-minute intervals, or 50 minutes, in that block; otherwise the
+  block has insufficient data and keeps the pump value with an interpolated
+  alternative, §3.6); optional blend toward pump ISF via `adjustmentFraction`
+  (default 1.0 = none);
   `newISF = 0.8×ISF + 0.2×adjustedISF`; clamp
   `[pumpISF/autotuneMax, pumpISF/autotuneMin]`. LoopTune preserves the pump's
   existing time boundaries and does not invent new schedule blocks. A flat
@@ -249,13 +251,17 @@ user chooses which to enter:
   weighted by the time between block midpoints;
 - one evidence-backed block in the schedule → its value;
 - none, or a single-block schedule → no alternative, pump value only;
-- capped to the block's pump-relative limits, then Loop's guardrails; basal is
-  rounded to the pump increment like a recommendation.
+- ISF and carb ratio: capped to the block's pump-relative limits, then Loop's
+  guardrails; basal: Loop's guardrails, then the hour's limits, then rounded to
+  the pump increment like a recommendation.
 
-The alternative's change tier is relative to the pump value and labelled as the
-alternative's. JSON keeps its existing keys (`recommended` = pump value) and adds
-`evidenceStatus`, `interpolated` and `note`; the Loop schedule keeps the pump
-rate and marks the entry with both values.
+The alternative's change tier and guardrail status are relative to the pump
+value and labelled as the alternative's. The pump value is shown at its stored
+precision wherever it is a choice. JSON keeps its existing keys (`recommended` =
+pump value) and adds `evidenceStatus`, `interpolated`, `note` and a top-level
+`insufficientData` summary; the Loop schedule keeps the pump rate and marks the
+entry with both values. The basal chart draws no LoopTune line for these hours:
+they are shaded and the alternative is dashed.
 
 ---
 

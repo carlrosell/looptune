@@ -62,9 +62,12 @@ interpolated from evidence-backed blocks in the same schedule:
   a flat carb ratio, there is no alternative and only the pump value is shown.
 - Neighbour values are their final recommended values: guardrail-clamped for
   ISF and carb ratio, inside the hour's limits and unrounded for basal.
-- The result is capped to the block's own pump-relative limits (CORE-01),
-  rounded to 3 decimals, and then clamped to Loop's guardrails. A basal
-  alternative is rounded to the pump increment within the hour's limits like
+- For ISF and carb ratio, the result is capped to the block's own
+  pump-relative limits (CORE-01), rounded to 3 decimals, and then clamped to
+  Loop's guardrails.
+- For basal, the result is clamped to Loop's guardrails, then to the hour's
+  limits (the pump-relative caps within Loop's absolute range), and rounded
+  to 3 decimals. It is rounded to the pump increment within those limits like
   a recommendation (CORE-02).
 
 The alternative carries its own change tier and guardrail status, relative to
@@ -85,15 +88,33 @@ version stored. Every output marks insufficient blocks, names the sources, and
 shows both values:
 
 - The app's results show a warning, both values in each schedule and the basal
-  table, and a note per block. A saved run's history row warns when it has such
+  table, and a note per block. An alternative outside Loop's recommended range
+  or at its limit carries the same warning icon as a tuned value. The basal
+  chart has no LoopTune line for these hours: they are shaded, the alternative
+  is drawn dashed, and the tooltip lists the pump rate and the alternative. A
+  headline change badge reads "insufficient data" when no block of that
+  parameter had evidence. A saved run's history row warns when it has such
   blocks.
+- Wherever the pump value is offered as a choice, it is shown at the precision
+  it was stored with (up to three decimals), not rounded to the display
+  precision or the pump increment. A 0.825 U/hr rate is never shown as 0.82 or
+  0.83. An ISF converted from mg/dL to mmol/L keeps two decimals.
 - The text report adds a warning line, a "Choose: pump … or interpolated …"
-  line and note per ISF or carb-ratio block, and both values per basal hour.
-  A parameter whose blocks all lack evidence shows no average.
+  line and note per ISF or carb-ratio block, and both values per basal hour
+  and Loop entry. Every alternative shows its guardrail status. A parameter
+  whose blocks all lack evidence shows no average.
 - The JSON export keeps every existing key. `recommended` and
-  `recommendedRounded` hold the pump value for these blocks. New fields are
-  `evidenceStatus`, `interpolated` (value, rounding, tier, status and sources)
-  and `note`.
+  `recommendedRounded` hold the pump value for these blocks. Each basal hour
+  and schedule block gains `evidenceStatus`, `note` and, when an alternative
+  exists, `interpolated`. A basal hour's `interpolated` holds `recommended`,
+  `recommendedRounded`, `changeTier`, `guardrailStatus`, `from` and
+  `fromHours`. An ISF or carb-ratio block's holds `recommended`, `rawTuned`,
+  `percentChange`, `changeTier`, `guardrailStatus`, `from` and
+  `fromSecondsSinceMidnight`. Loop schedule entries gain `evidenceStatus`,
+  `interpolatedRate`, `interpolatedFrom` and `note`. A top-level
+  `insufficientData` object counts the blocks per schedule and sets
+  `allBasalHours`, `allSensitivityBlocks` or `allCarbRatioBlocks` when the
+  matching daily summary repeats the pump values.
 - The Loop schedule keeps the pump rate as each entry's `rate`, marks the entry
   and lists the interpolated rate and sources. Such entries never merge with
   tuned hours.
@@ -144,8 +165,17 @@ Saved runs without the new key decode with `carriedForward` status and render
 as before. Older versions ignore the new key, so they still read new runs and
 show these blocks as untuned at the pump value.
 
+**Known limitation.** The evidence thresholds are uneven. One basal-categorized
+five-minute interval at hour h makes hours h−3…h−1 tuned, and so usable as
+interpolation sources, while an ISF block needs 50 minutes of usable ratios.
+A basal minimum duration would change tuning results and needs its own
+decision; this ADR does not set one.
+
 `NoEvidenceInterpolationTests` covers the rule (between neighbours, one-sided,
 none, wrap at midnight, a scalar), caps, guardrails and rounding of the
 alternative, the pipeline result, the report, JSON and Loop schedule, and
-legacy decoding. `NoEvidenceCapTests` pins the #26 case. The oref0 parity
+legacy decoding, guardrail status and stored pump precision in every output,
+the JSON summary, and rejection of a saved alternative without sources.
+`BasalChartDataTests` covers the chart series, shading and tooltip.
+`NoEvidenceCapTests` pins the #26 case. The oref0 parity
 tests run in both basal modes.
