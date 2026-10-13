@@ -46,6 +46,34 @@ public struct TuningOutput: Sendable, Equatable {
         case outOfOrderOffset(ScheduledParameter, previousOffset: Int, offset: Int)
     }
 
+    /// A per-hour collection that must hold one entry for each local hour.
+    public enum HourlyCollection: String, Sendable, Equatable, CaseIterable {
+        case tunedBasal
+        case pumpBasal
+        case untunedBasal
+        case basalSampleCount
+        /// The chained tuner's `daysMissingByHour`, when supplied to
+        /// `TuningRecommendation`.
+        case daysMissing
+    }
+
+    /// A per-hour collection does not contain `expectedCount` entries.
+    public struct HourlyCountError: Error, Sendable, Equatable {
+        public static let expectedCount = 24
+
+        public var collection: HourlyCollection
+        public var count: Int
+
+        public init(collection: HourlyCollection, count: Int) {
+            self.collection = collection
+            self.count = count
+        }
+    }
+
+    // The hourly arrays hold 24 entries, indexed by local hour. The throwing
+    // initializer checks them. The nonthrowing initializer and the public
+    // properties cannot, so `TuningRecommendation.init(from:)` checks them again
+    // before indexing and throws `HourlyCountError` instead of trapping.
     public var tunedBasalHourly: [Double]
     public var pumpBasalHourly: [Double]
     public var untunedBasalHours: [Bool]
@@ -127,6 +155,24 @@ public struct TuningOutput: Sendable, Equatable {
         self.categoryCounts = categoryCounts
         self.totalSamples = totalSamples
         self.basalSampleCountByHour = basalSampleCountByHour
+        try validateHourlyCounts()
+    }
+
+    /// Checks this output's hourly arrays and, when supplied, a matching
+    /// `daysMissingByHour`.
+    func validateHourlyCounts(daysMissingByHour: [Int]? = nil) throws {
+        var counts: [(HourlyCollection, Int)] = [
+            (.tunedBasal, tunedBasalHourly.count),
+            (.pumpBasal, pumpBasalHourly.count),
+            (.untunedBasal, untunedBasalHours.count),
+            (.basalSampleCount, basalSampleCountByHour.count),
+        ]
+        if let daysMissingByHour {
+            counts.append((.daysMissing, daysMissingByHour.count))
+        }
+        for (collection, count) in counts where count != HourlyCountError.expectedCount {
+            throw HourlyCountError(collection: collection, count: count)
+        }
     }
 
     static func validate(
