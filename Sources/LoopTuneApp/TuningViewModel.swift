@@ -125,7 +125,7 @@ final class TuningViewModel {
                 let run = SavedRun(
                     id: RunStore.makeID(createdAt: request.endingAt),
                     createdAt: request.endingAt,
-                    siteHost: output.host,
+                    origin: output.origin,
                     days: request.configuration.days,
                     insulinType: request.configuration.insulinType,
                     recommendation: output.recommendation,

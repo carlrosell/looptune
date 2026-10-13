@@ -21,13 +21,16 @@ struct DetailPane: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let run = model.selectedRun {
                 VStack(spacing: 0) {
-                    Picker("View", selection: $tab) {
-                        Text("Recommendations").tag(Tab.recommendations)
-                        Text("Data & diagnostics").tag(Tab.diagnostics)
+                    VStack(spacing: 6) {
+                        Picker("View", selection: $tab) {
+                            Text("Recommendations").tag(Tab.recommendations)
+                            Text("Data & diagnostics").tag(Tab.diagnostics)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                        RunSourceLabel(source: run.source)
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
                     .padding(10)
 
                     Divider()

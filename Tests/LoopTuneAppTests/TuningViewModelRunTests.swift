@@ -24,7 +24,7 @@ struct TuningViewModelRunTests {
         let request = try #require(runner.requests.first)
         #expect(request.token == "token-a")
         #expect(request.configuration.days == 14)
-        try runner.succeed(host: "site-a.example.com")
+        try runner.succeed(origin: siteA)
         await model.runTask?.value
 
         #expect(model.phase == .done)
@@ -52,7 +52,7 @@ struct TuningViewModelRunTests {
         #expect(model.isRunning)
         #expect(!model.canRun)
         model.run()
-        try runner.succeed(host: "site-a.example.com")
+        try runner.succeed(origin: siteA)
         await model.runTask?.value
         #expect(!model.isRunning)
         #expect(model.canRun)
@@ -77,7 +77,7 @@ struct TuningViewModelRunTests {
         model.run()
         try await runner.waitForRequest()
         model.token = ""
-        try runner.succeed(host: "site-a.example.com")
+        try runner.succeed(origin: siteA)
         await model.runTask?.value
 
         #expect(model.phase == .done)
@@ -102,7 +102,7 @@ struct TuningViewModelRunTests {
         model.token = "edited-b"
         model.days = 30
         model.insulinType = .lyumjev
-        try runner.succeed(host: "site-a.example.com")
+        try runner.succeed(origin: siteA)
         await model.runTask?.value
 
         #expect(model.phase == .done)
@@ -112,6 +112,7 @@ struct TuningViewModelRunTests {
         #expect(store.tokens == ["site-a.example.com": "token-a", "site-b.example.com": "token-b"])
         let run = try #require(model.selectedRun)
         #expect(run.siteHost == "site-a.example.com")
+        #expect(run.source.label == siteA)
         #expect(run.days == 7)
         #expect(run.insulinType == .novolog)
         // Completion leaves the form alone rather than overwriting edits.
@@ -153,7 +154,7 @@ struct TuningViewModelRunTests {
 
         model.run()
         try await runner.waitForRequest()
-        try runner.succeed(host: "site-a.example.com")
+        try runner.succeed(origin: siteA)
         await model.runTask?.value
 
         #expect(model.phase == .done)
@@ -181,7 +182,7 @@ struct TuningViewModelRunTests {
 
         model.run()
         try await runner.waitForRequest()
-        try runner.succeed(host: "site-a.example.com")
+        try runner.succeed(origin: siteA)
         await model.runTask?.value
 
         #expect(model.phase == .done)
@@ -218,10 +219,13 @@ struct TuningViewModelRunTests {
 
         model.run()
         try await runner.waitForRequest()
-        try runner.succeed(host: "site-a.example.com")
+        // The origin the live runner reports for the URL as entered.
+        let entered = try #require(runner.requests.last).urlString
+        try runner.succeed(origin: NightscoutClient(rawURLString: entered, credentials: .none).origin.description)
         await model.runTask?.value
 
         #expect(model.phase == .done)
+        #expect(model.selectedRun?.source.label == "https://site-a.example.com:8443")
         #expect(store.urlString == "https://site-a.example.com:8443")
         #expect(model.urlString == "https://site-a.example.com:8443")
         #expect(store.tokens == ["site-a.example.com:8443": "token-a"])
@@ -229,6 +233,36 @@ struct TuningViewModelRunTests {
         let relaunched = TuningViewModel(store: store, runStore: Self.temporaryRunStore(), runner: runner.run)
         #expect(relaunched.urlString == "https://site-a.example.com:8443")
         #expect(relaunched.token == "token-a")
+    }
+
+    @Test("history shows each run's own site, including sites that differ only by port")
+    func historyShowsEachRunsSource() async throws {
+        let siteOn1337 = "http://localhost:1337"
+        let siteOn8080 = "http://localhost:8080"
+        let runner = ControlledRunner()
+        let runStore = Self.temporaryRunStore()
+        let model = TuningViewModel(store: InMemorySettingsStore(), runStore: runStore, runner: runner.run)
+
+        var ids: [String: String] = [:]
+        for site in [siteOn1337, siteOn8080] {
+            model.urlString = site
+            model.run()
+            try await runner.waitForRequest()
+            try runner.succeed(origin: site)
+            await model.runTask?.value
+            ids[site] = try #require(model.selectedRun).id
+        }
+        model.urlString = siteB
+
+        for site in [siteOn1337, siteOn8080, siteOn1337] {
+            model.selectedRunID = ids[site]
+            #expect(model.selectedRun?.source.label == site)
+        }
+
+        // The history list reloaded from disk keeps both ports apart.
+        let reloaded = TuningViewModel(store: InMemorySettingsStore(urlString: siteB), runStore: runStore, runner: runner.run)
+        let labels = Dictionary(uniqueKeysWithValues: reloaded.runs.map { ($0.id, $0.source.label) })
+        #expect(labels == [ids[siteOn1337]!: siteOn1337, ids[siteOn8080]!: siteOn8080])
     }
 
     private static func temporaryRunStore() -> RunStore {
@@ -310,7 +344,8 @@ private final class ControlledRunner: @unchecked Sendable {
         throw Timeout()
     }
 
-    func succeed(host: String) throws {
+    func succeed(origin: String) throws {
+        let siteOrigin = try #require(URL(string: origin).flatMap(SiteOrigin.init(url:)))
         let output = TuningOutput(
             tunedBasalHourly: Array(repeating: 1.0, count: 24),
             pumpBasalHourly: Array(repeating: 1.0, count: 24),
@@ -326,7 +361,7 @@ private final class ControlledRunner: @unchecked Sendable {
             daySummaries: [], hourlyDeviation: [],
             meanAbsDeviationBefore: 4, meanAbsDeviationAfter: 3
         )
-        resume(with: .success((recommendation, diagnostics, host)))
+        resume(with: .success((recommendation, diagnostics, siteOrigin)))
     }
 
     func fail(_ error: Error) {
