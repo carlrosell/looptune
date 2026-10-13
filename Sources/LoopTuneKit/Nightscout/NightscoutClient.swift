@@ -108,49 +108,39 @@ public struct NightscoutClient: Sendable {
     public let credentials: NightscoutCredentials
     private let transport: NightscoutTransport
 
-    /// Normalize a user-entered URL down to scheme + host (+ port), stripping any
-    /// pasted path/query (users routinely paste `.../api/v1/...` or `?token=`).
+    /// Reduce a user-entered URL to its canonical origin URL: scheme, host,
+    /// and a non-default port. Pasted paths and queries (users routinely paste
+    /// `.../api/v1/...` or `?token=`) and URL user information are removed, so
+    /// no request carries them. Credentials travel only in `credentials`.
     public init(rawURLString: String, credentials: NightscoutCredentials = .none, transport: NightscoutTransport = URLSessionTransport()) throws {
-        guard let normalized = Self.normalizeBaseURL(rawURLString),
-              let origin = SiteOrigin(url: normalized) else {
+        guard let origin = Self.normalizedOrigin(rawURLString) else {
             throw NightscoutError.invalidURL
         }
-        self.baseURL = normalized
+        self.baseURL = origin.url
         self.origin = origin
         self.credentials = credentials
         self.transport = transport
     }
 
     public init(baseURL: URL, credentials: NightscoutCredentials = .none, transport: NightscoutTransport = URLSessionTransport()) throws {
-        guard let normalized = Self.normalizeBaseURL(baseURL.absoluteString),
-              let origin = SiteOrigin(url: normalized) else {
-            throw NightscoutError.invalidURL
+        try self.init(rawURLString: baseURL.absoluteString, credentials: credentials, transport: transport)
+    }
+
+    /// The origin of a user-entered URL, if the transport policy permits it.
+    /// The policy is checked on the host as entered, because canonicalizing
+    /// can turn a spelling the loopback rule rejects, such as `[::0.0.0.1]`,
+    /// into one it accepts.
+    static func normalizedOrigin(_ raw: String) -> SiteOrigin? {
+        guard let entered = SiteOrigin.url(fromUserInput: raw),
+              TransportPolicy.permitsSite(entered),
+              let origin = SiteOrigin(url: entered) else {
+            return nil
         }
-        self.baseURL = normalized
-        self.origin = origin
-        self.credentials = credentials
-        self.transport = transport
+        return origin
     }
 
     static func normalizeBaseURL(_ raw: String) -> URL? {
-        var string = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !string.isEmpty else { return nil }
-        if !string.contains("://") {
-            string = "https://" + string
-        }
-        guard var components = URLComponents(string: string), let host = components.host, !host.isEmpty else {
-            return nil
-        }
-        let scheme = components.scheme?.lowercased() ?? "https"
-        guard scheme == "https" || (scheme == "http" && TransportPolicy.permitsPlainHTTP(host: host)) else {
-            return nil
-        }
-        components.scheme = scheme
-        components.path = ""
-        components.query = nil
-        components.fragment = nil
-        if components.scheme == nil { components.scheme = "https" }
-        return components.url
+        normalizedOrigin(raw)?.url
     }
 
     // MARK: - Request building

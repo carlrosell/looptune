@@ -43,6 +43,8 @@ protocol ConnectionSettingsStore {
     var urlString: String? { get nonmutating set }
     var days: Int? { get nonmutating set }
     var insulinTypeRaw: String? { get nonmutating set }
+    /// The saved URL with any user information removed. See ADR 0009.
+    func restoreURL() -> String?
     func saveToken(_ token: String?, forHost host: String) -> Bool
     func token(forHost host: String) -> String?
 }

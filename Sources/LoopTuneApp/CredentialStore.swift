@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import LoopTuneKit
 
 /// Persists the connection form between launches: the Nightscout access token
 /// goes in the login Keychain (a generic-password item keyed by site host);
@@ -21,9 +22,24 @@ struct CredentialStore {
         static let insulinType = "insulinType"
     }
 
+    /// The saved connection URL. Writing stores the sanitized form (see
+    /// `sanitizedURLString`), and a value without a site origin clears it.
     var urlString: String? {
         get { defaults.string(forKey: Key.url) }
-        nonmutating set { defaults.set(newValue, forKey: Key.url) }
+        nonmutating set { defaults.set(newValue.flatMap(Self.sanitizedURLString), forKey: Key.url) }
+    }
+
+    /// The saved connection URL for restoring the form. An earlier version
+    /// could save user information in the URL, so a value not already in
+    /// sanitized form is replaced by its sanitized form, or removed when it
+    /// has none. The secret is neither kept nor written back.
+    func restoreURL() -> String? {
+        guard let saved = urlString else { return nil }
+        let sanitized = Self.sanitizedURLString(saved)
+        if sanitized != saved {
+            urlString = sanitized
+        }
+        return sanitized
     }
 
     var days: Int? {
@@ -92,17 +108,22 @@ struct CredentialStore {
         return components.port.map { "\(host):\($0)" } ?? host
     }
 
-    /// Strip paths, query strings, and fragments before writing a non-secret
-    /// connection URL to UserDefaults. A pasted `?token=` must never persist.
+    /// Reduce a connection URL to scheme, host, and port before it is written
+    /// to UserDefaults. Paths, queries, fragments, and user information are
+    /// removed, so neither a pasted `?token=` nor a `user:password@` prefix
+    /// persists, and a URL without a `SiteOrigin` is refused. The host and
+    /// port keep their entered spelling (lowercased), so `accountKey` of the
+    /// result matches the account the token is saved under. See ADR 0009.
     static func sanitizedURLString(_ urlString: String) -> String? {
-        var string = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !string.isEmpty else { return nil }
-        if !string.contains("://") { string = "https://" + string }
-        guard var components = URLComponents(string: string),
-              let host = components.host?.lowercased(),
-              !host.isEmpty else { return nil }
+        guard let url = SiteOrigin.url(fromUserInput: urlString),
+              SiteOrigin(url: url) != nil,
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
         components.scheme = components.scheme?.lowercased()
-        components.host = host
+        components.host = components.host?.lowercased()
+        components.user = nil
+        components.password = nil
         components.path = ""
         components.query = nil
         components.fragment = nil

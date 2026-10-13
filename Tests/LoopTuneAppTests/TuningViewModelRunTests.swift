@@ -190,6 +190,47 @@ struct TuningViewModelRunTests {
         #expect(store.urlString == siteA)
     }
 
+    @Test("restoring a saved URL with user information shows and keeps it without")
+    func restoreRemovesUserInfo() {
+        let store = InMemorySettingsStore(
+            urlString: "https://audit-user:audit-password@Site-A.example.com:8443",
+            tokens: ["site-a.example.com:8443": "token-a"]
+        )
+        let model = TuningViewModel(store: store, runStore: Self.temporaryRunStore(), runner: ControlledRunner().run)
+
+        #expect(model.urlString == "https://site-a.example.com:8443")
+        #expect(model.token == "token-a")
+        #expect(store.urlString == "https://site-a.example.com:8443")
+
+        let invalid = InMemorySettingsStore(urlString: "ftp://audit-user:audit-password@site-a.example.com")
+        let emptyModel = TuningViewModel(store: invalid, runStore: Self.temporaryRunStore(), runner: ControlledRunner().run)
+        #expect(emptyModel.urlString == "")
+        #expect(invalid.urlString == nil)
+    }
+
+    @Test("a run entered with user information saves and restores without it")
+    func userInfoRoundTrip() async throws {
+        let store = InMemorySettingsStore()
+        let runner = ControlledRunner()
+        let model = TuningViewModel(store: store, runStore: Self.temporaryRunStore(), runner: runner.run)
+        model.urlString = "https://audit-user:audit-password@site-a.example.com:8443/api"
+        model.token = "token-a"
+
+        model.run()
+        try await runner.waitForRequest()
+        try runner.succeed(host: "site-a.example.com")
+        await model.runTask?.value
+
+        #expect(model.phase == .done)
+        #expect(store.urlString == "https://site-a.example.com:8443")
+        #expect(model.urlString == "https://site-a.example.com:8443")
+        #expect(store.tokens == ["site-a.example.com:8443": "token-a"])
+
+        let relaunched = TuningViewModel(store: store, runStore: Self.temporaryRunStore(), runner: runner.run)
+        #expect(relaunched.urlString == "https://site-a.example.com:8443")
+        #expect(relaunched.token == "token-a")
+    }
+
     private static func temporaryRunStore() -> RunStore {
         RunStore(directory: FileManager.default.temporaryDirectory
             .appendingPathComponent("looptune-app-runs-\(UUID().uuidString)", isDirectory: true))
@@ -210,6 +251,17 @@ private final class InMemorySettingsStore: ConnectionSettingsStore {
         self.days = days
         self.insulinTypeRaw = insulinTypeRaw
         self.tokens = tokens
+    }
+
+    /// Cleans with the live store's sanitizer and writes the result back the
+    /// way `CredentialStore.restoreURL()` does.
+    func restoreURL() -> String? {
+        guard let saved = urlString else { return nil }
+        let sanitized = CredentialStore.sanitizedURLString(saved)
+        if sanitized != saved {
+            urlString = sanitized
+        }
+        return sanitized
     }
 
     func saveToken(_ token: String?, forHost host: String) -> Bool {

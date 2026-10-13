@@ -76,7 +76,7 @@ final class TuningViewModel {
 
     /// Restore the last-used connection settings (token from the Keychain).
     private func restore() {
-        if let saved = store.urlString {
+        if let saved = store.restoreURL() {
             urlString = saved
             if let host = CredentialStore.accountKey(from: saved), let savedToken = store.token(forHost: host) {
                 token = savedToken
