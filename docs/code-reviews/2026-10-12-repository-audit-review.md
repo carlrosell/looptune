@@ -57,7 +57,7 @@ remediation; workflow adoption has not fixed or closed any finding.
 | CORE-02 | High | [Final basal rounding and minimums can exceed the tuning limits](#core-02-final-basal-rounding-and-minimums-can-exceed-the-tuning-limits) | Fixed | [#13](https://github.com/carlrosell/looptune/issues/13) |
 | CORE-04 | High | [A final settings change can leave the previous recommendation active](#core-04-a-final-settings-change-can-leave-the-previous-recommendation-active) | Fixed | [#15](https://github.com/carlrosell/looptune/issues/15) |
 | SEC-02 | Medium | [URL user information survives sanitization](#sec-02-url-user-information-survives-sanitization) | Fixed | [#5](https://github.com/carlrosell/looptune/issues/5) |
-| SEC-04 | Medium | [Network error messages expose query tokens](#sec-04-network-error-messages-expose-query-tokens) | Open | [#7](https://github.com/carlrosell/looptune/issues/7) |
+| SEC-04 | Medium | [Network error messages expose query tokens](#sec-04-network-error-messages-expose-query-tokens) | Fixed | [#7](https://github.com/carlrosell/looptune/issues/7) |
 | DATA-02 | Medium | [Corrupt legacy schedule offsets can crash history loading](#data-02-corrupt-legacy-schedule-offsets-can-crash-history-loading) | Fixed | [#9](https://github.com/carlrosell/looptune/issues/9) |
 | DATA-03 | Medium | [Oversized remote timestamps crash cache encoding](#data-03-oversized-remote-timestamps-crash-cache-encoding) | Fixed | [#10](https://github.com/carlrosell/looptune/issues/10) |
 | CORE-03 | Medium | [Expanded schedules disagree with clock lookup during fall-back](#core-03-expanded-schedules-disagree-with-clock-lookup-during-fall-back) | Fixed | [#14](https://github.com/carlrosell/looptune/issues/14) |
@@ -181,9 +181,31 @@ policy on every hop. Test redirects using the real URL session transport.
 
 ### SEC-04 Network error messages expose query tokens
 
-Severity: medium. Status: open.
+Severity: medium. Status: fixed.
 
 Tracking: [#7](https://github.com/carlrosell/looptune/issues/7).
+
+Fixed 2026-10-13 in [#58](https://github.com/carlrosell/looptune/pull/58),
+commit `c60d6b1` (`c60d6b1856620853319c76fea1a2a1b7ba6cf49e`), under [ADR
+0010](../../adr/0010-controlled-error-messages.md). `ErrorMessage.describe(_:)`
+in LoopTuneKit is the only path from an error to displayed text in the app and
+the CLI. Messages are built from the error's type, case, and typed fields, never
+from its localized description, `String(describing:)`, user info, or any URL;
+network failures are classified by domain and code through up to eight nested
+underlying errors, keeping distinct messages for authorization, invalid address,
+refused redirect, offline, refused connection, DNS, TLS, timeout, and malformed
+records. The CLI rethrows client and pipeline failures with the same message. A
+lander probe ran the real CLI with a synthetic token against
+`http://127.0.0.1:1`: on b100df2 both `looptune fetch` and `looptune tune`
+printed the raw `NSError`, including `NSErrorFailingURLStringKey` with the
+token; on the merged change both print a connection message without it, with the
+same exit status and identical usage output. With the previous
+`TuningViewModel.describe` restored, the app's refused-connection test fails.
+`ErrorMessageTests` cover the classified codes as `NSError` and `URLError`,
+nested POSIX and OSStatus errors, and tokens planted in failing URLs,
+descriptions, and nested errors. Verified on 2026-10-13 against `main` at
+b100df2: `swift test`, `python3 tools/docs_check.py`, the workflow tool tests,
+and `swift build -c release` passed. The original evidence below is unchanged.
 
 [Sources/LoopTuneApp/TuningViewModel.swift:161](../../Sources/LoopTuneApp/TuningViewModel.swift#L161) formats unknown errors using
 `String(describing:)`, and [Sources/LoopTuneApp/SidebarView.swift:46](../../Sources/LoopTuneApp/SidebarView.swift#L46) displays the result. A refused
