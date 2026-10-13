@@ -76,7 +76,9 @@ struct NoEvidenceInterpolationTests {
         #expect(rec.sensitivitySchedule[0].insufficientEvidence == nil)
         #expect(rec.sensitivitySchedule[0].parameter.recommendedValue == 44)
         // The daily summary averages the pump value for the insufficient block.
-        #expect(abs(rec.sensitivity.recommendedValue - (44 * 4 + 40 * 4 + 48 * 12 + 40 * 4) / 24.0) < 1e-9)
+        let blockHours: [(value: Double, hours: Double)] = [(44, 4), (40, 4), (48, 12), (40, 4)]
+        let expectedAverage = blockHours.reduce(0.0) { $0 + $1.value * $1.hours } / 24
+        #expect(abs(rec.sensitivity.recommendedValue - expectedAverage) < 1e-9)
         #expect(rec.sensitivity.rawTunedValue == rec.sensitivity.recommendedValue)
         #expect(rec.insufficientData == InsufficientDataSummary(basalHours: 0, sensitivityBlocks: 1, carbRatioBlocks: 0))
     }
