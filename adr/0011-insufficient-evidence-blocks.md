@@ -1,6 +1,6 @@
 # 0011. Show the pump value and an interpolated alternative for blocks without evidence
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-13
 - **Deciders:** Project owner
 - **Related:** [#37](https://github.com/carlrosell/looptune/issues/37), [#12](https://github.com/carlrosell/looptune/issues/12) (CORE-01), [#13](https://github.com/carlrosell/looptune/issues/13) (CORE-02), [#15](https://github.com/carlrosell/looptune/issues/15) (CORE-04), [ADR 0004](0004-historical-replay-context.md), [ADR 0007](0007-measure-tuning-evidence-by-cgm-duration.md)
