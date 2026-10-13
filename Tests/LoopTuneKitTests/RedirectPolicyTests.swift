@@ -131,7 +131,7 @@ struct HTTPSRedirectTests {
         try NightscoutClient(
             rawURLString: "https://\(host)",
             credentials: credentials,
-            transport: URLSessionTransport(session: FakeSiteProtocol.session())
+            transport: URLSessionTransport(session: FakeSiteProtocol.session)
         )
     }
 
@@ -190,7 +190,7 @@ struct HTTPSRedirectTests {
     @Test("a request outside the transport policy is not sent")
     func initialRequest() async throws {
         FakeSiteProtocol.register(host: "plain.site.example") { _ in .json(statusJSON) }
-        let transport = URLSessionTransport(session: FakeSiteProtocol.session())
+        let transport = URLSessionTransport(session: FakeSiteProtocol.session)
         let request = URLRequest(url: try #require(URL(string: "http://plain.site.example/api/v1/status.json")))
         await #expect(throws: NightscoutError.invalidURL) {
             _ = try await transport.data(for: request)

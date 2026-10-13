@@ -5,6 +5,16 @@ import Foundation
 /// certificates or network access. Each test registers its own hostnames.
 /// A redirect copies the request, headers included, as `URLSession` does for
 /// HTTP, so the redirect delegate decides what reaches the next site.
+///
+/// `URLSession` tells a protocol that its redirect was followed by stopping
+/// it, but says nothing when the delegate refuses one: it waits for the
+/// protocol to deliver the redirect response itself. A protocol that reports a
+/// redirect and then finishes the load races the delegate's decision. The task
+/// can then complete with neither a response nor an error, which traps in
+/// `URLSession.data(for:delegate:)` (#41), or return the redirect response
+/// for a redirect the delegate followed. This protocol asks the delegate
+/// first and then either reports the redirect or finishes with the redirect
+/// response, never both.
 final class FakeSiteProtocol: URLProtocol, @unchecked Sendable {
     enum Reply: Sendable {
         case redirect(status: Int, location: String)
@@ -14,13 +24,16 @@ final class FakeSiteProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var routes: [String: @Sendable (URLRequest) -> Reply] = [:]
     nonisolated(unsafe) private static var received: [String: [URLRequest]] = [:]
+    /// Set and read only on the thread that loads this request.
+    private var stopped = false
 
     /// A session whose requests are all answered by registered fake sites.
-    static func session() -> URLSession {
+    /// It is shared so the protocol can pass it to the task's delegate.
+    static let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [FakeSiteProtocol.self]
         return URLSession(configuration: configuration)
-    }
+    }()
 
     /// Answer requests for `host` with `reply`. Hosts are unique per test.
     static func register(host: String, reply: @escaping @Sendable (URLRequest) -> Reply) {
@@ -58,9 +71,7 @@ final class FakeSiteProtocol: URLProtocol, @unchecked Sendable {
             let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Location": location])!
             var next = request
             next.url = URL(string: location, relativeTo: url)?.absoluteURL
-            client?.urlProtocol(self, wasRedirectedTo: next, redirectResponse: response)
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocolDidFinishLoading(self)
+            redirect(to: next, after: response)
         case .json(let text):
             let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -69,5 +80,37 @@ final class FakeSiteProtocol: URLProtocol, @unchecked Sendable {
         }
     }
 
-    override func stopLoading() {}
+    override func stopLoading() {
+        stopped = true
+    }
+
+    /// Asks the task's delegate about the redirect without blocking the
+    /// loading thread, then reports the redirect if the delegate follows it or
+    /// finishes with the redirect response if it refuses. The answer arrives on
+    /// another thread, so the result is delivered on the thread and run loop
+    /// mode that started the load.
+    private func redirect(to next: URLRequest, after response: HTTPURLResponse) {
+        guard let task,
+              let ask = task.delegate?.urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:) else {
+            // Without a redirect delegate, the session follows the redirect.
+            client?.urlProtocol(self, wasRedirectedTo: next, redirectResponse: response)
+            return
+        }
+        nonisolated(unsafe) let loader = CFRunLoopGetCurrent()
+        let mode = (RunLoop.current.currentMode ?? .default).rawValue
+        ask(Self.session, task, response, next) { [self] request in
+            CFRunLoopPerformBlock(loader, mode as CFString) { [self] in
+                guard !stopped else { return }
+                if request != nil {
+                    // The session asks the delegate again, stops this load,
+                    // and starts one for `next`.
+                    client?.urlProtocol(self, wasRedirectedTo: next, redirectResponse: response)
+                } else {
+                    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                    client?.urlProtocolDidFinishLoading(self)
+                }
+            }
+            CFRunLoopWakeUp(loader)
+        }
+    }
 }
