@@ -44,4 +44,4 @@ retroactive approvals for them.
 | [0006](0006-same-origin-redirects.md) | Follow redirects only within the request's origin | Accepted |
 | [0007](0007-measure-tuning-evidence-by-cgm-duration.md) | Measure tuning evidence by CGM duration | Accepted |
 | [0008](0008-carb-retention-bound.md) | Bound carb absorption time and derive replay retention from it | Accepted |
-| [0009](0009-url-user-information.md) | Remove URL user information from site addresses | Proposed |
+| [0009](0009-url-user-information.md) | Remove URL user information from site addresses | Accepted |

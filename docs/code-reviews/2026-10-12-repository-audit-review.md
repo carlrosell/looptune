@@ -56,9 +56,9 @@ remediation; workflow adoption has not fixed or closed any finding.
 | CORE-01 | High | [No-evidence parameter paths bypass pump-relative caps](#core-01-no-evidence-parameter-paths-bypass-pump-relative-caps) | Fixed | [#12](https://github.com/carlrosell/looptune/issues/12) |
 | CORE-02 | High | [Final basal rounding and minimums can exceed the tuning limits](#core-02-final-basal-rounding-and-minimums-can-exceed-the-tuning-limits) | Fixed | [#13](https://github.com/carlrosell/looptune/issues/13) |
 | CORE-04 | High | [A final settings change can leave the previous recommendation active](#core-04-a-final-settings-change-can-leave-the-previous-recommendation-active) | Fixed | [#15](https://github.com/carlrosell/looptune/issues/15) |
-| SEC-02 | Medium | [URL user information survives sanitization](#sec-02-url-user-information-survives-sanitization) | Open | [#5](https://github.com/carlrosell/looptune/issues/5) |
+| SEC-02 | Medium | [URL user information survives sanitization](#sec-02-url-user-information-survives-sanitization) | Fixed | [#5](https://github.com/carlrosell/looptune/issues/5) |
 | SEC-04 | Medium | [Network error messages expose query tokens](#sec-04-network-error-messages-expose-query-tokens) | Open | [#7](https://github.com/carlrosell/looptune/issues/7) |
-| DATA-02 | Medium | [Corrupt legacy schedule offsets can crash history loading](#data-02-corrupt-legacy-schedule-offsets-can-crash-history-loading) | Open | [#9](https://github.com/carlrosell/looptune/issues/9) |
+| DATA-02 | Medium | [Corrupt legacy schedule offsets can crash history loading](#data-02-corrupt-legacy-schedule-offsets-can-crash-history-loading) | Fixed | [#9](https://github.com/carlrosell/looptune/issues/9) |
 | DATA-03 | Medium | [Oversized remote timestamps crash cache encoding](#data-03-oversized-remote-timestamps-crash-cache-encoding) | Fixed | [#10](https://github.com/carlrosell/looptune/issues/10) |
 | CORE-03 | Medium | [Expanded schedules disagree with clock lookup during fall-back](#core-03-expanded-schedules-disagree-with-clock-lookup-during-fall-back) | Fixed | [#14](https://github.com/carlrosell/looptune/issues/14) |
 | CORE-05 | Medium | [CGM cadence changes tuning weight and the minimum evidence duration](#core-05-cgm-cadence-changes-tuning-weight-and-the-minimum-evidence-duration) | Fixed | [#16](https://github.com/carlrosell/looptune/issues/16) |
@@ -115,9 +115,30 @@ against bare `::1`. Include that compatibility defect in the same fix.
 
 ### SEC-02 URL user information survives sanitization
 
-Severity: medium. Status: open.
+Severity: medium. Status: fixed.
 
 Tracking: [#5](https://github.com/carlrosell/looptune/issues/5).
+
+Fixed 2026-10-13 in [#50](https://github.com/carlrosell/looptune/pull/50),
+commit `05d06d8` (`05d06d81ca518aa144606c9986bef5da27fa7f6a`), under [ADR
+0009](../../adr/0009-url-user-information.md). Both client initializers build
+the base URL from the canonical `SiteOrigin`, so it never carries user
+information; the SEC-01 loopback rule still checks the host as entered. The
+preferences sanitizer clears user and password and refuses URLs without a site
+origin, every write to the stored URL is sanitized, and restoring a previously
+stored credential-bearing URL rewrites it without the secret or removes it. The
+transport refuses any request or redirect URL with user information, including
+an empty `@`. A lander probe with the audit's input
+`https://audit-user:audit-password@example.com/path?token=audit-token#fragment`,
+an encoded user name, and an empty user found user information retained by both
+the client and the preference sanitizer on 375a689 and by neither on the merged
+change. `URLUserInfoTests`, `CredentialStoreTests`, and
+`TuningViewModelRunTests` cover the initializers, isolated UserDefaults
+persistence and restoration, and the Keychain account key at save and restore.
+Verified on 2026-10-13 against `main` at 375a689 with SEC-02 and DATA-02 merged
+in that order: `swift test`, `python3 tools/docs_check.py`, the workflow tool
+tests, and `swift build -c release` passed. The original evidence below is
+unchanged.
 
 The URL normalizers in [Sources/LoopTuneKit/Nightscout/NightscoutClient.swift:79](../../Sources/LoopTuneKit/Nightscout/NightscoutClient.swift#L79) and
 [Sources/LoopTuneApp/CredentialStore.swift:97](../../Sources/LoopTuneApp/CredentialStore.swift#L97) strip path, query, and fragment but
@@ -207,9 +228,25 @@ invalidate the existing hostname-only cache.
 
 ### DATA-02 Corrupt legacy schedule offsets can crash history loading
 
-Severity: medium. Status: open.
+Severity: medium. Status: fixed.
 
 Tracking: [#9](https://github.com/carlrosell/looptune/issues/9).
+
+Fixed 2026-10-13 in [#43](https://github.com/carlrosell/looptune/pull/43),
+commit `1bdb7d1` (`1bdb7d1207faaf6ee983f75b38472693b7216848`). Saved schedule
+offsets are range-checked before conversion: `secondsSinceMidnight` must be in
+[0, 86400) and legacy `startMinutes` in [0, 1440). Saved basal hours must be in
+[0, 24) and cover each hour exactly once, and saved evidence counts that the
+display multiplies must not overflow. Failures throw
+`DecodingError.dataCorrupted`, and `RunStore.loadAll()` skips the record while
+valid runs load. A lander probe on 375a689 decoded a basal hour of `Int.max`, a
+23-hour schedule, and a `totalSamples` of `Int.max`; the merged change rejects
+all three and still decodes the valid control. Saved diagnostics counts that
+reach the same display path are tracked separately in
+[#52](https://github.com/carlrosell/looptune/issues/52). Verified on 2026-10-13
+against `main` at 375a689 with SEC-02 and DATA-02 merged in that order: `swift
+test`, `python3 tools/docs_check.py`, the workflow tool tests, and `swift build
+-c release` passed. The original evidence below is unchanged.
 
 [Sources/LoopTuneKit/Recommend/Recommendation+Codable.swift:55](../../Sources/LoopTuneKit/Recommend/Recommendation+Codable.swift#L55) multiplies a
 decoded legacy `startMinutes` integer by 60 without validation. An isolated

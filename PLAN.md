@@ -611,3 +611,9 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   clone, a completed run persists the settings it actually used, and
   out-of-range Nightscout timestamps are rejected before they reach the cache.
   The audit records the commits and verification.
+- **2026-10-13**: Landed SEC-02 (#50) and DATA-02 (#43) from wave 3 of the
+  audit remediation. Site URLs lose any user information before requests or
+  storage, and the transport refuses URLs that carry it (ADR 0009, accepted).
+  Saved runs with out-of-day schedule offsets, invalid basal hours, or
+  overflowing evidence counts are skipped instead of crashing the app. The
+  audit records the commits and verification.
