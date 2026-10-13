@@ -138,6 +138,11 @@ URL is remembered.
   for current task state. The [repository audit](docs/code-reviews/2026-10-12-repository-audit-review.md)
   links each finding to its remediation issue.
 - `swift build` / `swift test` (166 tests across 31 suites)
+- `LOOPTUNE_REDIRECT_STRESS=5000 swift test --filter RedirectStressTests/fakeSites`
+  runs rounds of concurrent redirects through the real `URLSessionTransport`
+  (#41). The suite is skipped unless the variable sets a round count. The
+  `loopbackServers` case uses real local servers and is slower, so use about
+  50 rounds for it.
 - `scripts/dev.sh` — watch mode: rebuilds and relaunches the app on every
   save (the app restores its state on launch, so a relaunch is nearly free);
   pass `release` for an optimized build
