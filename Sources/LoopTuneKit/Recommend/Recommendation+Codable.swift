@@ -49,10 +49,27 @@ extension ParameterScheduleRecommendation: Codable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Offsets are range-checked before conversion: a corrupt saved run must
+        // fail to decode rather than trap or produce an offset outside the day.
         if let seconds = try container.decodeIfPresent(Int.self, forKey: .secondsSinceMidnight) {
+            guard (0..<86_400).contains(seconds) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .secondsSinceMidnight,
+                    in: container,
+                    debugDescription: "Schedule offset \(seconds) s is outside [0, 86400)."
+                )
+            }
             self.secondsSinceMidnight = seconds
         } else {
-            self.secondsSinceMidnight = try container.decode(Int.self, forKey: .startMinutes) * 60
+            let minutes = try container.decode(Int.self, forKey: .startMinutes)
+            guard (0..<1_440).contains(minutes) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .startMinutes,
+                    in: container,
+                    debugDescription: "Schedule offset \(minutes) min is outside [0, 1440)."
+                )
+            }
+            self.secondsSinceMidnight = minutes * 60
         }
         self.parameter = try container.decode(ParameterRecommendation.self, forKey: .parameter)
         self.untuned = try container.decode(Bool.self, forKey: .untuned)
