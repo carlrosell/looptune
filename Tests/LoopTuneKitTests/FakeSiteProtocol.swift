@@ -28,6 +28,7 @@ final class FakeSiteProtocol: URLProtocol, @unchecked Sendable {
     private var stopped = false
 
     /// A session whose requests are all answered by registered fake sites.
+    /// It is shared so the protocol can pass it to the task's delegate.
     static let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [FakeSiteProtocol.self]
@@ -96,9 +97,9 @@ final class FakeSiteProtocol: URLProtocol, @unchecked Sendable {
             return
         }
         nonisolated(unsafe) let loader = CFRunLoopGetCurrent()
-        let mode = RunLoop.current.currentMode ?? .default
+        let mode = (RunLoop.current.currentMode ?? .default).rawValue
         ask(Self.session, task, response, next) { [self] request in
-            CFRunLoopPerformBlock(loader, mode.rawValue as CFString) { [self] in
+            CFRunLoopPerformBlock(loader, mode as CFString) { [self] in
                 guard !stopped else { return }
                 if request != nil {
                     // The session asks the delegate again, stops this load,
