@@ -145,3 +145,45 @@ public struct RunDiagnostics: Codable, Sendable, Equatable {
         self.hourlyGlucose = hourlyGlucose
     }
 }
+
+// Saved diagnostics are validated when decoded, like saved recommendations: a
+// corrupt run fails to decode and is skipped instead of trapping when shown.
+
+extension HourDeviation {
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.hour = try container.decodeHourOfDay(forKey: .hour)
+        self.before = try container.decode(Double.self, forKey: .before)
+        self.after = try container.decode(Double.self, forKey: .after)
+        self.sampleCount = try container.decodeEvidenceIntervals(forKey: .sampleCount)
+    }
+}
+
+extension HourlyValueDistribution {
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // The glucose chart compares each hour with the next one.
+        self.hour = try container.decodeHourOfDay(forKey: .hour)
+        self.sampleCount = try container.decode(Int.self, forKey: .sampleCount)
+        self.p10 = try container.decode(Double.self, forKey: .p10)
+        self.p25 = try container.decode(Double.self, forKey: .p25)
+        self.median = try container.decode(Double.self, forKey: .median)
+        self.p75 = try container.decode(Double.self, forKey: .p75)
+        self.p90 = try container.decode(Double.self, forKey: .p90)
+    }
+}
+
+private extension KeyedDecodingContainer {
+    /// Decodes a local clock hour, rejecting one outside the day.
+    func decodeHourOfDay(forKey key: Key) throws -> Int {
+        let hour = try decode(Int.self, forKey: key)
+        guard (0..<24).contains(hour) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: key,
+                in: self,
+                debugDescription: "Hour \(hour) is outside [0, 24)."
+            )
+        }
+        return hour
+    }
+}
