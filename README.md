@@ -123,9 +123,11 @@ The results view shows an hourly CGM percentile profile, time-of-day ISF and
 carb-ratio tables, a pump-vs-tuned basal chart, per-hour data coverage, and the
 full basal table with days-missing confidence. The window toolbar has an
 app-wide mg/dL ↔ mmol/L preference that defaults to your site's unit until you
-change it. Your access token is stored per host and port in the login Keychain;
-paths, fragments, and pasted query tokens are stripped before the URL is
-remembered.
+change it. The connection and analysis settings are locked while an analysis
+runs. After a successful run, the app remembers the URL, window, insulin type,
+and token that produced it. Your access token is stored per host and port in the
+login Keychain; paths, fragments, and pasted query tokens are stripped before the
+URL is remembered.
 
 ## Development
 
