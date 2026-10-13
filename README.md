@@ -60,10 +60,13 @@ separate duration threshold.
 
 ## Validation status
 
-The tuning math is pinned to the reference implementation by **golden parity
-fixtures**: the ISF and basal tuners reproduce the output of oref0's real
-`autotune` JavaScript (run via node against crafted inputs) to within 0.001,
-including its rounding and smoothing quirks. The forward model is the
+Selected tuning math is pinned to the reference implementation by **golden
+parity fixtures**: on three crafted, pre-categorized scenarios, the ISF and
+basal tuners reproduce the output of oref0's real `autotune` JavaScript to
+within 0.001, including its rounding and smoothing quirks. The fixtures do not
+cover carb-ratio tuning, categorization, or replay. See
+[the fixture README](Tests/LoopTuneKitTests/Fixtures/oref0/README.md) for the
+oracle's scope and the regeneration commands. The forward model is the
 unmodified LoopKit `LoopAlgorithm` package. That said, **LoopTune as a whole
 has not been clinically validated** — parity with reference code is an
 engineering guarantee, not a medical one.
