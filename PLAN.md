@@ -628,3 +628,11 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   verification. Errors reach the app and CLI only through controlled messages
   built from the error's type and code, so failing request URLs and access
   tokens are never shown (ADR 0010, accepted).
+- **2026-10-13**: Landed three wave-4 follow-ups to the audit. Saved run
+  diagnostics with out-of-day hours or overflowing evidence counts are skipped
+  on load instead of crashing the diagnostics view, and evidence durations
+  format without overflow (#52, #60). Two test-only flakes are fixed: the
+  view-model tests wait for a run request with a signal instead of a fixed
+  two-second poll (#55, #61), and the chart-rendering tests draw into a bitmap
+  they own instead of reading back `ImageRenderer`'s snapshot (#49, #63). No
+  known flaky tests remain in the suite.
