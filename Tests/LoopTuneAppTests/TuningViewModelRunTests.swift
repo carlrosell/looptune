@@ -321,6 +321,7 @@ private final class ControlledRunner: @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [AnalysisRequest] = []
     private var pending: [CheckedContinuation<AnalysisOutput, Error>] = []
+    private var waiters: [UUID: CheckedContinuation<Void, Error>] = [:]
 
     var requests: [AnalysisRequest] {
         lock.withLock { recorded }
@@ -329,19 +330,46 @@ private final class ControlledRunner: @unchecked Sendable {
     @Sendable
     func run(_ request: AnalysisRequest) async throws -> AnalysisOutput {
         try await withCheckedThrowingContinuation { continuation in
-            lock.withLock {
+            let woken = lock.withLock {
                 recorded.append(request)
                 pending.append(continuation)
+                defer { waiters.removeAll() }
+                return Array(waiters.values)
             }
+            woken.forEach { $0.resume() }
         }
     }
 
-    func waitForRequest() async throws {
-        for _ in 0..<2_000 {
-            if lock.withLock({ !pending.isEmpty }) { return }
-            try await Task.sleep(nanoseconds: 1_000_000)
+    /// Returns once a request is pending. The deadline only catches a run that
+    /// never starts; a slow machine is not a failure.
+    func waitForRequest(timeout: Duration = .seconds(30)) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { try await self.requestPending() }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw Timeout()
+            }
+            defer { group.cancelAll() }
+            try await group.next()
         }
-        throw Timeout()
+    }
+
+    private func requestPending() async throws {
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let result: Result<Void, Error>? = lock.withLock {
+                    if !pending.isEmpty { return .success(()) }
+                    if Task.isCancelled { return .failure(CancellationError()) }
+                    waiters[id] = continuation
+                    return nil
+                }
+                if let result { continuation.resume(with: result) }
+            }
+        } onCancel: {
+            lock.withLock { waiters.removeValue(forKey: id) }?
+                .resume(throwing: CancellationError())
+        }
     }
 
     func succeed(origin: String) throws {
