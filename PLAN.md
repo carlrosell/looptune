@@ -189,9 +189,11 @@ Regular five-minute data gives every datum weight 1, as in oref0.
 - **Basal (per hour, 24 slots):** `basalNeeded(h) = 0.2 × Σdeviations(h) / ISF`.
   Positive → add `basalNeeded/3` to hours h−3, h−2, h−1 (wrap mod 24); negative →
   scale those 3 hours by `1 + basalNeeded/threeHourSum`. Then clamp each hour to
-  `[pumpRate(h)×autotuneMin, pumpRate(h)×autotuneMax]`. Unused-hour smoothing:
-  `0.8×orig + 0.1×lastAdjusted + 0.1×nextAdjusted`, increment `untuned(h)`
-  counter (surfaced as "days missing"). Hours evaluated in **profile timezone**.
+  `[pumpRate(h)×autotuneMin, pumpRate(h)×autotuneMax]`. An hour that no basal
+  evidence informs keeps its current rate and counts as a day missing; oref0's
+  `0.8×orig + 0.1×lastAdjusted + 0.1×nextAdjusted` smoothing is replaced by the
+  interpolated alternative in §3.6 (kept only as a parity-test mode). Hours
+  evaluated in **profile timezone**.
 - **ISF (per configured Loop block):** per ISF datum
   `ratio = 1 + deviation/BGI`; `fullNewISF = ISF × median(ratios)` (needs ≥10
   usable five-minute intervals, or 50 minutes, in that block, else unchanged); optional blend toward pump
@@ -232,6 +234,28 @@ window length. Default window 7 days (max 30), matching AutotuneWeb/nighttune.
 - **Confidence:** per basal hour and per parameter, show days-of-real-data vs
   interpolated (AutotuneWeb's green/red strip). Downweight/flag meal-dominated
   basal hours (they get flattened — `03` pitfalls).
+
+### 3.6 Blocks without sufficient evidence
+
+[ADR 0011](adr/0011-insufficient-evidence-blocks.md). A basal hour, ISF block
+or carb-ratio block whose tuner found no usable evidence (or rejected its
+computation) on every day of the final settings period has **insufficient
+data**. LoopTune makes no recommendation for it: the recommended value is the
+pump value, and the value the tuner carried forward is never shown. Beside it,
+every output shows an **interpolated alternative** and its sources, and the
+user chooses which to enter:
+
+- nearest evidence-backed block before and after, wrapping at midnight,
+  weighted by the time between block midpoints;
+- one evidence-backed block in the schedule → its value;
+- none, or a single-block schedule → no alternative, pump value only;
+- capped to the block's pump-relative limits, then Loop's guardrails; basal is
+  rounded to the pump increment like a recommendation.
+
+The alternative's change tier is relative to the pump value and labelled as the
+alternative's. JSON keeps its existing keys (`recommended` = pump value) and adds
+`evidenceStatus`, `interpolated` and `note`; the Loop schedule keeps the pump
+rate and marks the entry with both values.
 
 ---
 
@@ -427,7 +451,8 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
 - **OQ-3.** UAM handling for Loop: default UAM→basal. Expose as an option?
   nighttune defaults `uam_as_basal = true`. Likely keep as an advanced toggle.
 - **OQ-4 (settled).** Tune existing Loop ISF and carb-ratio schedule blocks
-  independently. Preserve existing boundaries and leave sparse blocks unchanged.
+  independently. Preserve existing boundaries. Sparse blocks keep the pump
+  value and offer an interpolated alternative (§3.6, ADR 0011).
   When Loop has one all-day ISF, suggest conservative six-hour blocks; keep flat
   carb-ratio profiles on the fixture-pinned single-value path.
 - **OQ-5 (settled for v1).** Exclude intervals whose override changes insulin

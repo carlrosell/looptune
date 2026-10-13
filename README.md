@@ -50,7 +50,11 @@ behind each basal hour. Profile changes take effect at their exact timestamps,
 and periods where an override changes insulin needs are excluded and reported.
 ISF and carb ratio are tuned independently for every time block already
 configured in Loop. When Loop has one all-day ISF, LoopTune suggests four
-six-hour ISF blocks instead. Blocks without usable evidence stay unchanged.
+six-hour ISF blocks instead. A basal hour or block without enough evidence of
+its own gets no recommendation: LoopTune shows your pump value and a value
+interpolated from the nearest blocks with evidence, marks it as insufficient
+data in the app, report, JSON and Loop schedule, and leaves the choice to you
+([ADR 0011](adr/0011-insufficient-evidence-blocks.md)).
 Evidence is measured in CGM time, so one-minute and five-minute sensors carry
 the same weight, and the trailing glucose trend covers 20 minutes at any
 cadence. Evidence counts are five-minute intervals of CGM time. An analysis
@@ -63,7 +67,9 @@ separate duration threshold.
 Selected tuning math is pinned to the reference implementation by **golden
 parity fixtures**: on three crafted, pre-categorized scenarios, the ISF and
 basal tuners reproduce the output of oref0's real `autotune` JavaScript to
-within 0.001, including its rounding and smoothing quirks. The fixtures do not
+within 0.001, including its rounding and smoothing quirks. LoopTune itself does
+not smooth basal hours without evidence; the parity tests use an oref0 mode for
+that step ([ADR 0011](adr/0011-insufficient-evidence-blocks.md)). The fixtures do not
 cover carb-ratio tuning, categorization, or replay. See
 [the fixture README](Tests/LoopTuneKitTests/Fixtures/oref0/README.md) for the
 oracle's scope and the regeneration commands. The forward model is the
