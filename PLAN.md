@@ -667,3 +667,11 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   two-second poll (#55, #61), and the chart-rendering tests draw into a bitmap
   they own instead of reading back `ImageRenderer`'s snapshot (#49, #63). No
   known flaky tests remain in the suite.
+- **2026-10-13**: Landed #37 (#62), completing wave 4. A basal hour, ISF
+  block, or carb-ratio block without sufficient evidence under the final
+  settings no longer carries a historical value forward: every output shows
+  the pump value beside a value interpolated from the nearest evidence-backed
+  blocks, with its sources and guardrail status, and the user chooses which to
+  enter (§3.6, ADR 0011, accepted). Production basal tuning drops oref0's
+  0.8/0.1/0.1 smoothing of unused hours; the oref0 parity fixtures still check
+  it through a test-only mode, unchanged.
