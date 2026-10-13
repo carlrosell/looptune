@@ -15,6 +15,7 @@ struct SidebarView: View {
                 SecureField("Access token", text: $model.token, prompt: Text("Token (optional)"))
                     .textFieldStyle(.roundedBorder)
             }
+            .disabled(model.isRunning)
 
             Section("Analysis") {
                 Stepper(value: $model.days, in: 1...30) {
@@ -26,14 +27,15 @@ struct SidebarView: View {
                     }
                 }
             }
+            .disabled(model.isRunning)
 
             Section {
                 Button(action: model.run) {
                     HStack(spacing: 8) {
-                        if model.phase == .running {
+                        if model.isRunning {
                             ProgressView().controlSize(.small)
                         }
-                        Text(model.phase == .running ? "Analyzing…" : "Analyze")
+                        Text(model.isRunning ? "Analyzing…" : "Analyze")
                             .frame(maxWidth: .infinity)
                     }
                 }
