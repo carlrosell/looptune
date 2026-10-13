@@ -623,3 +623,8 @@ Status legend: ⬜ not started · 🟡 in progress · ✅ done · ⏸️ blocked
   the redirect tests no longer races the redirect delegate, which removes the
   intermittent SIGTRAP in the test suite; production redirect handling was
   unchanged. The audit records APP-02's commit and verification.
+- **2026-10-13**: Landed SEC-04 (#58), completing the 2026-10-12 audit
+  remediation: all 20 findings are fixed and recorded with their commits and
+  verification. Errors reach the app and CLI only through controlled messages
+  built from the error's type and code, so failing request URLs and access
+  tokens are never shown (ADR 0010, accepted).

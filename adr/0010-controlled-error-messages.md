@@ -1,6 +1,6 @@
 # 0010. Show errors only through controlled messages
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-13
 - **Deciders:** Project owner
 - **Related:** [#7](https://github.com/carlrosell/looptune/issues/7) (SEC-04), [Repository audit](../docs/code-reviews/2026-10-12-repository-audit-review.md#sec-04-network-error-messages-expose-query-tokens), [ADR 0006](0006-same-origin-redirects.md), [ADR 0009](0009-url-user-information.md)
