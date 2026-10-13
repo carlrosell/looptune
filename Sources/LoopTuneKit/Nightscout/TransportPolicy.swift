@@ -7,11 +7,24 @@ import Glibc
 
 /// Which URLs a Nightscout request may reach. Requests use HTTPS, or plain
 /// HTTP to a strict loopback host, and a redirect may only stay on the origin
-/// of the request it answers. See ADR 0006.
+/// of the request it answers. A URL never carries user information. See ADR
+/// 0006 and ADR 0009.
 enum TransportPolicy {
-    /// Whether `url` may be contacted: it has a `SiteOrigin`, and its scheme is
-    /// `https`, or `http` with a loopback host.
+    /// Whether `url` may be contacted: it carries no user information (not
+    /// even an empty one) and `permitsSite` accepts it.
     static func permits(_ url: URL) -> Bool {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.percentEncodedUser == nil,
+              components.percentEncodedPassword == nil else {
+            return false
+        }
+        return permitsSite(url)
+    }
+
+    /// Whether the site `url` names may be contacted, ignoring user
+    /// information: it has a `SiteOrigin`, and its scheme is `https`, or
+    /// `http` with a loopback host.
+    static func permitsSite(_ url: URL) -> Bool {
         guard let origin = SiteOrigin(url: url) else { return false }
         if origin.scheme == "https" { return true }
         guard let host = URLComponents(url: url, resolvingAgainstBaseURL: false)?.host else { return false }

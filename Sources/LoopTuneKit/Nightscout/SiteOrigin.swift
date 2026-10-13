@@ -53,6 +53,19 @@ public struct SiteOrigin: Hashable, Sendable {
         self.url = canonical
     }
 
+    /// The URL a site address denotes as a user enters it: surrounding
+    /// whitespace is ignored, and an address without `://` is read as
+    /// `https`. The result keeps any user information, path, and query;
+    /// `init(url:)` derives its origin without them.
+    public static func url(fromUserInput input: String) -> URL? {
+        var string = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !string.isEmpty else { return nil }
+        if !string.contains("://") {
+            string = "https://" + string
+        }
+        return URLComponents(string: string)?.url
+    }
+
     /// Whether `port` is the default for `scheme`, so it is omitted from URLs.
     public var usesDefaultPort: Bool {
         port == Self.defaultPort(forScheme: scheme)
