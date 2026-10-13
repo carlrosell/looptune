@@ -90,14 +90,21 @@ public enum TuningReport {
             lines.append("Entries marked ⚠ had insufficient data: the rate is your pump rate, not a recommendation.")
         }
         for entry in loopEntries {
-            var line = pad(entry.timeString, 8) + fmtRate(entry.rate, increment: basalIncrement) + " U/hr"
-            if let evidence = entry.insufficientEvidence {
-                line += "  ⚠ insufficient data: pump \(fmtRate(entry.rate, increment: basalIncrement))"
-                if let interpolated = evidence.interpolated {
-                    line += " or interpolated \(fmtRate(interpolated, increment: basalIncrement)) U/hr from \(evidence.sourceTimes.joined(separator: " and "))"
-                } else {
-                    line += " U/hr only; nothing to interpolate from"
+            guard let evidence = entry.insufficientEvidence else {
+                lines.append(pad(entry.timeString, 8) + fmtRate(entry.rate, increment: basalIncrement) + " U/hr")
+                continue
+            }
+            // The pump rate is one of the choices, so it keeps its precision.
+            let pump = BasalHourRecommendation.formattedPumpRate(entry.rate)
+            var line = pad(entry.timeString, 8) + pump + " U/hr  ⚠ insufficient data: pump \(pump)"
+            if let interpolated = evidence.interpolated {
+                line += " or interpolated \(fmtRate(interpolated, increment: basalIncrement)) U/hr"
+                if let status = guardrailFlag(entry.interpolatedGuardrailStatus ?? .ok) {
+                    line += " (\(status))"
                 }
+                line += " from \(evidence.sourceTimes.joined(separator: " and "))"
+            } else {
+                line += " U/hr only; nothing to interpolate from"
             }
             lines.append(line)
         }
@@ -168,17 +175,19 @@ public enum TuningReport {
                 )
                 continue
             }
-            lines.append(pad(entry.timeString, 8) + pad(pump, 14) + pad("—", 14) + evidence + "  insufficient data")
+            // The pump value is one of the choices, so it keeps its precision.
+            let pumpChoice = rec.formattedPumpValue(in: unit)
+            lines.append(pad(entry.timeString, 8) + pad(pumpChoice, 14) + pad("—", 14) + evidence + "  insufficient data")
             if let alternative = insufficient.interpolated {
                 let value = alternative.formatted(alternative.recommendedValue(in: unit), in: unit)
                 let change = String(format: "%+.0f%%", alternative.percentChange)
                 lines.append(
-                    pad("", 8) + "Choose: pump \(pump) or interpolated \(value) (\(change) relative to pump"
+                    pad("", 8) + "Choose: pump \(pumpChoice) or interpolated \(value) (\(change) relative to pump"
                     + flagSuffix(tier: alternative.changeTier, status: alternative.guardrailStatus, separator: ", ")
                     + ")."
                 )
             } else {
-                lines.append(pad("", 8) + "Pump \(pump) only.")
+                lines.append(pad("", 8) + "Pump \(pumpChoice) only.")
             }
             lines.append(pad("", 8) + insufficient.note)
         }
@@ -189,7 +198,7 @@ public enum TuningReport {
         let label = String(format: "%02d:00", hour.hour)
         if let insufficient = hour.insufficientEvidence {
             let missing = hour.daysMissing > 0 ? String(hour.daysMissing) : ""
-            var flag = "insufficient data: pump \(fmtRate(hour.pumpRate, increment: increment))"
+            var flag = "insufficient data: pump \(BasalHourRecommendation.formattedPumpRate(hour.pumpRate))"
             if let rounded = hour.interpolatedRoundedRate(toIncrement: increment) {
                 var details = [String]()
                 if hour.pumpRate > 0 {
@@ -197,6 +206,9 @@ public enum TuningReport {
                 }
                 let tier = tierFlag(hour.interpolatedChangeTier(increment: increment) ?? .minimal)
                 if !tier.isEmpty { details.append(tier) }
+                if let status = guardrailFlag(hour.interpolatedGuardrailStatus(increment: increment) ?? .ok) {
+                    details.append(status)
+                }
                 details.append("from \(insufficient.sourceTimes.joined(separator: " and "))")
                 flag += " or interpolated \(fmtRate(rounded, increment: increment)) (\(details.joined(separator: ", ")))"
             } else {
@@ -240,12 +252,16 @@ public enum TuningReport {
         var flags: [String] = []
         let tierFlag = tierFlag(tier)
         if !tierFlag.isEmpty { flags.append(tierFlag) }
-        switch status {
-        case .ok: break
-        case .outsideRecommended: flags.append("outside recommended range")
-        case .atLimit: flags.append("clamped to Loop limit")
-        }
+        if let status = guardrailFlag(status) { flags.append(status) }
         return flags.isEmpty ? "" : separator + flags.joined(separator: ", ")
+    }
+
+    private static func guardrailFlag(_ status: LoopGuardrails.Status) -> String? {
+        switch status {
+        case .ok: return nil
+        case .outsideRecommended: return "outside recommended range"
+        case .atLimit: return "clamped to Loop limit"
+        }
     }
 
     private static func tierFlag(_ tier: ChangeTier) -> String {

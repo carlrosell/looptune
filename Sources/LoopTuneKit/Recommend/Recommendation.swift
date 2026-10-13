@@ -75,6 +75,16 @@ public struct ParameterRecommendation: Sendable, Equatable {
     public func formatted(_ value: Double, in displayUnit: GlucoseUnit) -> String {
         String(format: "%.\(decimals(in: displayUnit))f", value)
     }
+
+    /// The pump value in the display unit at the precision it was stored
+    /// with, up to three decimals, for blocks where it is one of the user's
+    /// choices. A value converted to mmol/L keeps the usual two decimals.
+    public func formattedPumpValue(in displayUnit: GlucoseUnit) -> String {
+        let value = pumpValue(in: displayUnit)
+        let standard = decimals(in: displayUnit)
+        let converted = isGlucoseDenominated && displayUnit == .millimolesPerLiter
+        return PumpValueFormat.string(value, decimals: standard...max(standard, 3), fallback: converted ? standard : 3)
+    }
 }
 
 public extension GlucoseUnit {
@@ -206,7 +216,7 @@ public struct BasalHourRecommendation: Sendable, Equatable, Identifiable {
         )
     }
 
-    private static func status(of rate: Double) -> LoopGuardrails.Status {
+    static func status(of rate: Double) -> LoopGuardrails.Status {
         let bounds = LoopGuardrails.basalRate
         return rate < bounds.recommendedMin || rate > bounds.recommendedMax ? .outsideRecommended : .ok
     }
@@ -243,6 +253,12 @@ public struct BasalHourRecommendation: Sendable, Equatable, Identifiable {
     public func guardrailStatus(increment: Double) -> LoopGuardrails.Status {
         let rate = roundedRate(toIncrement: increment)
         return rate == recommendedRate ? guardrailStatus : Self.status(of: rate)
+    }
+
+    /// A pump rate at the precision it was stored with, two or three
+    /// decimals, for hours where it is one of the user's choices.
+    public static func formattedPumpRate(_ rate: Double) -> String {
+        PumpValueFormat.string(rate, decimals: 2...3, fallback: 3)
     }
 
     /// Loop's scheduled-basal granularity on typical pumps (Omnipod, most
@@ -498,7 +514,10 @@ public struct TuningRecommendation: Sendable, Equatable {
         InsufficientDataSummary(
             basalHours: basalHours.filter { $0.insufficientEvidence != nil }.count,
             sensitivityBlocks: sensitivitySchedule.filter { $0.insufficientEvidence != nil }.count,
-            carbRatioBlocks: carbRatioSchedule.filter { $0.insufficientEvidence != nil }.count
+            carbRatioBlocks: carbRatioSchedule.filter { $0.insufficientEvidence != nil }.count,
+            totalBasalHours: basalHours.count,
+            totalSensitivityBlocks: sensitivitySchedule.count,
+            totalCarbRatioBlocks: carbRatioSchedule.count
         )
     }
 
@@ -614,8 +633,34 @@ public struct InsufficientDataSummary: Sendable, Equatable {
     public var basalHours: Int
     public var sensitivityBlocks: Int
     public var carbRatioBlocks: Int
+    /// Block counts of each schedule. Zero when unknown.
+    public var totalBasalHours: Int
+    public var totalSensitivityBlocks: Int
+    public var totalCarbRatioBlocks: Int
+
+    public init(
+        basalHours: Int,
+        sensitivityBlocks: Int,
+        carbRatioBlocks: Int,
+        totalBasalHours: Int = 0,
+        totalSensitivityBlocks: Int = 0,
+        totalCarbRatioBlocks: Int = 0
+    ) {
+        self.basalHours = basalHours
+        self.sensitivityBlocks = sensitivityBlocks
+        self.carbRatioBlocks = carbRatioBlocks
+        self.totalBasalHours = totalBasalHours
+        self.totalSensitivityBlocks = totalSensitivityBlocks
+        self.totalCarbRatioBlocks = totalCarbRatioBlocks
+    }
 
     public var isEmpty: Bool { basalHours == 0 && sensitivityBlocks == 0 && carbRatioBlocks == 0 }
+
+    /// Whether no block of the schedule had evidence, so its daily summary
+    /// repeats the pump values and is not a recommendation.
+    public var allBasalHours: Bool { basalHours > 0 && basalHours == totalBasalHours }
+    public var allSensitivityBlocks: Bool { sensitivityBlocks > 0 && sensitivityBlocks == totalSensitivityBlocks }
+    public var allCarbRatioBlocks: Bool { carbRatioBlocks > 0 && carbRatioBlocks == totalCarbRatioBlocks }
 
     /// For example "3 basal hours, 1 ISF block".
     public var description: String {

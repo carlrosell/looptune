@@ -21,6 +21,11 @@ public struct LoopBasalEntry: Sendable, Equatable, Identifiable {
         self.insufficientEvidence = insufficientEvidence
     }
 
+    /// Loop guardrail status of the rounded interpolated alternative.
+    public var interpolatedGuardrailStatus: LoopGuardrails.Status? {
+        insufficientEvidence?.interpolated.map(BasalHourRecommendation.status(of:))
+    }
+
     public var evidenceStatus: BlockEvidenceStatus {
         insufficientEvidence == nil ? .tuned : .insufficientData
     }

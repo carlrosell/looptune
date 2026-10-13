@@ -84,10 +84,16 @@ extension InsufficientEvidence: Codable where Alternative: Codable {
                 debugDescription: "Interpolation sources must be at most two offsets inside the day."
             )
         }
-        self.init(
-            interpolated: try container.decodeIfPresent(Alternative.self, forKey: .interpolated),
-            sources: sources
-        )
+        let interpolated = try container.decodeIfPresent(Alternative.self, forKey: .interpolated)
+        // The note names the sources, so an alternative needs at least one.
+        guard interpolated == nil || !sources.isEmpty else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .sources,
+                in: container,
+                debugDescription: "An interpolated value needs the blocks it came from."
+            )
+        }
+        self.init(interpolated: interpolated, sources: sources)
     }
 
     public func encode(to encoder: Encoder) throws {

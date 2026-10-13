@@ -58,6 +58,21 @@ public struct InsufficientEvidence<Alternative: Sendable & Equatable>: Sendable,
     }
 }
 
+/// Formats a pump value at the precision it was stored with. A block with
+/// insufficient data offers the pump value as one of the user's choices, so it
+/// must not be shown rounded (ADR 0011).
+public enum PumpValueFormat {
+    /// `value` with the fewest decimals in `decimals` that show it exactly,
+    /// or with `fallback` decimals when none does.
+    public static func string(_ value: Double, decimals: ClosedRange<Int>, fallback: Int) -> String {
+        let places = decimals.first { places in
+            let scaled = value * pow(10, Double(places))
+            return abs(scaled - scaled.rounded()) < 1e-6
+        } ?? fallback
+        return String(format: "%.\(places)f", value)
+    }
+}
+
 /// The interpolation rule for blocks without sufficient evidence (ADR 0011).
 ///
 /// Blocks form a cycle over the day. For a block without evidence, take the

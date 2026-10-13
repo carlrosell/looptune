@@ -80,7 +80,15 @@ struct NoEvidenceInterpolationTests {
         let expectedAverage = blockHours.reduce(0.0) { $0 + $1.value * $1.hours } / 24
         #expect(abs(rec.sensitivity.recommendedValue - expectedAverage) < 1e-9)
         #expect(rec.sensitivity.rawTunedValue == rec.sensitivity.recommendedValue)
-        #expect(rec.insufficientData == InsufficientDataSummary(basalHours: 0, sensitivityBlocks: 1, carbRatioBlocks: 0))
+        #expect(rec.insufficientData == InsufficientDataSummary(
+            basalHours: 0,
+            sensitivityBlocks: 1,
+            carbRatioBlocks: 0,
+            totalBasalHours: 24,
+            totalSensitivityBlocks: 4,
+            totalCarbRatioBlocks: 1
+        ))
+        #expect(!rec.insufficientData.allSensitivityBlocks)
     }
 
     @Test("with one evidence-backed block, every other block takes its value within its own caps")
@@ -394,6 +402,86 @@ struct NoEvidenceInterpolationTests {
         #expect(loop[2]["interpolatedFrom"] as? [String] == ["02:00", "05:00"])
     }
 
+    @Test("an interpolated value outside Loop's recommended range carries that status into every output")
+    func alternativeOutsideRecommendedRange() throws {
+        let rec = try recommendation(sensitivity: [
+            block(0, pump: 380),
+            block(6 * hour, pump: 380),
+            block(12 * hour, pump: 380, tuned: 420),
+            block(18 * hour, pump: 380),
+        ])
+        let alternative = try #require(rec.sensitivitySchedule[0].insufficientEvidence?.interpolated)
+        #expect(alternative.recommendedValue == 420)
+        #expect(alternative.guardrailStatus == .outsideRecommended)
+        // The block itself recommends nothing: the pump value is in range.
+        #expect(rec.sensitivitySchedule[0].parameter.guardrailStatus == .ok)
+        let text = TuningReport.render(rec)
+        #expect(text.contains("Choose: pump 380.0 or interpolated 420.0 (+11% relative to pump, △, outside recommended range)."))
+
+        // A basal alternative is flagged in the hourly row and the Loop entry.
+        var pump = Array(repeating: 1.0, count: 24)
+        var untuned = Array(repeating: false, count: 24)
+        pump[3] = 0
+        untuned[3] = true
+        let basal = try recommendation(pumpBasal: pump, untunedBasal: untuned)
+        #expect(basal.basalHours[3].interpolatedGuardrailStatus() == .outsideRecommended)
+        let entry = try #require(basal.loopBasalSchedule().first { $0.startMinutes == 3 * 60 })
+        #expect(entry.interpolatedGuardrailStatus == .outsideRecommended)
+        let basalText = TuningReport.render(basal)
+        #expect(basalText.contains("insufficient data: pump 0.00 or interpolated 0.00 (outside recommended range, from 02:00 and 04:00)"))
+        #expect(basalText.contains("03:00   0.00 U/hr  ⚠ insufficient data: pump 0.00 or interpolated 0.00 U/hr (outside recommended range) from 02:00 and 04:00"))
+    }
+
+    @Test("a pump value offered as a choice keeps its stored precision")
+    func pumpValuePrecision() throws {
+        var pump = Array(repeating: 1.0, count: 24)
+        var untuned = Array(repeating: false, count: 24)
+        pump[3] = 0.825
+        untuned[3] = true
+        let rec = try recommendation(
+            carbRatio: [block(0, pump: 7.25)],
+            pumpBasal: pump,
+            untunedBasal: untuned
+        )
+        let text = TuningReport.render(rec)
+        // The interpolated 1.0 is capped at 0.825 × 1.2 = 0.99 and rounds to 0.95.
+        #expect(text.contains("insufficient data: pump 0.825 or interpolated 0.95 (+15% relative to pump, △, from 02:00 and 04:00)"))
+        #expect(text.contains("03:00   0.825 U/hr  ⚠ insufficient data: pump 0.825 or interpolated 0.95 U/hr from 02:00 and 04:00"))
+        #expect(text.contains("        Pump 7.25 only."))
+        #expect(!text.contains("0.83"))
+        #expect(!text.contains("0.82 "))
+
+        #expect(BasalHourRecommendation.formattedPumpRate(0.825) == "0.825")
+        #expect(BasalHourRecommendation.formattedPumpRate(1) == "1.00")
+        #expect(BasalHourRecommendation.formattedPumpRate(0.8) == "0.80")
+        let isf = try #require(try recommendation(sensitivity: [block(0, pump: 40)]).sensitivitySchedule.first)
+        #expect(isf.parameter.formattedPumpValue(in: .milligramsPerDeciliter) == "40.0")
+        // A value converted from mg/dL keeps the usual mmol/L precision.
+        #expect(isf.parameter.formattedPumpValue(in: .millimolesPerLiter) == "2.22")
+    }
+
+    @Test("JSON says when a whole schedule had insufficient data")
+    func jsonSummary() throws {
+        var untuned = Array(repeating: false, count: 24)
+        untuned[5] = true
+        let rec = try recommendation(
+            sensitivity: [block(0, pump: 40), block(12 * hour, pump: 45)],
+            untunedBasal: untuned
+        )
+        let text = try RecommendationJSON.encode(rec)
+        let root = try #require(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+        let summary = try #require(root["insufficientData"] as? [String: Any])
+        #expect(summary["basalHours"] as? Int == 1)
+        #expect(summary["sensitivityBlocks"] as? Int == 2)
+        #expect(summary["carbRatioBlocks"] as? Int == 0)
+        #expect(summary["allBasalHours"] as? Bool == false)
+        #expect(summary["allSensitivityBlocks"] as? Bool == true)
+        #expect(summary["allCarbRatioBlocks"] as? Bool == false)
+        // The existing summary keys remain.
+        let sensitivity = try #require(root["sensitivity"] as? [String: Any])
+        #expect(sensitivity["percentChange"] as? Double != nil)
+    }
+
     // MARK: - Persistence
 
     @Test("saved runs round-trip the alternatives, and runs saved before them still load")
@@ -438,6 +526,18 @@ struct NoEvidenceInterpolationTests {
         corrupt["sensitivitySchedule"] = schedule
         #expect(throws: DecodingError.self) {
             try JSONDecoder().decode(TuningRecommendation.self, from: JSONSerialization.data(withJSONObject: corrupt))
+        }
+
+        // The note names the sources, so an alternative without any is corrupt.
+        var sourceless = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var basal = try #require(sourceless["basalHours"] as? [[String: Any]])
+        var basalEvidence = try #require(basal[4]["insufficientEvidence"] as? [String: Any])
+        #expect(basalEvidence["interpolated"] != nil)
+        basalEvidence["sources"] = [Int]()
+        basal[4]["insufficientEvidence"] = basalEvidence
+        sourceless["basalHours"] = basal
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(TuningRecommendation.self, from: JSONSerialization.data(withJSONObject: sourceless))
         }
     }
 }

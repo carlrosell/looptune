@@ -88,6 +88,19 @@ struct RecommendationDTO: Encodable {
         var note: String?
     }
 
+    /// Blocks with insufficient data (ADR 0011). When every block of a
+    /// schedule has insufficient data, its daily summary (`sensitivity`,
+    /// `carbRatio`, or the basal totals) repeats the pump values and is not a
+    /// recommendation.
+    struct InsufficientData: Encodable {
+        var basalHours: Int
+        var sensitivityBlocks: Int
+        var carbRatioBlocks: Int
+        var allBasalHours: Bool
+        var allSensitivityBlocks: Bool
+        var allCarbRatioBlocks: Bool
+    }
+
     var daysAnalyzed: Int
     var daysTuned: Int?
     var totalSamples: Int
@@ -96,6 +109,7 @@ struct RecommendationDTO: Encodable {
     var disclaimer: String
     var settingsChanges: [String]
     var categoryCounts: [String: Int]
+    var insufficientData: InsufficientData
     var sensitivity: Parameter
     var carbRatio: Parameter
     var sensitivitySchedule: [ParameterScheduleEntry]
@@ -129,6 +143,15 @@ struct RecommendationDTO: Encodable {
         dayFormatter.formatOptions = [.withInternetDateTime]
         settingsChanges = recommendation.settingsChanges.map { dayFormatter.string(from: $0) }
         categoryCounts = Dictionary(uniqueKeysWithValues: recommendation.categoryCounts.map { ($0.key.rawValue, $0.value) })
+        let summary = recommendation.insufficientData
+        insufficientData = InsufficientData(
+            basalHours: summary.basalHours,
+            sensitivityBlocks: summary.sensitivityBlocks,
+            carbRatioBlocks: summary.carbRatioBlocks,
+            allBasalHours: summary.allBasalHours,
+            allSensitivityBlocks: summary.allSensitivityBlocks,
+            allCarbRatioBlocks: summary.allCarbRatioBlocks
+        )
         sensitivity = Parameter(recommendation.sensitivity, in: displayUnit)
         carbRatio = Parameter(recommendation.carbRatio, in: displayUnit)
         sensitivitySchedule = recommendation.sensitivitySchedule.map {
