@@ -6,9 +6,10 @@ import Foundation
 /// (`lib/autotune/index.js`, `tuneAllTheThings`) at oref0 commit 88cf032.
 ///
 /// Fixtures live in `Fixtures/oref0/` and are regenerated with
-/// `node references/gen_oref0_fixtures.js` (see the README next to them).
-/// These pin LoopTune's ISF and basal tuning math to the reference
-/// implementation, including its rounding and smoothing quirks.
+/// `scripts/generate-oref0-fixtures.js` (see the README next to them).
+/// These pin selected ISF and basal tuning math to the reference
+/// implementation on pre-categorized data, including its rounding and
+/// smoothing quirks. They do not cover carb ratio, categorization, or replay.
 @Suite("oref0 parity")
 struct Oref0ParityTests {
     struct Fixture: Decodable {
