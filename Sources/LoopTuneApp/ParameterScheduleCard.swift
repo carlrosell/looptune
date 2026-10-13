@@ -11,9 +11,16 @@ struct ParameterScheduleCard: View {
     @State private var selection = Set<Int>()
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            table
+            InsufficientDataNotes(notes: InsufficientDataNotes.notes(for: entries))
+        }
+    }
+
+    private var table: some View {
         TableCard(
             title: title,
-            subtitle: "Uses your Loop time blocks, or six-hour blocks when Loop has one all-day value. Blocks without enough data stay unchanged."
+            subtitle: "Uses your Loop time blocks, or six-hour blocks when Loop has one all-day value. A block without enough data of its own has no recommendation: it shows your pump value and a value interpolated from the nearest blocks with enough data."
         ) {
             Table(entries, selection: $selection) {
                 TableColumn("Time") { entry in
@@ -30,23 +37,39 @@ struct ParameterScheduleCard: View {
                 .width(min: 72, ideal: 88)
 
                 TableColumn("LoopTune") { entry in
-                    HStack(spacing: 5) {
-                        value(entry.parameter.recommendedValue(in: displayUnit), for: entry.parameter)
-                            .fontWeight(.semibold)
-                        if entry.parameter.guardrailStatus != .ok {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                                .help(guardrailMessage(entry.parameter.guardrailStatus))
+                    if let insufficient = entry.insufficientEvidence {
+                        ChoiceText(
+                            pump: entry.parameter.formatted(entry.parameter.pumpValue(in: displayUnit), in: displayUnit),
+                            interpolated: insufficient.interpolated.map {
+                                "\($0.formatted($0.recommendedValue(in: displayUnit), in: displayUnit)) interpolated"
+                            },
+                            interpolatedColor: insufficient.interpolated?.changeTier.color ?? .primary
+                        )
+                        .numericCell()
+                    } else {
+                        HStack(spacing: 5) {
+                            value(entry.parameter.recommendedValue(in: displayUnit), for: entry.parameter)
+                                .fontWeight(.semibold)
+                            if entry.parameter.guardrailStatus != .ok {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                                    .help(guardrailMessage(entry.parameter.guardrailStatus))
+                            }
                         }
+                        .foregroundStyle(entry.parameter.changeTier.color)
+                        .numericCell()
                     }
-                    .foregroundStyle(color(for: entry.parameter.changeTier))
-                    .numericCell()
                 }
-                .width(min: 82, ideal: 96)
+                .width(min: 82, ideal: 170)
 
                 TableColumn("Data") { entry in
-                    Text(entry.evidenceDescription(evidenceName))
-                        .foregroundStyle(entry.untuned || entry.daysMissing > 0 ? .tertiary : .secondary)
+                    if entry.insufficientEvidence != nil {
+                        Text("Insufficient data · \(entry.evidenceDescription(evidenceName))")
+                            .foregroundStyle(.orange)
+                    } else {
+                        Text(entry.evidenceDescription(evidenceName))
+                            .foregroundStyle(entry.untuned || entry.daysMissing > 0 ? .tertiary : .secondary)
+                    }
                 }
             }
             .resultsTable(rowCount: entries.count)
@@ -55,14 +78,6 @@ struct ParameterScheduleCard: View {
 
     private func value(_ value: Double, for parameter: ParameterRecommendation) -> Text {
         Text("\(parameter.formatted(value, in: displayUnit)) \(parameter.unitLabel(in: displayUnit))")
-    }
-
-    private func color(for tier: ChangeTier) -> Color {
-        switch tier {
-        case .minimal: return .primary
-        case .notable: return .yellow
-        case .large: return .orange
-        }
     }
 
     private func guardrailMessage(_ status: LoopGuardrails.Status) -> String {

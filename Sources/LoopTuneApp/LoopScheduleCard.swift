@@ -16,7 +16,7 @@ struct LoopScheduleCard: View {
     var body: some View {
         TableCard(
             title: "Basal Rates — as entered in Loop",
-            subtitle: "\(entries.count) entr\(entries.count == 1 ? "y" : "ies"), matching Loop's schedule screen"
+            subtitle: subtitle
         ) {
             Table(entries, selection: $selection) {
                 TableColumn("Time") { entry in
@@ -27,17 +27,43 @@ struct LoopScheduleCard: View {
 
                 TableColumn("Rate") { entry in
                     HStack(spacing: 4) {
-                        Text(formatted(entry.rate))
-                            .fontWeight(.semibold)
+                        if let insufficient = entry.insufficientEvidence {
+                            ChoiceText(
+                                pump: formatted(entry.rate),
+                                interpolated: insufficient.interpolated.map(formatted)
+                            )
                             .monospacedDigit()
+                        } else {
+                            Text(formatted(entry.rate))
+                                .fontWeight(.semibold)
+                                .monospacedDigit()
+                        }
                         Text("U/hr")
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .trailing)
                 }
+                .width(min: 90, ideal: 130)
+
+                TableColumn("Data") { entry in
+                    if let insufficient = entry.insufficientEvidence {
+                        Text(insufficient.interpolated == nil
+                             ? "Insufficient data · pump rate only"
+                             : "Insufficient data · from \(insufficient.sourceTimes.joined(separator: " and "))")
+                            .foregroundStyle(.orange)
+                    }
+                }
             }
             .resultsTable(rowCount: entries.count)
         }
+    }
+
+    private var subtitle: String {
+        var text = "\(entries.count) entr\(entries.count == 1 ? "y" : "ies"), matching Loop's schedule screen"
+        if entries.contains(where: { $0.insufficientEvidence != nil }) {
+            text += ". Entries with a warning had insufficient data: enter your pump rate or the interpolated rate."
+        }
+        return text
     }
 
     /// Loop shows rates without trailing zeros (0.2, 0.25), locale-aware.

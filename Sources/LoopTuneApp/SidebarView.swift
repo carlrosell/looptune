@@ -103,6 +103,14 @@ struct RunRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
+            let insufficient = run.recommendation.insufficientData
+            if !insufficient.isEmpty {
+                Label("Insufficient data: \(insufficient.description)", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .lineLimit(2)
+                    .help("These blocks show your pump value and an interpolated alternative instead of a recommendation.")
+            }
         }
         .padding(.vertical, 2)
     }

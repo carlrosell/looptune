@@ -387,7 +387,14 @@ struct BasalChartView: View {
                             ChartTooltip(title: String(format: "%02d:00–%02d:00", hovered.hour, (hovered.hour + 1) % 24)) {
                                 TooltipRow(color: ChartPalette.pump(colorScheme), label: "Pump", value: String(format: "%.3f U/hr", hovered.pumpRate))
                                 TooltipRow(color: ChartPalette.tuned(colorScheme), label: "LoopTune (unrounded)", value: String(format: "%.3f U/hr", hovered.recommendedRate))
-                                TooltipRow(color: nil, label: "Enter into Loop", value: String(format: "%.2f U/hr", hovered.roundedRate()))
+                                if hovered.insufficientEvidence != nil {
+                                    TooltipRow(color: nil, label: "Insufficient data", value: "pump rate kept")
+                                    if let interpolated = hovered.interpolatedRoundedRate() {
+                                        TooltipRow(color: nil, label: "Interpolated alternative", value: String(format: "%.2f U/hr", interpolated))
+                                    }
+                                } else {
+                                    TooltipRow(color: nil, label: "Enter into Loop", value: String(format: "%.2f U/hr", hovered.roundedRate()))
+                                }
                             }
                         }
                 }
@@ -477,7 +484,7 @@ struct CoverageChartView: View {
             }
             .frame(height: 90)
             if hours.contains(where: { $0.sampleCount == 0 }) {
-                Text("Hours without bars had no direct basal evidence; their recommendations are interpolated from neighboring hours.")
+                Text("Hours without bars had no direct basal evidence. They keep your pump rate, shown beside a rate interpolated from the nearest hours with evidence.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
