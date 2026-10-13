@@ -1,6 +1,6 @@
 # 0009. Remove URL user information from site addresses
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-13
 - **Deciders:** Project owner
 - **Related:** [#5](https://github.com/carlrosell/looptune/issues/5) (SEC-02), [Repository audit](../docs/code-reviews/2026-10-12-repository-audit-review.md#sec-02-url-user-information-survives-sanitization), [ADR 0003](0003-canonical-site-origin.md), [ADR 0006](0006-same-origin-redirects.md), [#7](https://github.com/carlrosell/looptune/issues/7) (SEC-04), [#19](https://github.com/carlrosell/looptune/issues/19) (APP-01)
