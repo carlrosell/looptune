@@ -322,13 +322,14 @@ public struct TuningPipeline: Sendable {
     }
 
     /// Fetch and run tuning, returning the recommendation together with the
-    /// full diagnostics (ingested-data summaries and before/after deviation).
+    /// full diagnostics (ingested-data summaries and before/after deviation)
+    /// and the origin of the site the data came from.
     public func runWithDiagnostics(
         client: NightscoutClient,
         configuration: TuningConfiguration,
         endingAt end: Date,
         cache: DayCache? = nil
-    ) async throws -> (recommendation: TuningRecommendation, diagnostics: RunDiagnostics, host: String) {
+    ) async throws -> (recommendation: TuningRecommendation, diagnostics: RunDiagnostics, origin: SiteOrigin) {
         let inputs = try await fetchInputs(client: client, configuration: configuration, endingAt: end, cache: cache)
         let configuredInputs = Self.applyingConfiguration(configuration, to: inputs)
         let recommendation = try run(inputs: configuredInputs, configuration: configuration)
@@ -336,7 +337,7 @@ public struct TuningPipeline: Sendable {
             inputs: configuredInputs,
             recommendation: recommendation
         )
-        return (recommendation, diagnostics, client.baseURL.host ?? "unknown")
+        return (recommendation, diagnostics, client.origin)
     }
 
     private static func applyingConfiguration(

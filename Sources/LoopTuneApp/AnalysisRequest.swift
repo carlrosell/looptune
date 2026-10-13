@@ -14,7 +14,7 @@ struct AnalysisRequest: Sendable {
     }
 }
 
-typealias AnalysisOutput = (recommendation: TuningRecommendation, diagnostics: RunDiagnostics, host: String)
+typealias AnalysisOutput = (recommendation: TuningRecommendation, diagnostics: RunDiagnostics, origin: SiteOrigin)
 
 /// Executes one analysis. The app uses `liveAnalysis`; tests substitute a runner
 /// whose completion they control.

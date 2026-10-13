@@ -89,7 +89,8 @@ struct SidebarView: View {
     }
 }
 
-/// One row in the run history: when it ran and the headline changes.
+/// One row in the run history: when it ran, the site it analyzed, and the
+/// headline changes.
 struct RunRow: View {
     let run: SavedRun
 
@@ -97,11 +98,42 @@ struct RunRow: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(run.createdAt, format: .dateTime.month().day().hour().minute())
                 .font(.callout.weight(.medium))
+            RunSourceLabel(source: run.source)
             Text(run.headline)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
         }
         .padding(.vertical, 2)
+    }
+}
+
+/// The site a saved run analyzed. It comes from the run, never the connection
+/// form. Long origins are truncated in the middle so the scheme and port stay
+/// visible; the tooltip holds the full value.
+struct RunSourceLabel: View {
+    let source: SavedRun.Source
+
+    var body: some View {
+        Text(source.label)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .help(source.help)
+    }
+}
+
+extension SavedRun.Source {
+    /// The full source and, for a legacy record, what was not saved.
+    var help: String {
+        switch self {
+        case .origin:
+            return label
+        case .host:
+            return "\(label) (saved without its scheme and port)"
+        case .unknown:
+            return "This analysis was saved without its site."
+        }
     }
 }
