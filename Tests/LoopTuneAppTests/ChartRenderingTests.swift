@@ -23,14 +23,12 @@ struct ChartRenderingTests {
         }
 
         for displayUnit in GlucoseUnit.allCases {
-            let image = try render(glucose, days: 14, displayUnit: displayUnit)
-            #expect(image.size.width == 1_100)
-            #expect(image.size.height > 250)
+            let bitmap = try render(glucose, days: 14, displayUnit: displayUnit)
+            #expect(bitmap.size.width == 1_100)
+            #expect(bitmap.size.height > 250)
 
             if let outputPath = ProcessInfo.processInfo.environment["LOOPTUNE_CHART_SNAPSHOT"],
                displayUnit == .millimolesPerLiter,
-               let tiff = image.tiffRepresentation,
-               let bitmap = NSBitmapImageRep(data: tiff),
                let png = bitmap.representation(using: .png, properties: [:]) {
                 try png.write(to: URL(fileURLWithPath: outputPath), options: .atomic)
             }
@@ -52,13 +50,11 @@ struct ChartRenderingTests {
         }
 
         let glucose = [distribution(hour: 2), distribution(hour: 10)]
-        let image = try render(glucose)
-        #expect(image.size.width == 1_100)
-        #expect(image.size.height > 250)
+        let sparseBitmap = try render(glucose)
+        #expect(sparseBitmap.size.width == 1_100)
+        #expect(sparseBitmap.size.height > 250)
 
-        let sparseBitmap = try #require(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
-        let emptyImage = try render([])
-        let emptyBitmap = try #require(emptyImage.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+        let emptyBitmap = try render([])
         // At the fixed test width, this stripe crosses the omitted span near 06:00.
         let gapX = sparseBitmap.pixelsWide / 4
         #expect(try changedPixelCount(sparseBitmap, emptyBitmap, xRange: gapX..<(gapX + 4)) == 0)
@@ -81,8 +77,7 @@ struct ChartRenderingTests {
         #expect(darkPixelCount(sparseBitmap, xRange: hour2Range, yRange: medianYRange) > 0)
         #expect(darkPixelCount(sparseBitmap, xRange: hour10Range, yRange: medianYRange) > 0)
 
-        let adjacentImage = try render([distribution(hour: 2), distribution(hour: 3)])
-        let adjacentBitmap = try #require(adjacentImage.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+        let adjacentBitmap = try render([distribution(hour: 2), distribution(hour: 3)])
         // This stripe crosses the plot between the adjacent observations.
         let adjacentX = adjacentBitmap.pixelsWide / 9
         #expect(try changedPixelCount(
@@ -92,9 +87,7 @@ struct ChartRenderingTests {
         ) > 0)
 
         if let outputPath = ProcessInfo.processInfo.environment["LOOPTUNE_SPARSE_CHART_SNAPSHOT"],
-           let tiff = image.tiffRepresentation,
-           let bitmap = NSBitmapImageRep(data: tiff),
-           let png = bitmap.representation(using: .png, properties: [:]) {
+           let png = sparseBitmap.representation(using: .png, properties: [:]) {
             try png.write(to: URL(fileURLWithPath: outputPath), options: .atomic)
         }
     }
@@ -103,7 +96,7 @@ struct ChartRenderingTests {
         _ distributions: [HourlyValueDistribution],
         days: Int = 1,
         displayUnit: GlucoseUnit = .milligramsPerDeciliter
-    ) throws -> NSImage {
+    ) throws -> NSBitmapImageRep {
         let content = HourlyGlucoseChartView(
             distributions: distributions,
             days: days,
@@ -113,9 +106,33 @@ struct ChartRenderingTests {
         .frame(width: 1_100)
         .environment(\.colorScheme, .light)
         .background(Color(nsColor: .windowBackgroundColor))
-        let renderer = ImageRenderer(content: content)
-        renderer.scale = 2
-        return try #require(renderer.nsImage)
+        // `ImageRenderer.cgImage` and `nsImage` can hand back an image whose pixels
+        // are not readable yet when the machine is under load. Drawing into a
+        // bitmap the test owns makes the pixels available as soon as this returns.
+        let scale: CGFloat = 2
+        var bitmap: NSBitmapImageRep?
+        ImageRenderer(content: content).render(rasterizationScale: scale) { size, draw in
+            guard let rep = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: Int((size.width * scale).rounded(.up)),
+                pixelsHigh: Int((size.height * scale).rounded(.up)),
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 32
+            ), let context = NSGraphicsContext(bitmapImageRep: rep) else {
+                return
+            }
+            rep.size = size
+            context.cgContext.scaleBy(x: scale, y: scale)
+            draw(context.cgContext)
+            context.flushGraphics()
+            bitmap = rep
+        }
+        return try #require(bitmap)
     }
 
     private func changedPixelCount(
