@@ -305,8 +305,14 @@ public struct TuningRecommendation: Sendable, Equatable {
         basalHours.reduce(0) { $0 + $1.roundedRate(toIncrement: increment) }
     }
 
-    /// - Parameter caps: the tuner's pump-relative caps. Final basal rates
-    ///   stay inside them.
+    /// - Parameters:
+    ///   - daysMissingByHour: when non-nil, 24 entries indexed by local hour.
+    ///   - caps: the tuner's pump-relative caps. Final basal rates stay inside
+    ///     them.
+    /// - Throws: `TuningOutput.HourlyCountError` when an hourly collection does
+    ///   not hold 24 entries, including values set after the output was
+    ///   initialized, and `TuningOutput.InitializationError` for an invalid
+    ///   ISF or carb-ratio schedule.
     public init(
         from output: TuningOutput,
         daysAnalyzed: Int,
@@ -317,10 +323,7 @@ public struct TuningRecommendation: Sendable, Equatable {
         excludedOverrideSamples: Int = 0,
         caps: TuningCaps = TuningCaps()
     ) throws {
-        precondition(
-            output.tunedBasalHourly.count == 24 && output.pumpBasalHourly.count == 24 && output.untunedBasalHours.count == 24,
-            "TuningOutput basal arrays must each contain 24 hourly entries"
-        )
+        try output.validateHourlyCounts(daysMissingByHour: daysMissingByHour)
         try TuningOutput.validate(
             output.sensitivitySchedule.map(\.secondsSinceMidnight),
             parameter: .sensitivity

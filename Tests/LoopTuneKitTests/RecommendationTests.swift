@@ -227,6 +227,83 @@ struct GuardrailTests {
         }
     }
 
+    @Test("hourly collections must hold 24 entries")
+    func recommendationRejectsWrongHourlyCounts() throws {
+        func output() throws -> TuningOutput {
+            try TuningOutput(
+                tunedBasalHourly: Array(repeating: 1.0, count: 24),
+                pumpBasalHourly: Array(repeating: 1.0, count: 24),
+                untunedBasalHours: Array(repeating: false, count: 24),
+                sensitivitySchedule: [
+                    ScheduleTuningOutput(secondsSinceMidnight: 0, tunedValue: 50, pumpValue: 50, untuned: false),
+                ],
+                carbRatioSchedule: [
+                    ScheduleTuningOutput(secondsSinceMidnight: 0, tunedValue: 10, pumpValue: 10, untuned: false),
+                ],
+                categoryCounts: [:],
+                totalSamples: 0
+            )
+        }
+        let valid = try output()
+        let validDaysMissing = Array(repeating: 0, count: 24)
+        #expect(try TuningRecommendation(from: valid, daysAnalyzed: 1, daysMissingByHour: validDaysMissing).basalHours.count == 24)
+
+        for count in [0, 23, 25] {
+            // Public mutation after a validated initializer.
+            var mutated: [(TuningOutput.HourlyCollection, TuningOutput)] = []
+            var tuned = valid
+            tuned.tunedBasalHourly = Array(repeating: 1.0, count: count)
+            mutated.append((.tunedBasal, tuned))
+            var pump = valid
+            pump.pumpBasalHourly = Array(repeating: 1.0, count: count)
+            mutated.append((.pumpBasal, pump))
+            var untuned = valid
+            untuned.untunedBasalHours = Array(repeating: false, count: count)
+            mutated.append((.untunedBasal, untuned))
+            var sampleCount = valid
+            sampleCount.basalSampleCountByHour = Array(repeating: 0, count: count)
+            mutated.append((.basalSampleCount, sampleCount))
+            for (collection, invalid) in mutated {
+                #expect(throws: TuningOutput.HourlyCountError(collection: collection, count: count)) {
+                    try TuningRecommendation(from: invalid, daysAnalyzed: 1, daysMissingByHour: validDaysMissing)
+                }
+            }
+
+            #expect(throws: TuningOutput.HourlyCountError(collection: .daysMissing, count: count)) {
+                try TuningRecommendation(from: valid, daysAnalyzed: 1, daysMissingByHour: Array(repeating: 0, count: count))
+            }
+
+            // The nonthrowing initializer cannot validate.
+            let legacy = TuningOutput(
+                tunedBasalHourly: Array(repeating: 1.0, count: 24),
+                pumpBasalHourly: Array(repeating: 1.0, count: 24),
+                untunedBasalHours: Array(repeating: false, count: 24),
+                tunedISF: 50,
+                pumpISF: 50,
+                tunedCarbRatio: 10,
+                pumpCarbRatio: 10,
+                categoryCounts: [:],
+                totalSamples: 0,
+                basalSampleCountByHour: Array(repeating: 0, count: count)
+            )
+            #expect(throws: TuningOutput.HourlyCountError(collection: .basalSampleCount, count: count)) {
+                try TuningRecommendation(from: legacy, daysAnalyzed: 1)
+            }
+
+            #expect(throws: TuningOutput.HourlyCountError(collection: .untunedBasal, count: count)) {
+                try TuningOutput(
+                    tunedBasalHourly: Array(repeating: 1.0, count: 24),
+                    pumpBasalHourly: Array(repeating: 1.0, count: 24),
+                    untunedBasalHours: Array(repeating: false, count: count),
+                    sensitivitySchedule: valid.sensitivitySchedule,
+                    carbRatioSchedule: valid.carbRatioSchedule,
+                    categoryCounts: [:],
+                    totalSamples: 0
+                )
+            }
+        }
+    }
+
     @Test("schedule evidence always includes missing days")
     func scheduleEvidenceIncludesMissingDays() {
         let parameter = ParameterRecommendation(
