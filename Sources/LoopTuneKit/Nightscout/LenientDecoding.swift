@@ -92,7 +92,17 @@ extension KeyedDecodingContainer {
 /// Parses the assorted timestamp formats Nightscout emits: ISO-8601 with or
 /// without fractional seconds and with `Z` or numeric offsets, plus epoch
 /// milliseconds (as number or string).
+///
+/// Parsed dates must lie in `epochMillisecondRange`; anything outside is
+/// rejected, never clamped. Every date in range converts back to integer
+/// epoch milliseconds and to a four-digit-year ISO string, so cached
+/// documents re-encode without trapping.
 enum NightscoutDate {
+    /// 0001-01-01T00:00:00Z through 9999-12-31T23:59:59.999Z, in epoch
+    /// milliseconds: the instants ISO-8601 writes with a four-digit year.
+    /// Both bounds are exact in `Double` and far inside `Int64`.
+    static let epochMillisecondRange: ClosedRange<Double> = -62_135_596_800_000 ... 253_402_300_799_999
+
     // ISO8601DateFormatter is documented thread-safe for parsing.
     nonisolated(unsafe) private static let withFractional: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -108,12 +118,24 @@ enum NightscoutDate {
 
     /// Parse an ISO-8601 string in either fractional or whole-second form.
     static func parseISO(_ string: String) -> Date? {
-        withFractional.date(from: string) ?? withoutFractional.date(from: string)
+        guard let date = withFractional.date(from: string) ?? withoutFractional.date(from: string),
+              epochMilliseconds(date) != nil else { return nil }
+        return date
     }
 
-    /// Parse epoch milliseconds into a `Date`.
+    /// Parse epoch milliseconds into a `Date`, or `nil` when the value is
+    /// non-finite or outside `epochMillisecondRange`.
     static func fromEpochMilliseconds(_ millis: Double) -> Date? {
-        guard millis.isFinite else { return nil }
+        // `contains` is false for NaN.
+        guard epochMillisecondRange.contains(millis) else { return nil }
         return Date(timeIntervalSince1970: millis / 1000)
+    }
+
+    /// The date as whole epoch milliseconds, rounded to nearest, or `nil`
+    /// when it falls outside `epochMillisecondRange`.
+    static func epochMilliseconds(_ date: Date) -> Int64? {
+        let millis = (date.timeIntervalSince1970 * 1000).rounded()
+        guard epochMillisecondRange.contains(millis) else { return nil }
+        return Int64(exactly: millis)
     }
 }

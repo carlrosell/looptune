@@ -390,6 +390,24 @@ struct CompleteFetchTests {
         #expect(cache.load(origin: origin, dayKey: window.day.key) == nil)
     }
 
+    @Test("a record with an unrepresentable timestamp stops the fetch and is not cached")
+    func unrepresentableTimestampStopsFetch() async throws {
+        let cache = makeCache()
+        let window = cacheWindow()
+        let instant = window.day.interval.start.addingTimeInterval(3600)
+        let transport = makeTransport()
+        transport.treatments = [
+            (date: instant, json: CappedNightscoutTransport.bolusJSON(id: "valid", at: instant)),
+            (date: instant, json: #"{"_id":"corrupt","eventType":"Correction Bolus","created_at":1e30,"insulin":0.05}"#),
+        ]
+
+        await #expect(throws: NightscoutError.partialDecoding(path: "/api/v1/treatments.json", skipped: 1)) {
+            _ = try await fetch(transport, cache: cache, endingAt: window.end)
+        }
+        let origin = try makeClient(transport).origin
+        #expect(cache.load(origin: origin, dayKey: window.day.key) == nil)
+    }
+
     @Test("a saturated day fetched completely is cached and reused")
     func completeSaturatedDayIsReused() async throws {
         let cache = makeCache()
