@@ -534,7 +534,7 @@ Severity: low. Status: open.
 
 Tracking: [#21](https://github.com/carlrosell/looptune/issues/21).
 
-[Sources/LoopTuneApp/ConnectionForm.swift:5](../../Sources/LoopTuneApp/ConnectionForm.swift#L5) defines an internal view with no
+[Sources/LoopTuneApp/ConnectionForm.swift:5](https://github.com/carlrosell/looptune/blob/e14a57c5f92038ce9edbc65ac3c8f070bf642356/Sources/LoopTuneApp/ConnectionForm.swift#L5) defines an internal view with no
 callers in the repository. [Sources/LoopTuneApp/LoopTuneApp.swift:39](../../Sources/LoopTuneApp/LoopTuneApp.swift#L39) uses `SidebarView`, whose
 connection, analysis, and run controls duplicate the unused form. Remove the
 obsolete view or share a single implementation if both layouts are needed.
